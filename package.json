@@ -1,0 +1,39 @@
+{
+  "name": "plateau",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Plateau — a Tableau-style visual analytics tool built on an in-memory columnar database engine.",
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node scripts/run.mjs src/server/index.ts",
+    "dev:web": "vite",
+    "build": "tsc --noEmit && vite build",
+    "start": "node scripts/run.mjs src/server/index.ts",
+    "serve": "node scripts/run.mjs src/server/index.ts --serve-static",
+    "seed": "node scripts/run.mjs scripts/generate-superstore.ts",
+    "test": "node scripts/test.mjs",
+    "test:ui": "node e2e/verify-ui.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "echarts": "^6.1.0",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "esbuild": "^0.25.12",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

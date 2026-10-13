@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Local scratch space (build temp, browser profiles, verification screenshots)
+.tmp/
+
+# Generated sample dataset — recreate with `npm run seed`
+data/superstore.csv
+
+# Saved workbook state (user-specific)
+data/workbook.json
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

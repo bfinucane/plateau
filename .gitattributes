@@ -1,0 +1,19 @@
+# Normalise line endings in the repository.
+#
+# Without this, Git stores CRLF on a Windows checkout and every non-Windows
+# contributor sees the entire tree as modified. Text is stored as LF and checked
+# out with the platform's native ending.
+* text=auto eol=lf
+
+# Windows launcher needs CRLF to run correctly from cmd.exe.
+*.cmd text eol=crlf
+
+# Binary assets must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Generated or fixture data: leave bytes alone.
+*.csv text
