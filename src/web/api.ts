@@ -183,6 +183,55 @@ export async function deleteDataset(id: string): Promise<void> {
   await request(`/datasets/${id}`, { method: 'DELETE' });
 }
 
+/**
+ * What a remote engine reports about itself.
+ *
+ * Mirrors `Capabilities` in `src/core/protocol.ts`. A subset is optional because
+ * an engine is permitted not to implement the `capabilities` operation at all.
+ */
+export interface EngineCapabilities {
+  protocolVersion: number;
+  aggregations: Aggregation[];
+  countDistinctExact?: boolean;
+  filterOperators: string[];
+  supportsLod: boolean;
+  expressionFunctions: string[];
+  supportsInlineDomain: boolean;
+  maxRows?: number;
+}
+
+export interface EngineProbe {
+  url: string;
+  reachable: boolean;
+  capabilities?: EngineCapabilities;
+  /** Present when unreachable. */
+  error?: string;
+  code?: string;
+}
+
+/**
+ * Asks an engine what it offers, without registering anything.
+ *
+ * An unreachable engine resolves to `reachable: false` rather than throwing: a
+ * server being down is a normal answer to "is it up?", not a fault, and the
+ * caller wants to render it as information.
+ */
+export async function probeEngine(url: string): Promise<EngineProbe> {
+  return request<EngineProbe>(`/engine/probe?url=${encodeURIComponent(url)}`);
+}
+
+export async function registerRemoteDataset(options: {
+  url: string;
+  dataset: string;
+  name?: string;
+}): Promise<DatasetMeta> {
+  const data = await request<{ dataset: DatasetMeta }>('/datasets/remote', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  });
+  return data.dataset;
+}
+
 export async function runQuery(spec: QuerySpec): Promise<QueryResponse> {
   return request<QueryResponse>('/query', {
     method: 'POST',

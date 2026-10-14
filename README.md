@@ -265,17 +265,18 @@ node e2e/verify-viz.mjs        # 27 checks: scatter axes, trend-line fit, heat m
 node e2e/verify-sort.mjs       # 15 checks: Sort control reaches the engine; axis orientation
 node e2e/verify-treemap.mjs    # 16 checks: treemap hierarchy, tooltip paths, Detail guard
 node e2e/verify-dashboard.mjs  # 29 checks: panels, independent queries, resize, swap, persistence
+node e2e/verify-connect.mjs    # 26 checks: connect dialog against a real stub engine
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **362 checks** — 218 unit, 144 browser.
+Total: **402 checks** — 232 unit, 170 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
 | engine | 77 | expressions, CSV, type inference, query execution, calculated fields |
 | LOD | 45 | `FIXED`/`INCLUDE`/`EXCLUDE` parsing and filter ordering |
-| protocol | 48 | **local/remote parity**, wire shapes, capability negotiation |
-| http transport | 29 | request encoding, error mapping, timeouts, unreachable hosts |
+| protocol | 56 | **local/remote parity**, wire shapes, LOD fallback, capability negotiation |
+| http transport | 35 | request encoding, error mapping, timeouts, doc/code consistency |
 | remote dataset | 19 | registration, failure modes, query through a registered engine |
 
 Both browser and transport suites run against the real thing — a loopback HTTP
@@ -481,6 +482,31 @@ The transport is deliberately re-implementable: `EngineTransport` is four method
 and the tests drive a real loopback HTTP server rather than mocking `fetch`, so
 request encoding, status handling and timeouts are genuinely exercised.
 
+### Connecting from the UI
+
+**Connect…** in the command bar opens the connection dialog.
+
+![Connecting to an engine](docs/screenshots/32-connect-probed.png)
+
+The flow is probe-then-connect rather than a single submit, so you learn whether
+the engine is up and what it can actually do *before* committing:
+
+- **Test** reports reachability and the engine's capabilities. An unreachable
+  engine is rendered as information, not an error — a server being down is a
+  normal answer to "is it up?".
+- **Capability reporting is specific.** An engine without LOD support says
+  `COMPUTED BY PLATEAU` rather than looking identical to one that has it, and an
+  approximate `COUNTD` is labelled as such.
+- **Unsupported aggregations are named up front**, so a missing feature reads as
+  "this engine does not do that" rather than "this is broken".
+- **Connect** registers the dataset, which then behaves like any other data
+  source — fields in the pane, drag onto shelves, charts render.
+
+![A chart built on a remote dataset](docs/screenshots/34-connect-chart.png)
+
+Everything upstream is unchanged: the query travels as a plan, the engine
+executes it, and the client renders what comes back.
+
 ### In progress — remote backend
 
 - `src/core/protocol.ts` — versioned contract, validation, typed errors
@@ -496,20 +522,23 @@ request encoding, status handling and timeouts are genuinely exercised.
   implement `capabilities`.
 - **`POST /api/datasets/remote`** — registers a dataset served by an engine, so a
   remote dataset is usable from the browser.
-- 96 new checks across the protocol, transport and registration paths. The load
-  bearing one is **local/remote parity**: the same query through both backends is
-  compared value for value, so the protocol cannot silently lose information.
+- **Connect dialog** — probe, capability reporting, and registration in the UI.
+  A remote dataset is then indistinguishable from a local one: drag fields, build
+  charts, add it to a dashboard.
+- 122 new checks across the protocol, transport, registration and dialog paths.
+  The load bearing one is **local/remote parity**: the same query through both
+  backends is compared value for value, so the protocol cannot silently lose
+  information.
 
 ### Next
 
-1. **Capability-driven UI** — disable unsupported aggregations instead of failing
-   at query time. The data is already on the wire; the UI does not read it yet.
-2. **Push row-level calculated fields down** to the engine, which is what the
+1. **Push row-level calculated fields down** to the engine, which is what the
    protocol's expression AST exists for. Until then a remote dataset refuses them
    with a typed error rather than registering a column that evaluates to null.
-3. **A connection dialog** — the routes exist, but the data pane offers no way to
-   reach them yet.
-4. **Then** the higher-value analytics gaps: joins, then table calculations.
+   `RemoteBackend.defineFormula` is the hook; nothing calls it yet.
+2. **Capability-driven field menus** — unsupported aggregations are reported in
+   the dialog but not yet removed from the pill editor.
+3. **Then** the higher-value analytics gaps: joins, then table calculations.
    Ranked in *Known limitations*.
 
 ### A note on calculated fields

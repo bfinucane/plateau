@@ -20,6 +20,7 @@ import {
 } from './viewModel';
 import { ChartView } from './components/ChartView';
 import { CalculatedFieldDialog } from './components/CalculatedFieldDialog';
+import { ConnectDialog } from './components/ConnectDialog';
 import { DashboardView } from './components/DashboardView';
 import { DataPane } from './components/DataPane';
 import { FiltersPanel } from './components/FiltersPanel';
@@ -56,6 +57,7 @@ export function App() {
 
   const [search, setSearch] = useState('');
   const [calcDialog, setCalcDialog] = useState<{ name?: string; formula?: string; editing?: boolean } | null>(null);
+  const [connectOpen, setConnectOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<'values' | 'query'>('values');
   const [inspectedField, setInspectedField] = useState<ColumnInfo | null>(null);
   const [inspectedValues, setInspectedValues] = useState<CellValue[][]>([]);
@@ -263,6 +265,20 @@ export function App() {
     [handleUpload],
   );
 
+  /** A remote dataset has already been registered; bring it into view. */
+  const handleConnected = useCallback(
+    async (datasetId: string) => {
+      try {
+        await app.refreshDatasets();
+        await app.selectDataset(datasetId);
+        setStatus('Connected to the engine');
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : 'Could not open the dataset');
+      }
+    },
+    [app],
+  );
+
   const handleExport = useCallback(() => {
     if (!queryResult) return;
     download(
@@ -302,6 +318,10 @@ export function App() {
           Upload CSV
           <input type="file" accept=".csv,.tsv,.txt" onChange={handleFileInput} hidden />
         </label>
+
+        <button type="button" className="button-secondary" onClick={() => setConnectOpen(true)}>
+          Connect…
+        </button>
 
         <button
           type="button"
@@ -707,6 +727,13 @@ export function App() {
             setStatus(`Created calculated field "${name}"`);
             setTimeout(() => setStatus(null), 3000);
           }}
+        />
+      )}
+
+      {connectOpen && (
+        <ConnectDialog
+          onClose={() => setConnectOpen(false)}
+          onConnected={(datasetId) => void handleConnected(datasetId)}
         />
       )}
     </div>
