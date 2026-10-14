@@ -268,8 +268,20 @@ node e2e/verify-dashboard.mjs  # 29 checks: panels, independent queries, resize,
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **266 checks** — 122 unit, 25 UI, 14 LOD, 18 Marks, 27 scatter/heat map,
-15 sort, 16 treemap, 29 dashboard.
+Total: **362 checks** — 218 unit, 144 browser.
+
+| Unit suite | Checks | Covers |
+| --- | --- | --- |
+| engine | 77 | expressions, CSV, type inference, query execution, calculated fields |
+| LOD | 45 | `FIXED`/`INCLUDE`/`EXCLUDE` parsing and filter ordering |
+| protocol | 48 | **local/remote parity**, wire shapes, capability negotiation |
+| http transport | 29 | request encoding, error mapping, timeouts, unreachable hosts |
+| remote dataset | 19 | registration, failure modes, query through a registered engine |
+
+Both browser and transport suites run against the real thing — a loopback HTTP
+server and a real server process — rather than mocked fetches, so the parts that
+only exist over a network are genuinely exercised. The harnesses clean up after
+themselves; see `e2e/harness.mjs`.
 
 `verify-viz.mjs` recomputes the least-squares fit independently in the browser and
 compares it to the one the renderer drew, so a broken trend line cannot pass.
@@ -440,6 +452,35 @@ no dialect handling. `specToRequest` is the only place the two vocabularies meet
 - Dashboards on a shared grid
 - 266 checks green (122 unit, 144 browser)
 
+### Connecting to an engine
+
+`RemoteBackend` needs a transport. `HttpEngineTransport` speaks the wire format in
+[`docs/ENGINE-PROTOCOL.md`](docs/ENGINE-PROTOCOL.md) over HTTP/JSON:
+
+```ts
+const transport = new HttpEngineTransport({
+  baseUrl: 'http://127.0.0.1:8080',
+  timeoutMs: 30_000,
+});
+```
+
+Three routes expose this to the browser:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/engine/probe?url=` | Reports capabilities and reachability without registering anything |
+| `POST /api/datasets/remote` | Registers a dataset held by an engine |
+| `GET /api/datasets` | Remote datasets appear alongside local ones |
+
+An unreachable engine returns `reachable: false` rather than an HTTP error — a
+server being down is a normal answer to "is it up?", not a fault. Errors that do
+surface keep their protocol code (`unknown_dataset`, `unsupported_aggregation`, …)
+so a caller bug stays distinguishable from an engine fault.
+
+The transport is deliberately re-implementable: `EngineTransport` is four methods,
+and the tests drive a real loopback HTTP server rather than mocking `fetch`, so
+request encoding, status handling and timeouts are genuinely exercised.
+
 ### In progress — remote backend
 
 - `src/core/protocol.ts` — versioned contract, validation, typed errors
@@ -449,17 +490,25 @@ no dialect handling. `specToRequest` is the only place the two vocabularies meet
   lose information
 - **`store.ts` migrated onto `DataSource`** — a dataset is now a backend plus its
   calculated fields, and every API route runs through the backend rather than
-  reaching for a `DataTable`. `RemoteBackend` is therefore reachable from the API
-  the moment a transport exists.
+  reaching for a `DataTable`. `RemoteBackend` is therefore reachable from the API.
+- **`HttpEngineTransport`** — the concrete transport, with typed errors, per-request
+  timeouts, and a conservative capability fallback for engines that do not
+  implement `capabilities`.
+- **`POST /api/datasets/remote`** — registers a dataset served by an engine, so a
+  remote dataset is usable from the browser.
+- 96 new checks across the protocol, transport and registration paths. The load
+  bearing one is **local/remote parity**: the same query through both backends is
+  compared value for value, so the protocol cannot silently lose information.
 
 ### Next
 
-1. **Real HTTP transport** implementing `EngineTransport` against a running engine.
-2. **Capability-driven UI** — disable unsupported aggregations instead of failing
-   at query time.
-3. **Push row-level calculated fields down** to the engine, which is what the
-   protocol's expression AST exists for; until then they require a backend that
-   can materialise.
+1. **Capability-driven UI** — disable unsupported aggregations instead of failing
+   at query time. The data is already on the wire; the UI does not read it yet.
+2. **Push row-level calculated fields down** to the engine, which is what the
+   protocol's expression AST exists for. Until then a remote dataset refuses them
+   with a typed error rather than registering a column that evaluates to null.
+3. **A connection dialog** — the routes exist, but the data pane offers no way to
+   reach them yet.
 4. **Then** the higher-value analytics gaps: joins, then table calculations.
    Ranked in *Known limitations*.
 

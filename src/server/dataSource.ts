@@ -74,6 +74,11 @@ export function isMaterialized(backend: DatasetBackend): backend is Materialized
   return typeof candidate.table === 'function' && typeof candidate.setTable === 'function';
 }
 
+/** True when a dataset is served by a remote engine rather than held locally. */
+export function isRemote(backend: DatasetBackend): backend is RemoteBackend {
+  return backend instanceof RemoteBackend;
+}
+
 // ------------------------------------------------------------ local path ---
 
 /**

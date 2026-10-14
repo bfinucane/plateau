@@ -13,6 +13,8 @@ const SUITES = [
   ['engine (expressions, CSV, inference, queries, calculated fields)', '../src/core/__tests__/engine.test.ts'],
   ['lod (level of detail expressions)', '../src/core/__tests__/lod.test.ts'],
   ['protocol (backend parity, wire contract, capabilities)', '../src/server/__tests__/protocol.test.ts'],
+  ['http transport (request shapes, error mapping, timeouts)', '../src/server/__tests__/httpTransport.test.ts'],
+  ['remote dataset (registration, failure modes)', '../src/server/__tests__/remoteDataset.test.ts'],
 ];
 
 const failures = [];

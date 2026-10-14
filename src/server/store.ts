@@ -30,8 +30,10 @@ import { buildTableFromRows, classifyKind, findColumn } from '../core/table.js';
 import { parseCsv } from '../core/csv.js';
 import { evaluateExpression, formulaAst, parseFormula, containsAggregate } from '../core/expression.js';
 import type { QuerySpec } from '../core/engine.js';
+import type { EngineTransport } from '../core/protocol.js';
 import {
   LocalBackend,
+  RemoteBackend,
   isMaterialized,
   type DatasetBackend,
   type MaterializedBackend,
@@ -173,6 +175,52 @@ export function createDatasetFromCsv(
 
 export function getDataset(id: string): Dataset | undefined {
   return datasets.get(id);
+}
+
+/**
+ * Registers a dataset served by a remote engine.
+ *
+ * The catalog is read eagerly so a bad URL, an absent dataset or a protocol
+ * mismatch fails here — at the point a human is watching — rather than later,
+ * on the first drag of a field. Nothing is materialised: the metadata comes from
+ * the engine's own catalog.
+ *
+ * Row-level calculated fields are not available on a remote dataset; see
+ * `addCalculatedField` for why, and for what would fix it.
+ */
+export async function createRemoteDataset(options: {
+  name: string;
+  dataset: string;
+  transport: EngineTransport;
+}): Promise<Dataset> {
+  const id = randomUUID();
+  const backend = new RemoteBackend({
+    id: options.dataset,
+    name: options.name,
+    source: 'remote engine',
+    createdAt: new Date().toISOString(),
+    transport: options.transport,
+  });
+
+  // Eagerly prove the connection works before registering anything.
+  const schema = await backend.schema();
+
+  const dataset: Dataset = {
+    meta: {
+      id,
+      name: options.name,
+      rowCount: await backend.rowCount(),
+      columnCount: schema.length,
+      source: 'remote engine',
+      createdAt: new Date().toISOString(),
+      columns: describeColumns(schema),
+    },
+    backend,
+    calculated: new Map(),
+  };
+
+  datasets.set(id, dataset);
+  return dataset;
 }
 
 export function listDatasets(): DatasetMeta[] {

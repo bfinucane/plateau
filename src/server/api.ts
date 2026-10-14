@@ -13,11 +13,14 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { QuerySpec } from '../core/engine.js';
+import { ProtocolError } from '../core/protocol.js';
 import { defaultAggregation, type Aggregation } from '../core/types.js';
+import { HttpEngineTransport } from './httpTransport.js';
 import {
   CalculatedFieldError,
   addCalculatedField,
   createDatasetFromCsv,
+  createRemoteDataset,
   datasetColumns,
   deleteDataset,
   fieldDomain,
@@ -260,6 +263,75 @@ export function createServer() {
     } catch (error) {
       res.status(400).json({
         error: error instanceof Error ? error.message : 'Query failed',
+      });
+    }
+  });
+
+  // ------------------------------------------------------------------ remote
+  /**
+   * Reports what an engine at `url` offers, without registering anything.
+   *
+   * Lets the UI show a dataset picker and warn about unsupported features before
+   * the user commits to a connection.
+   */
+  app.get('/api/engine/probe', async (req, res) => {
+    const url = String(req.query.url ?? '').trim();
+    if (!url) {
+      res.status(400).json({ error: 'url is required' });
+      return;
+    }
+    try {
+      const transport = new HttpEngineTransport({ baseUrl: url, timeoutMs: 10_000 });
+      const capabilities = await transport.capabilities();
+      res.json({ url, reachable: true, capabilities });
+    } catch (error) {
+      // Unreachable is a normal answer here, not a server fault.
+      res.json({
+        url,
+        reachable: false,
+        error: error instanceof Error ? error.message : 'Engine did not respond',
+        code: error instanceof ProtocolError ? error.code : 'engine_error',
+      });
+    }
+  });
+
+  /** Registers a dataset held by a remote engine. */
+  app.post('/api/datasets/remote', async (req, res) => {
+    const { url, dataset, name } = req.body as {
+      url?: string;
+      dataset?: string;
+      name?: string;
+    };
+
+    if (!url?.trim()) {
+      res.status(400).json({ error: 'url is required' });
+      return;
+    }
+    if (!dataset?.trim()) {
+      res.status(400).json({ error: 'dataset is required' });
+      return;
+    }
+
+    try {
+      const transport = new HttpEngineTransport({ baseUrl: url, timeoutMs: 30_000 });
+      const created = await createRemoteDataset({
+        name: name?.trim() || dataset.trim(),
+        dataset: dataset.trim(),
+        transport,
+      });
+      res.status(201).json({ dataset: created.meta });
+    } catch (error) {
+      if (error instanceof ProtocolError) {
+        // The engine answered and rejected us; the status is a property of that
+        // conversation, so it is surfaced rather than flattened to 500.
+        res.status(error.code === 'unknown_dataset' ? 404 : 400).json({
+          error: error.message,
+          code: error.code,
+        });
+        return;
+      }
+      res.status(502).json({
+        error: error instanceof Error ? error.message : 'Could not reach the engine',
       });
     }
   });
