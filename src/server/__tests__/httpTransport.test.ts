@@ -9,9 +9,17 @@
  */
 
 import { createServer, type Server } from 'node:http';
+import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
+import { AGGREGATIONS } from '../../core/types.js';
 import { PROTOCOL_VERSION, ProtocolError } from '../../core/protocol.js';
 import { HttpEngineTransport, conservativeCapabilities } from '../httpTransport.js';
+
+/** The filter operators the protocol documents; mirrors `FilterOperator`. */
+const FILTER_OPERATORS = [
+  'in', 'notIn', 'equals', 'notEquals', 'gt', 'gte', 'lt', 'lte', 'between',
+  'contains', 'startsWith', 'endsWith', 'isNull', 'notNull', 'top', 'bottom',
+];
 
 let passed = 0;
 let failed = 0;
@@ -339,8 +347,63 @@ async function main(): Promise<void> {
       /Could not reach the engine/.test(caught?.message ?? ''), caught?.message);
   }
 
-  section('Headers and capability defaults');
+  section('Documentation stays in step with the code');
 
+  {
+    // The wire format is documented for a separate implementer in another
+    // language, so the doc and the constant are two sources of truth for one
+    // fact. A silent drift would have the Rust side implementing v2 against a
+    // client still sending v1 — a mismatch that only shows up at runtime, in
+    // the one place no test can reach.
+    const docPath = new URL('../../../docs/ENGINE-PROTOCOL.md', import.meta.url);
+    let doc = '';
+    try {
+      doc = readFileSync(docPath, 'utf8');
+    } catch (error) {
+      check('the protocol document exists', false, String(error));
+    }
+
+    if (doc) {
+      check('the document exists and is non-trivial', doc.length > 2000, `${doc.length} chars`);
+      check(`the document states PROTOCOL_VERSION ${PROTOCOL_VERSION}`,
+        doc.includes(`PROTOCOL_VERSION = ${PROTOCOL_VERSION}`),
+        `looking for "PROTOCOL_VERSION = ${PROTOCOL_VERSION}"`);
+
+      // Every aggregation the client can send must be listed, or the engine
+      // implementer will not know it exists.
+      const missing = AGGREGATIONS.filter((aggregation) => !doc.includes(aggregation));
+      check('the document lists every aggregation the client may send',
+        missing.length === 0, `missing: ${missing.join(', ')}`);
+
+      // Same for the filter operators.
+      const missingOperators = FILTER_OPERATORS.filter((op) => !doc.includes(op));
+      check('the document lists every filter operator',
+        missingOperators.length === 0, `missing: ${missingOperators.join(', ')}`);
+
+      // And the AST node types the engine must evaluate.
+      const nodeTypes = ['field', 'unary', 'binary', 'call', 'if', 'lod'];
+      const missingNodes = nodeTypes.filter((type) => !doc.includes(`'${type}'`));
+      check('the document lists every AST node type',
+        missingNodes.length === 0, `missing: ${missingNodes.join(', ')}`);
+
+      // Every error code the transport can raise must be documented, or the
+      // engine cannot know what to return.
+      const codes = [
+        'unknown_dataset',
+        'unsupported_aggregation',
+        'unsupported_filter',
+        'unsupported_expression',
+        'invalid_argument',
+        'engine_error',
+        'version_mismatch',
+      ];
+      const missingCodes = codes.filter((code) => !doc.includes(code));
+      check('the document lists every protocol error code',
+        missingCodes.length === 0, `missing: ${missingCodes.join(', ')}`);
+    }
+  }
+
+  section('Headers and capability defaults');
   {
     const { server, port, requests } = await startStub(() => ({ body: catalog }));
     const transport = new HttpEngineTransport({
