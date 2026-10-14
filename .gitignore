@@ -10,6 +10,10 @@ dist/
 # Generated sample dataset — recreate with `npm run seed`
 data/superstore.csv
 
+# Fixtures for the olap_engine client — recreate with `npm run export:fixtures`.
+# Derived data; the 1.2 MB raw dump especially does not belong in history.
+engine-fixtures/
+
 # Saved workbook state (user-specific)
 data/workbook.json
 

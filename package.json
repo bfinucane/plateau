@@ -12,6 +12,7 @@
     "start": "node scripts/run.mjs src/server/index.ts",
     "serve": "node scripts/run.mjs src/server/index.ts --serve-static",
     "seed": "node scripts/run.mjs scripts/generate-superstore.ts",
+    "export:fixtures": "node scripts/export-engine-fixtures.mjs",
     "test": "node scripts/test.mjs",
     "test:ui": "node e2e/verify-ui.mjs",
     "typecheck": "tsc --noEmit"
