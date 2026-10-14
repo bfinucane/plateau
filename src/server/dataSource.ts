@@ -20,7 +20,7 @@
 
 import type { ColumnSchema, DataTable } from '../core/types.js';
 import type { Filter } from '../core/filters.js';
-import type { AstNode } from '../core/expression.js';
+import { formulaAst, type AstNode } from '../core/expression.js';
 import type { QueryResult, QuerySpec } from '../core/engine.js';
 import {
   PROTOCOL_VERSION,
@@ -204,6 +204,15 @@ export class RemoteBackend implements DatasetBackend {
   /** Cached catalog; the client invalidates by constructing a new backend. */
   private catalog: CatalogResponse | null = null;
   private caps: Capabilities | null = null;
+  /**
+   * Calculated-field formulas defined against this dataset, by name.
+   *
+   * The engine cannot evaluate a field it has never been told about, so a query
+   * referencing a calculated field must carry the formula. These are used both
+   * to populate `expressions` on the request and to detect LOD dependencies
+   * without asking the engine to evaluate anything first.
+   */
+  private formulas: Map<string, string> = new Map();
 
   constructor(options: {
     id: string;
@@ -217,6 +226,21 @@ export class RemoteBackend implements DatasetBackend {
     this.source = options.source;
     this.createdAt = options.createdAt;
     this.transport = options.transport;
+  }
+
+  /** Registers a calculated field so it can be sent to the engine. */
+  defineFormula(name: string, formula: string): void {
+    this.formulas.set(name, formula);
+  }
+
+  /** Forgets a calculated field. */
+  forgetFormula(name: string): void {
+    this.formulas.delete(name);
+  }
+
+  /** Names of every calculated field known to this backend. */
+  formulaNames(): string[] {
+    return [...this.formulas.keys()];
   }
 
   private async ensureCatalog(): Promise<CatalogResponse> {
@@ -245,11 +269,31 @@ export class RemoteBackend implements DatasetBackend {
 
     const request = specToRequest(this.id, spec);
 
+    // Attach the formulas for any calculated field the query references. Without
+    // this the engine receives a field name it has never been told about, and
+    // the expression AST the protocol carries would be pointless.
+    const referenced = [
+      ...request.groupBy.map((d) => d.name),
+      ...request.measures.map((m) => m.name),
+    ];
+    const expressions: Record<string, AstNode> = {};
+    for (const field of referenced) {
+      const formula = this.formulas.get(field);
+      if (!formula) continue;
+      try {
+        expressions[field] = formulaAst(formula);
+      } catch {
+        // An unparseable stored formula is a bug elsewhere; leaving it out lets
+        // the engine report the unknown field instead of guessing here.
+      }
+    }
+    if (Object.keys(expressions).length > 0) request.expressions = expressions;
+
     // A client-side LOD fallback is required, not optional: an engine that does
-    // not implement LOD semantics must not silently return wrong numbers. Where
-    // the engine cannot help, the client computes it — which needs the rows.
-    const needsLodLocally =
-      !capabilities?.supportsLod && requestContainsLod(request);
+    // not implement LOD semantics must not be asked to evaluate one, because it
+    // will return plausible wrong numbers rather than an error. Where the engine
+    // cannot help, the client computes it — which needs the rows.
+    const needsLodLocally = !capabilities?.supportsLod && requestContainsLod(request);
 
     if (needsLodLocally) {
       const table = await this.materializeTable();
@@ -399,27 +443,89 @@ export function specToRequest(datasetId: string, spec: QuerySpec): QueryRequest 
   return request;
 }
 
-/** True when any filter or expression references an LOD node. */
+/**
+ * True when a request needs LOD semantics the engine has said it cannot provide.
+ *
+ * Detection is deliberately pessimistic and transitive. A formula such as
+ * `MAX([RegionTotal])` contains no LOD textually, but `[RegionTotal]` may be an
+ * LOD — so every referenced calculated field's own formula is parsed and walked
+ * as well. Missing a transitive LOD would mean asking the engine to compute
+ * something it cannot, which yields a plausible wrong number rather than an
+ * error: the failure mode this whole check exists to prevent.
+ *
+ * Anything that fails to parse also counts as "handle it locally". Refusing to
+ * delegate is always safe; delegating wrongly is not.
+ */
 function requestContainsLod(request: QueryRequest): boolean {
-  const hasLod = (node: AstNode | undefined): boolean => {
-    if (!node) return false;
+  const walk = (node: AstNode): boolean => {
     switch (node.type) {
       case 'lod':
         return true;
       case 'unary':
-        return hasLod(node.operand);
+        return walk(node.operand);
       case 'binary':
-        return hasLod(node.left) || hasLod(node.right);
+        return walk(node.left) || walk(node.right);
       case 'call':
-        return node.args.some(hasLod);
+        return node.args.some(walk);
       case 'if':
         return (
-          node.branches.some((b) => hasLod(b.condition) || hasLod(b.result)) ||
-          hasLod(node.otherwise ?? undefined)
+          node.branches.some((b) => walk(b.condition) || walk(b.result)) ||
+          walk(node.otherwise as AstNode)
         );
       default:
         return false;
     }
   };
-  return Object.values(request.expressions ?? {}).some(hasLod);
+
+  /** Follows a formula's references through other calculated fields. */
+  const containsLodTransitively = (
+    node: AstNode,
+    visited: Set<string>,
+  ): boolean => {
+    if (walk(node)) return true;
+
+    const references = new Set<string>();
+    collectReferences(node, references);
+    for (const name of references) {
+      if (visited.has(name)) continue;
+      visited.add(name);
+      const formula = request.expressions?.[name];
+      if (!formula) continue;
+      if (containsLodTransitively(formula, visited)) return true;
+    }
+    return false;
+  };
+
+  for (const expression of Object.values(request.expressions ?? {})) {
+    if (containsLodTransitively(expression, new Set())) return true;
+  }
+  return false;
+}
+
+/** Collects every field name an AST references. */
+function collectReferences(node: AstNode, out: Set<string>): void {
+  switch (node.type) {
+    case 'field':
+      out.add(node.name);
+      break;
+    case 'unary':
+      collectReferences(node.operand, out);
+      break;
+    case 'binary':
+      collectReferences(node.left, out);
+      collectReferences(node.right, out);
+      break;
+    case 'call':
+      node.args.forEach((arg) => collectReferences(arg, out));
+      break;
+    case 'if':
+      node.branches.forEach((branch) => {
+        collectReferences(branch.condition, out);
+        collectReferences(branch.result, out);
+      });
+      if (node.otherwise) collectReferences(node.otherwise as AstNode, out);
+      break;
+    default:
+      break;
+  }
 }

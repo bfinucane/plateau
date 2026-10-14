@@ -580,6 +580,123 @@ async function main(): Promise<void> {
         JSON.stringify(table.schema.map((c) => c.name)));
   }
 
+  section('LOD fallback actually triggers');
+
+  {
+    // This is the regression guard for a real bug. `requestContainsLod` reads
+    // `request.expressions`, but nothing populated it, so the check was dead
+    // code: an engine declaring `supportsLod: false` was still asked to evaluate
+    // LOD formulas, and would have returned plausible wrong numbers.
+    //
+    // The stub engine below records whether a query reached it, so "did the
+    // client fall back?" is observable rather than inferred.
+    const table = buildFixture();
+    const { RemoteBackend: RB } = await import('../dataSource.js');
+
+    /** Counts queries that actually reach the engine. */
+    class CountingEngine extends FakeEngine {
+      queryCount = 0;
+      async query(request: QueryRequest): Promise<QueryResponse> {
+        this.queryCount++;
+        return super.query(request);
+      }
+    }
+
+    const engine = new CountingEngine(buildFixture(), { supportsLod: false });
+    const backend = new RB({
+      id: 'fixture',
+      name: 'Fixture',
+      source: 'test',
+      createdAt: new Date().toISOString(),
+      transport: engine,
+    });
+
+    // An LOD formula, registered the way the store would register it.
+    backend.defineFormula('RegionTotal', '{ FIXED [Region] : SUM([Sales]) }');
+
+    const withLod = await backend.query({
+      fields: [
+        { name: 'Region', kind: 'dimension' },
+        { name: 'RegionTotal', kind: 'measure', aggregation: 'SUM' },
+      ],
+    });
+
+    check('a query naming an LOD field does NOT reach the engine',
+      engine.queryCount === 0, `engine saw ${engine.queryCount} quer(ies)`);
+    check('the LOD query still returns rows', withLod.table.rowCount > 0,
+      String(withLod.table.rowCount));
+
+    // A query with no LOD must still go to the engine — the fallback must not
+    // swallow everything.
+    await backend.query({
+      fields: [
+        { name: 'Region', kind: 'dimension' },
+        { name: 'Sales', kind: 'measure', aggregation: 'SUM' },
+      ],
+    });
+    check('a plain query DOES reach the engine', engine.queryCount === 1,
+      `engine saw ${engine.queryCount} quer(ies)`);
+
+    // Transitive: MAX([RegionTotal]) has no LOD textually.
+    const before = engine.queryCount;
+    await backend.query({
+      fields: [{ name: 'RegionTotal', kind: 'measure', aggregation: 'MAX' }],
+    });
+    check('a transitive LOD reference also falls back locally',
+      engine.queryCount === before, `engine saw ${engine.queryCount - before} extra`);
+  }
+
+  section('Calculated fields are sent to the engine as ASTs');
+
+  {
+    const table = buildFixture();
+    const { RemoteBackend: RB } = await import('../dataSource.js');
+    const seen: QueryRequest[] = [];
+
+    class RecordingEngine extends FakeEngine {
+      async query(request: QueryRequest): Promise<QueryResponse> {
+        seen.push(structuredClone(request));
+        return super.query(request);
+      }
+    }
+
+    const backend = new RB({
+      id: 'fixture',
+      name: 'Fixture',
+      source: 'test',
+      createdAt: new Date().toISOString(),
+      // LOD support on, so nothing falls back and the request is observable.
+      transport: new RecordingEngine(buildFixture(), { supportsLod: true }),
+    });
+
+    backend.defineFormula('Margin', '[Profit] / [Sales]');
+
+    await backend.query({
+      fields: [
+        { name: 'Region', kind: 'dimension' },
+        { name: 'Margin', kind: 'measure', aggregation: 'AVG' },
+      ],
+    });
+
+    const request = seen[0];
+    check('the request carries an expression for the calculated field',
+      request?.expressions?.Margin !== undefined,
+      JSON.stringify(Object.keys(request?.expressions ?? {})));
+    check('the expression is an AST, not formula text',
+      (request?.expressions?.Margin as { type?: string })?.type === 'binary',
+      JSON.stringify(request?.expressions?.Margin));
+    check('the AST preserves both operands',
+      JSON.stringify(
+        ((request?.expressions?.Margin as { left?: unknown })?.left),
+      ) === JSON.stringify({ type: 'field', name: 'Profit' }),
+      JSON.stringify((request?.expressions?.Margin as { left?: unknown })?.left));
+
+    // A field with no formula must not be invented.
+    check('fields without a formula are not sent as expressions',
+      request?.expressions?.Region === undefined);
+    void table;
+  }
+
   section('Capabilities negotiation');
 
   {
