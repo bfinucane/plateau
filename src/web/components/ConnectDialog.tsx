@@ -176,6 +176,17 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
               onChange={(event) => setDataset(event.target.value)}
             />
           </label>
+          {/*
+            Deliberately NOT a datalist. The protocol defines no way to list an
+            engine's datasets, so any suggestions here would be guesses — and a
+            guessed name that does not exist produces "Dataset 'x' does not
+            exist" after the user has already committed to it. A field with no
+            suggestions is honest; a field with wrong ones is worse than empty.
+          */}
+          <p className="calc-hint">
+            Exactly as the engine names it, case-sensitive. The engine has no way to
+            list them yet, so check its own console for the name.
+          </p>
 
           <label className="calc-field">
             <span>
