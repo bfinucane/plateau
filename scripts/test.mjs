@@ -15,6 +15,7 @@ const SUITES = [
   ['protocol (backend parity, wire contract, capabilities)', '../src/server/__tests__/protocol.test.ts'],
   ['http transport (request shapes, error mapping, timeouts)', '../src/server/__tests__/httpTransport.test.ts'],
   ['remote dataset (registration, failure modes)', '../src/server/__tests__/remoteDataset.test.ts'],
+  ['table calculations (partitions, addressing, null handling)', '../src/web/__tests__/tableCalcs.test.ts'],
 ];
 
 const failures = [];
