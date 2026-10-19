@@ -89,7 +89,14 @@ async function screenshot(name) {
 }
 
 const clickButton = (label) => evaluate(`(() => {
-  const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === ${JSON.stringify(label)});
+  // Exact match first, then a prefix match keyed on the first word. Label text
+  // carries punctuation that is easy to get wrong across encodings, and a missed
+  // button reads as a missing feature rather than a typo.
+  const buttons = [...document.querySelectorAll('button')];
+  const wanted = ${JSON.stringify(label)};
+  const prefix = wanted.split(' ')[0];
+  const b = buttons.find(x => x.textContent.trim() === wanted)
+    ?? buttons.find(x => x.textContent.trim().startsWith(prefix));
   if (!b) return 'not found';
   if (b.disabled) return 'disabled';
   b.click();
@@ -155,11 +162,11 @@ try {
 
   // ------------------------------------------------------------- discovery
   console.log('\nDiscovery: the engine can list its cubes');
-  check('Connect… opens the dialog', (await clickButton('Connect…')) === 'ok');
+  check('Connect opens the dialog', (await clickButton('Connect')) === 'ok');
   await sleep(700);
   await setInput('connect-url', ENGINE);
   await sleep(300);
-  check('Test probes the engine', (await clickButton('Test')) === 'ok');
+  check('Test probes the engine', (await clickButton('Test connection')) === 'ok');
   await sleep(2500);
 
   const dialogText = await evaluate(`document.querySelector('.connect-dialog')?.innerText ?? ''`);
@@ -173,11 +180,26 @@ try {
     datasetTag === 'SELECT', String(datasetTag));
 
   const cubeOptions = await evaluate(
-    `[...document.querySelectorAll('#connect-dataset option')].map(o => o.value).filter(Boolean)`,
+    `[...document.querySelectorAll('#connect-dataset option')].map(o => ({ value: o.value, text: o.textContent.trim() })).filter(o => o.value)`,
   );
+  const cubeNames = cubeOptions.map((option) => option.value);
   check('the picker offers the engine\'s cubes',
-    Array.isArray(cubeOptions) && cubeOptions.includes('Sales') && cubeOptions.includes('RegionAttr'),
-    JSON.stringify(cubeOptions));
+    Array.isArray(cubeNames) && cubeNames.includes('Sales') && cubeNames.includes('RegionAttr'),
+    JSON.stringify(cubeNames));
+
+  /*
+   * A name alone does not say what a cube is. Choosing an attribute table (whose
+   * "value" column is text) looks like corrupt data rather than a wrong choice,
+   * so each option carries its shape and attribute tables are called out.
+   */
+  const salesOption = cubeOptions.find((option) => option.value === 'Sales');
+  const regionAttrOption = cubeOptions.find((option) => option.value === 'RegionAttr');
+  console.log('  Sales option     :', JSON.stringify(salesOption?.text));
+  console.log('  RegionAttr option:', JSON.stringify(regionAttrOption?.text));
+  check('a measure cube says how many rows it has',
+    /rows/.test(salesOption?.text ?? ''), JSON.stringify(salesOption?.text));
+  check('an attribute table is labelled as join-only',
+    /attribute table/i.test(regionAttrOption?.text ?? ''), JSON.stringify(regionAttrOption?.text));
 
   // ----------------------------------------------------------- the join UI
   console.log('\nChoosing Sales and attaching an attribute');
@@ -219,7 +241,7 @@ try {
   await sleep(300);
   await screenshot('47-join-dialog.png');
 
-  check('Connect runs', (await clickButton('Connect')) === 'ok');
+  check('Connect runs', (await clickButton('Add dataset')) === 'ok');
   await sleep(5000);
 
   check('the dialog closes', (await evaluate(`Boolean(document.querySelector('.connect-dialog'))`)) === false);
@@ -442,3 +464,4 @@ try {
 } finally {
   await teardown({ chrome, ws, profile: PROFILE });
 }
+

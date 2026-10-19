@@ -1997,3 +1997,19 @@ textarea {
   height: 1px;
   background: var(--border);
 }
+
+/* A warning, not a footnote: the wrong cube produces data that looks corrupt. */
+.calc-hint-warning {
+  background: #fff8e6;
+  border: 1px solid #f0d9a0;
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  color: #6b5313;
+}
+
+.calc-hint-warning code {
+  background: #fff;
+  border: 1px solid #f0d9a0;
+  border-radius: 3px;
+  padding: 0 3px;
+}

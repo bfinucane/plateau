@@ -14,6 +14,7 @@ import {
   fetchJoinCandidates,
   registerRemoteDataset,
   type EngineCapabilities,
+  type EngineCube,
   type JoinCandidate,
 } from '../api';
 
@@ -41,7 +42,7 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
   const [error, setError] = useState<string | null>(null);
 
   /** Cube names, once the engine has answered. Empty means "type it yourself". */
-  const [cubes, setCubes] = useState<string[]>([]);
+  const [cubes, setCubes] = useState<EngineCube[]>([]);
   /** Attribute cubes that share a dimension with the chosen dataset. */
   const [joinCandidates, setJoinCandidates] = useState<JoinCandidate[]>([]);
   const [joinCube, setJoinCube] = useState('');
@@ -49,6 +50,7 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
   const [joinAttributes, setJoinAttributes] = useState<string[]>([]);
 
   const chosenCandidate = joinCandidates.find((candidate) => candidate.cube === joinCube);
+  const chosenCube = cubes.find((cube) => cube.name === dataset);
 
   /**
    * Loads the cube list and the joinable attribute cubes.
@@ -168,11 +170,18 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
                 className="button-secondary"
                 onClick={() => void handleProbe()}
                 disabled={!url.trim() || probe.status === 'probing'}
+                title="Ask the engine what it can do, and list its datasets. Nothing is saved."
               >
-                {probe.status === 'probing' ? 'Checking…' : 'Test'}
+                {probe.status === 'probing' ? 'Checking' : 'Test connection'}
               </button>
             </div>
           </label>
+          {/* "Test" on its own is a mystery; say what it does and what it costs. */}
+          <p className="calc-hint">
+            {probe.status === 'reachable'
+              ? 'Connected. The engine’s datasets are listed below; nothing has been saved yet.'
+              : 'Test connection checks the address, reports what the engine supports, and lists its datasets. It does not save anything.'}
+          </p>
 
           {probe.status === 'reachable' && (
             <div className="connect-result connect-ok">
@@ -237,10 +246,17 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
                   void loadDiscovery(url.trim(), event.target.value);
                 }}
               >
-                <option value="">Choose a dataset…</option>
+                <option value="">Choose a dataset</option>
                 {cubes.map((cube) => (
-                  <option key={cube} value={cube}>
-                    {cube}
+                  <option key={cube.name} value={cube.name}>
+                    {cube.name}
+                    {cube.isAttributeTable
+                      ? ' — attribute table (join only)'
+                      : cube.rowCount === 0
+                        ? ' — empty'
+                        : cube.rowCount !== null
+                          ? ` — ${cube.rowCount.toLocaleString()} rows, ${cube.columnCount} columns`
+                          : ''}
                   </option>
                 ))}
               </select>
@@ -254,13 +270,21 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
             )}
           </label>
           {/*
-            The list only exists when the engine exposes it. When it does not, the
-            field stays free text and says so — an invented suggestion list would be
-            worse than none, because a wrong name fails only after the user commits.
+            An attribute table is not a view of the data: its "value" column holds
+            attribute text, so querying it shows product names where a measure was
+            expected. Said plainly, because nothing about the result looks like a
+            wrong choice.
           */}
+          {chosenCube?.isAttributeTable && (
+            <p className="calc-hint calc-hint-warning">
+              <strong>{chosenCube.name}</strong> holds attribute values, not measures — its{' '}
+              <code>value</code> column is text. It is meant to be joined onto a measure cube such
+              as <strong>Sales</strong>, not queried on its own.
+            </p>
+          )}
           <p className="calc-hint">
             {cubes.length > 0
-              ? 'Exactly as the engine names it, case-sensitive.'
+              ? 'A dataset is one cube on the engine. Pick the one you want; the list is read from the engine.'
               : 'Exactly as the engine names it, case-sensitive. This engine cannot list its datasets, so check its own console for the name.'}
           </p>
 
@@ -371,7 +395,12 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
             onClick={() => void handleConnect()}
             disabled={!canConnect}
           >
-            {busy ? 'Connecting…' : 'Connect'}
+            {/*
+              "Add dataset", not "Connect": the toolbar already has a Connect button
+              that OPENS this dialog, and two buttons sharing one label leaves it
+              unclear which does the work.
+            */}
+            {busy ? 'Adding' : 'Add dataset'}
           </button>
         </footer>
       </div>

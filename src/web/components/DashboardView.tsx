@@ -97,7 +97,7 @@ export function DashboardView({
             disabled={availableSheets.length === 0}
           >
             <option value="">
-              {availableSheets.length === 0 ? 'All worksheets are placed' : 'Choose a worksheet…'}
+              {availableSheets.length === 0 ? 'All worksheets are placed' : 'Choose a worksheet'}
             </option>
             {availableSheets.map((sheet) => (
               <option key={sheet.id} value={sheet.id}>

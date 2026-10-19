@@ -357,7 +357,30 @@ export function createServer() {
         res.json({ url, cubes: [], unsupported: true });
         return;
       }
-      const cubes = await transport.listDatasets();
+      const names = await transport.listDatasets();
+
+      /*
+       * A name alone is not enough to choose from. The engine's cubes include
+       * empty placeholders and ATTRIBUTE tables whose "value" column is text —
+       * picking one looks like a data problem rather than a wrong choice, because
+       * nothing in the UI said what the cube was.
+       */
+      const cubes = await Promise.all(
+        names.map(async (name) => {
+          try {
+            const catalog = await transport.describe(name);
+            return {
+              name,
+              rowCount: catalog.rowCount,
+              columnCount: catalog.columns.length,
+              isAttributeTable: Boolean(catalog.isAttributeTable),
+            };
+          } catch {
+            return { name, rowCount: null, columnCount: null, isAttributeTable: false };
+          }
+        }),
+      );
+
       res.json({ url, cubes });
     } catch (error) {
       res.json({ url, cubes: [], error: error instanceof Error ? error.message : 'Engine did not respond' });

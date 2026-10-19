@@ -263,7 +263,7 @@ export function App() {
   const handleUpload = useCallback(
     async (file: File) => {
       try {
-        setStatus(`Uploading ${file.name}…`);
+        setStatus(`Uploading ${file.name}`);
         const dataset = await uploadDataset(file);
         await app.refreshDatasets();
         await app.selectDataset(dataset.id);
@@ -356,7 +356,7 @@ export function App() {
         </label>
 
         <button type="button" className="button-secondary" onClick={() => setConnectOpen(true)}>
-          Connect…
+          Connect
         </button>
 
         <button

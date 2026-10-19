@@ -359,7 +359,7 @@ export function CalculatedFieldDialog({
             onClick={submit}
             disabled={Boolean(validationError) || !name.trim() || saving}
           >
-            {saving ? 'Saving…' : editing ? 'Save changes' : 'Create field'}
+            {saving ? 'Saving' : editing ? 'Save changes' : 'Create field'}
           </button>
         </footer>
       </div>

@@ -141,7 +141,14 @@ async function screenshot(name) {
 
 /** Clicks a button by its visible text. */
 const clickButton = (label) => evaluate(`(() => {
-  const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === ${JSON.stringify(label)});
+  // Exact match first, then a prefix match keyed on the first word. Label text
+  // carries punctuation that is easy to get wrong across encodings, and a missed
+  // button reads as a missing feature rather than a typo.
+  const buttons = [...document.querySelectorAll('button')];
+  const wanted = ${JSON.stringify(label)};
+  const prefix = wanted.split(' ')[0];
+  const b = buttons.find(x => x.textContent.trim() === wanted)
+    ?? buttons.find(x => x.textContent.trim().startsWith(prefix));
   if (!b) return 'not found';
   if (b.disabled) return 'disabled';
   b.click();
@@ -202,7 +209,7 @@ try {
 
   // ------------------------------------------------------- open the dialog
   console.log('\nOpening the Connect dialog');
-  const opened = await clickButton('Connect…');
+  const opened = await clickButton('Connect');
   await sleep(800);
   check('the Connect button is present', opened === 'ok', String(opened));
   check('the dialog opens', await dialogOpen());
@@ -210,14 +217,14 @@ try {
   const initial = await dialogText();
   check('the dialog explains the model', /query plan, not SQL/.test(initial), initial.slice(0, 80));
   check('Connect is disabled until a dataset is named',
-    (await evaluate(`[...document.querySelectorAll('.connect-dialog button')].find(b => b.textContent.trim() === 'Connect')?.disabled ?? null`)) === true);
+    (await evaluate(`[...document.querySelectorAll('.connect-dialog button')].find(b => b.textContent.trim() === 'Add dataset')?.disabled ?? null`)) === true);
   await screenshot('31-connect-dialog.png');
 
   // ------------------------------------------------------------- probe ok
   console.log('\nProbing a reachable engine');
   await setInput('connect-url', `http://127.0.0.1:${ENGINE_PORT}`);
   await sleep(300);
-  await clickButton('Test');
+  await clickButton('Test connection');
   await sleep(1800);
 
   const reachable = await dialogText();
@@ -242,7 +249,7 @@ try {
   console.log('\nProbing an unreachable engine');
   await setInput('connect-url', 'http://127.0.0.1:1');
   await sleep(300);
-  await clickButton('Test');
+  await clickButton('Test connection');
   await sleep(2000);
 
   const failed = await dialogText();
@@ -261,11 +268,11 @@ try {
   await sleep(400);
 
   const connectEnabled = await evaluate(
-    `[...document.querySelectorAll('.connect-dialog button')].find(b => b.textContent.trim() === 'Connect')?.disabled ?? null`,
+    `[...document.querySelectorAll('.connect-dialog button')].find(b => b.textContent.trim() === 'Add dataset')?.disabled ?? null`,
   );
   check('Connect enables once url and dataset are set', connectEnabled === false, String(connectEnabled));
 
-  await clickButton('Connect');
+  await clickButton('Add dataset');
   await sleep(3500);
 
   check('the dialog closes on success', !(await dialogOpen()));
@@ -320,11 +327,11 @@ try {
   // ------------------------------------- LOD support is believed and reported
   console.log('\nAn engine that does claim LOD support');
   stubSupportsLod = true;
-  await clickButton('Connect…');
+  await clickButton('Connect');
   await sleep(800);
   await setInput('connect-url', `http://127.0.0.1:${ENGINE_PORT}`);
   await sleep(300);
-  await clickButton('Test');
+  await clickButton('Test connection');
   await sleep(1800);
   const lodText = await dialogText();
   check('native LOD support is reported when claimed',
@@ -356,3 +363,4 @@ try {
   await teardown({ chrome, ws, profile: PROFILE });
   engine.close();
 }
+

@@ -247,9 +247,24 @@ export async function registerRemoteDataset(options: {
   return data.dataset;
 }
 
+/**
+ * A cube on the engine, with enough detail to choose it knowingly.
+ *
+ * `isAttributeTable` matters: those cubes hold attribute values (text) rather than
+ * measures, and are meant to be joined onto a measure cube, not queried on their
+ * own. Querying one looks like corrupt data — a "value" column full of product
+ * names — rather than a wrong choice.
+ */
+export interface EngineCube {
+  name: string;
+  rowCount: number | null;
+  columnCount: number | null;
+  isAttributeTable: boolean;
+}
+
 /** Cubes an engine holds. Empty when the engine predates the endpoint. */
-export async function fetchCubes(url: string): Promise<string[]> {
-  const data = await request<{ cubes: string[]; unsupported?: boolean }>(
+export async function fetchCubes(url: string): Promise<EngineCube[]> {
+  const data = await request<{ cubes: EngineCube[]; unsupported?: boolean }>(
     `/engine/cubes?url=${encodeURIComponent(url)}`,
   );
   return data.cubes ?? [];

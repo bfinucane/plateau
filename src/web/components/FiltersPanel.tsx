@@ -72,7 +72,7 @@ export function FiltersPanel({
             if (column) setPickerField(column);
           }}
         >
-          <option value="">Add filter…</option>
+          <option value="">Add filter</option>
           {available.map((column) => (
             <option key={column.name} value={column.name}>
               {column.label}
@@ -306,7 +306,7 @@ function CategoricalFilterDialog({
         </div>
 
         <div className="dialog-body">
-          {loading && <p className="dialog-note">Loading values…</p>}
+          {loading && <p className="dialog-note">Loading values</p>}
           {!loading && visible.length === 0 && <p className="dialog-note">No matching values.</p>}
           <ul className="value-list">
             {visible.map((value) => {
