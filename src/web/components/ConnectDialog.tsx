@@ -8,7 +8,14 @@
  */
 
 import { useState } from 'react';
-import { probeEngine, registerRemoteDataset, type EngineCapabilities } from '../api';
+import {
+  probeEngine,
+  fetchCubes,
+  fetchJoinCandidates,
+  registerRemoteDataset,
+  type EngineCapabilities,
+  type JoinCandidate,
+} from '../api';
 
 interface ConnectDialogProps {
   onClose: () => void;
@@ -33,6 +40,46 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /** Cube names, once the engine has answered. Empty means "type it yourself". */
+  const [cubes, setCubes] = useState<string[]>([]);
+  /** Attribute cubes that share a dimension with the chosen dataset. */
+  const [joinCandidates, setJoinCandidates] = useState<JoinCandidate[]>([]);
+  const [joinCube, setJoinCube] = useState('');
+  const [joinKey, setJoinKey] = useState('');
+  const [joinAttributes, setJoinAttributes] = useState<string[]>([]);
+
+  const chosenCandidate = joinCandidates.find((candidate) => candidate.cube === joinCube);
+
+  /**
+   * Loads the cube list and the joinable attribute cubes.
+   *
+   * Called after a successful probe and when the dataset name changes, because
+   * both determine what can be joined.
+   */
+  const loadDiscovery = async (engineUrl: string, primary: string) => {
+    try {
+      setCubes(await fetchCubes(engineUrl));
+    } catch {
+      // An engine without the endpoint is fine; the field stays free text.
+    }
+    if (!primary) {
+      setJoinCandidates([]);
+      return;
+    }
+    try {
+      const candidates = await fetchJoinCandidates(engineUrl, primary);
+      setJoinCandidates(candidates);
+      // Reset any join choice that no longer applies.
+      if (!candidates.some((candidate) => candidate.cube === joinCube)) {
+        setJoinCube('');
+        setJoinKey('');
+        setJoinAttributes([]);
+      }
+    } catch {
+      setJoinCandidates([]);
+    }
+  };
+
   const handleProbe = async () => {
     setProbe({ status: 'probing' });
     setError(null);
@@ -43,6 +90,9 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
           ? { status: 'reachable', capabilities: result.capabilities ?? null }
           : { status: 'unreachable', message: result.error ?? 'Engine did not respond' },
       );
+      if (result.reachable && result.capabilities?.supportsJoin) {
+        void loadDiscovery(url.trim(), dataset.trim());
+      }
     } catch (probeError) {
       setProbe({
         status: 'unreachable',
@@ -59,6 +109,15 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
         url: url.trim(),
         dataset: dataset.trim(),
         name: name.trim() || undefined,
+        // Only send a join when one was actually chosen; `attributes` may be empty
+        // but the cube and key must be meaningful.
+        join: joinCube
+          ? {
+              cube: joinCube,
+              using: joinKey || chosenCandidate?.using[0],
+              attributes: joinAttributes,
+            }
+          : undefined,
       });
       onConnected(created.id);
       onClose();
@@ -169,24 +228,122 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
 
           <label className="calc-field">
             <span>Dataset name on the engine</span>
-            <input
-              id="connect-dataset"
-              value={dataset}
-              placeholder="sales"
-              onChange={(event) => setDataset(event.target.value)}
-            />
+            {cubes.length > 0 ? (
+              <select
+                id="connect-dataset"
+                value={dataset}
+                onChange={(event) => {
+                  setDataset(event.target.value);
+                  void loadDiscovery(url.trim(), event.target.value);
+                }}
+              >
+                <option value="">Choose a dataset…</option>
+                {cubes.map((cube) => (
+                  <option key={cube} value={cube}>
+                    {cube}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id="connect-dataset"
+                value={dataset}
+                placeholder="sales"
+                onChange={(event) => setDataset(event.target.value)}
+              />
+            )}
           </label>
           {/*
-            Deliberately NOT a datalist. The protocol defines no way to list an
-            engine's datasets, so any suggestions here would be guesses — and a
-            guessed name that does not exist produces "Dataset 'x' does not
-            exist" after the user has already committed to it. A field with no
-            suggestions is honest; a field with wrong ones is worse than empty.
+            The list only exists when the engine exposes it. When it does not, the
+            field stays free text and says so — an invented suggestion list would be
+            worse than none, because a wrong name fails only after the user commits.
           */}
           <p className="calc-hint">
-            Exactly as the engine names it, case-sensitive. The engine has no way to
-            list them yet, so check its own console for the name.
+            {cubes.length > 0
+              ? 'Exactly as the engine names it, case-sensitive.'
+              : 'Exactly as the engine names it, case-sensitive. This engine cannot list its datasets, so check its own console for the name.'}
           </p>
+
+          {/*
+            Joins. Only offered when the engine reports support, because an older
+            engine IGNORES a join block silently — the user would get un-joined data
+            that looks correct.
+          */}
+          {probe.status === 'reachable' && probe.capabilities?.supportsJoin && joinCandidates.length > 0 && (
+            <div className="connect-join">
+              <label className="calc-field">
+                <span>
+                  Attach attributes <em className="field-optional">optional</em>
+                </span>
+                <select
+                  id="connect-join-cube"
+                  value={joinCube}
+                  onChange={(event) => {
+                    setJoinCube(event.target.value);
+                    setJoinAttributes([]);
+                    const candidate = joinCandidates.find((c) => c.cube === event.target.value);
+                    setJoinKey(candidate?.using[0] ?? '');
+                  }}
+                >
+                  <option value="">No attributes</option>
+                  {joinCandidates.map((candidate) => (
+                    <option key={candidate.cube} value={candidate.cube}>
+                      {candidate.cube}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {chosenCandidate && (
+                <>
+                  <label className="calc-field">
+                    <span>Matching on</span>
+                    <select
+                      id="connect-join-key"
+                      value={joinKey}
+                      onChange={(event) => setJoinKey(event.target.value)}
+                    >
+                      {chosenCandidate.using.map((key) => (
+                        <option key={key} value={key}>
+                          {key}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {/*
+                    The key must be in the view: the engine refuses an attribute
+                    whose key is not projected, since there is no hidden-field
+                    mechanism. Said here so it is expected rather than discovered.
+                  */}
+                  <p className="calc-hint">
+                    “{joinKey}” must be in the view for the attribute to resolve.
+                  </p>
+
+                  <fieldset className="connect-attributes">
+                    <legend>Attributes</legend>
+                    {chosenCandidate.attributes.map((attribute) => (
+                      <label key={attribute} className="marks-checkbox">
+                        <input
+                          type="checkbox"
+                          className="join-attribute-check"
+                          value={attribute}
+                          checked={joinAttributes.includes(attribute)}
+                          onChange={(event) =>
+                            setJoinAttributes((current) =>
+                              event.target.checked
+                                ? [...current, attribute]
+                                : current.filter((name) => name !== attribute),
+                            )
+                          }
+                        />
+                        <span>{attribute}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                </>
+              )}
+            </div>
+          )}
 
           <label className="calc-field">
             <span>

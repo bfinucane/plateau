@@ -24,12 +24,14 @@ import { formulaAst, type AstNode } from '../core/expression.js';
 import type { QueryResult, QuerySpec } from '../core/engine.js';
 import {
   PROTOCOL_VERSION,
+  ProtocolError,
   validateQueryRequest,
   type Capabilities,
   type CatalogResponse,
   type DimensionRef,
   type EngineColumn,
   type EngineTransport,
+  type JoinRequest,
   type MeasureRef,
   type QueryRequest,
   type QueryResponse,
@@ -214,6 +216,15 @@ export class RemoteBackend implements DatasetBackend {
    */
   private formulas: Map<string, string> = new Map();
 
+  /**
+   * The join this dataset attaches, if any.
+   *
+   * Kept on the backend rather than in the query spec because a join is a property
+   * of the data source — the shape of the view — not of an individual sheet. Every
+   * query against a joined dataset carries it.
+   */
+  private join: JoinRequest | null = null;
+
   constructor(options: {
     id: string;
     name: string;
@@ -233,6 +244,18 @@ export class RemoteBackend implements DatasetBackend {
     this.formulas.set(name, formula);
   }
 
+  /** Sets or clears the join applied to every query on this dataset. */
+  setJoin(join: JoinRequest | null): void {
+    this.join = join;
+    // The schema changes with the join, so a cached catalog would be stale.
+    this.catalog = null;
+  }
+
+  /** The join currently applied, if any. */
+  getJoin(): JoinRequest | null {
+    return this.join;
+  }
+
   /** Forgets a calculated field. */
   forgetFormula(name: string): void {
     this.formulas.delete(name);
@@ -248,9 +271,47 @@ export class RemoteBackend implements DatasetBackend {
     return this.catalog;
   }
 
+  /**
+   * Columns of the dataset, including any joined attributes.
+   *
+   * `describe` cannot list the attributes: they are members of the attribute cube's
+   * measure dimension, so they do not exist as columns anywhere until a join
+   * requests them. They are therefore synthesised from the join configuration,
+   * which keeps them visible in the data pane and draggable like any other field.
+   */
   async schema(): Promise<ColumnSchema[]> {
     const catalog = await this.ensureCatalog();
-    return catalog.columns.map((column) => engineColumnToSchema(column));
+    const base = catalog.columns.map((column) => engineColumnToSchema(column));
+
+    if (!this.join) return base;
+
+    const existing = new Set(base.map((column) => column.name));
+    // Captured before the map: `this.join` is re-read inside the closure below.
+    const join = this.join;
+    const attributes: ColumnSchema[] = join.attributes
+      .filter((name) => !existing.has(name))
+      .map((name) => ({
+        // Attributes are text and never measures — the engine refuses to aggregate
+        // them and keeps them out of measureNames.
+        name,
+        label: name,
+        dataType: 'string' as const,
+        logicalType: 'string' as const,
+        semanticType: 'nominal' as const,
+        kind: 'dimension' as const,
+        role: 'discrete' as const,
+        nullCount: 0,
+        cardinality: 0,
+        sampleValues: [],
+        min: null,
+        max: null,
+        isInteger: false,
+        // Marks these as arriving through a join, so the UI can explain why the
+        // field needs its key dimension in the view.
+        joinedVia: join.using,
+      }));
+
+    return [...base, ...attributes];
   }
 
   async rowCount(): Promise<number> {
@@ -268,6 +329,24 @@ export class RemoteBackend implements DatasetBackend {
     const capabilities = await this.capabilities();
 
     const request = specToRequest(this.id, spec);
+
+    /*
+     * Attach the join, but only when the engine says it understands one.
+     *
+     * An older engine IGNORES a `join` block silently. Sending it anyway would
+     * hand the user un-joined data with no error — the view would look correct and
+     * be missing every attribute. Refusing loudly is the only honest option.
+     */
+    if (this.join) {
+      if (!capabilities?.supportsJoin) {
+        throw new ProtocolError(
+          'unsupported_expression',
+          'This engine does not support joins, so the attached attributes cannot be retrieved.',
+          'capabilities.supportsJoin is false or absent',
+        );
+      }
+      request.join = this.join;
+    }
 
     // Attach the formulas for any calculated field the query references. Without
     // this the engine receives a field name it has never been told about, and

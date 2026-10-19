@@ -54,6 +54,14 @@ export interface ColumnSchema {
   isCalculated?: boolean;
   /** Formula source, when isCalculated is true. */
   formula?: string;
+  /**
+   * The conformed dimension an attribute column was joined through.
+   *
+   * Set for columns that only exist because of a join. The value names the
+   * dimension that must appear in the view for the attribute to resolve, since the
+   * engine refuses an attribute whose key is not projected.
+   */
+  joinedVia?: string;
 }
 
 /** A single stored cell. */

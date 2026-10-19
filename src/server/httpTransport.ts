@@ -90,6 +90,17 @@ export class HttpEngineTransport implements EngineTransport {
     return this.send<CatalogResponse>('GET', `/v1/${encodeURIComponent(dataset)}`);
   }
 
+  /**
+   * The engine's cube names.
+   *
+   * Until v1 gained this endpoint a client could validate a dataset name but never
+   * discover one, so the connect dialog had to ask the user to type it from memory.
+   */
+  async listDatasets(): Promise<string[]> {
+    const response = await this.send<{ datasets?: string[] }>('GET', '/v1/datasets');
+    return response.datasets ?? [];
+  }
+
   async sample(request: SampleRequest): Promise<SampleResponse> {
     const params = new URLSearchParams({ limit: String(request.limit) });
     if (request.offset !== undefined) params.set('offset', String(request.offset));

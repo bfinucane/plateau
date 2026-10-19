@@ -13,7 +13,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { QuerySpec } from '../core/engine.js';
-import { ProtocolError } from '../core/protocol.js';
+import { PROTOCOL_VERSION, ProtocolError } from '../core/protocol.js';
 import { defaultAggregation, type Aggregation } from '../core/types.js';
 import { HttpEngineTransport } from './httpTransport.js';
 import {
@@ -51,7 +51,7 @@ const upload = multer({
  * Writes the workbook, keeping the previous generation beside it.
  *
  * The current file is copied to `workbook.json.bak` before being replaced, so a
- * bad save — an empty session, a bug — costs at most the changes since the last
+ * bad save â€” an empty session, a bug â€” costs at most the changes since the last
  * save rather than the whole workbook. One generation is deliberate: more needs a
  * pruning policy, and the point is recoverability, not history.
  *
@@ -337,12 +337,114 @@ export function createServer() {
     }
   });
 
+  /**
+   * Lists the cubes an engine holds.
+   *
+   * Until the protocol gained `GET /v1/datasets` a client could validate a
+   * dataset name but never discover one â€” the connect dialog had to ask the user
+   * to type it from memory. This is what makes the name a choice instead of a
+   * guess.
+   */
+  app.get('/api/engine/cubes', async (req, res) => {
+    const url = String(req.query.url ?? '').trim();
+    if (!url) {
+      res.status(400).json({ error: 'url is required' });
+      return;
+    }
+    try {
+      const transport = new HttpEngineTransport({ baseUrl: url, timeoutMs: 10_000 });
+      if (typeof transport.listDatasets !== 'function') {
+        res.json({ url, cubes: [], unsupported: true });
+        return;
+      }
+      const cubes = await transport.listDatasets();
+      res.json({ url, cubes });
+    } catch (error) {
+      res.json({ url, cubes: [], error: error instanceof Error ? error.message : 'Engine did not respond' });
+    }
+  });
+
+  /**
+   * Reports which cubes can be joined to a given cube, and what they offer.
+   *
+   * A join keys off a CONFORMED dimension â€” one with the same name in both cubes â€”
+   * so the candidates are those that share a dimension with the primary. The
+   * attributes of each are the members of its measure dimension, which `describe`
+   * names but does not enumerate; the members come from a domain query.
+   */
+  app.get('/api/engine/join-candidates', async (req, res) => {
+    const url = String(req.query.url ?? '').trim();
+    const primary = String(req.query.dataset ?? '').trim();
+    if (!url || !primary) {
+      res.status(400).json({ error: 'url and dataset are required' });
+      return;
+    }
+
+    try {
+      const transport = new HttpEngineTransport({ baseUrl: url, timeoutMs: 20_000 });
+      const names = typeof transport.listDatasets === 'function' ? await transport.listDatasets() : [];
+      const primaryCatalog = await transport.describe(primary);
+      const primaryDimensions = new Set(
+        primaryCatalog.columns.filter((column) => column.dataType === 'string').map((column) => column.name),
+      );
+
+      const candidates: {
+        cube: string;
+        using: string[];
+        measureDimension: string;
+        attributes: string[];
+      }[] = [];
+
+      for (const name of names) {
+        if (name === primary) continue;
+        let catalog;
+        try {
+          catalog = await transport.describe(name);
+        } catch {
+          continue;
+        }
+        if (!catalog.isAttributeTable || !catalog.measureDimension) continue;
+
+        const shared = catalog.columns
+          .map((column) => column.name)
+          .filter((columnName) => primaryDimensions.has(columnName));
+        if (shared.length === 0) continue;
+
+        let attributes: string[] = [];
+        try {
+          const domain = await transport.query({
+            dataset: name,
+            protocolVersion: PROTOCOL_VERSION,
+            groupBy: [],
+            measures: [],
+            filters: [],
+            domainFor: [catalog.measureDimension],
+          });
+          attributes = (domain.domain[catalog.measureDimension] ?? []).map(String);
+        } catch {
+          // A cube that cannot enumerate its attributes is not usable as a join.
+          continue;
+        }
+        if (attributes.length === 0) continue;
+
+        candidates.push({ cube: name, using: shared, measureDimension: catalog.measureDimension, attributes });
+      }
+
+      res.json({ url, dataset: primary, candidates });
+    } catch (error) {
+      res.status(502).json({
+        error: error instanceof Error ? error.message : 'Could not reach the engine',
+      });
+    }
+  });
+
   /** Registers a dataset held by a remote engine. */
   app.post('/api/datasets/remote', async (req, res) => {
-    const { url, dataset, name } = req.body as {
+    const { url, dataset, name, join } = req.body as {
       url?: string;
       dataset?: string;
       name?: string;
+      join?: { cube?: string; using?: string; attributes?: string[] };
     };
 
     if (!url?.trim()) {
@@ -356,10 +458,53 @@ export function createServer() {
 
     try {
       const transport = new HttpEngineTransport({ baseUrl: url, timeoutMs: 30_000 });
+
+      // A join is only meaningful if the engine honours one. Sending it to an
+      // older engine would be ignored SILENTLY, handing back un-joined data that
+      // looks correct â€” so refuse instead.
+      let joinRequest;
+      if (join?.cube) {
+        const capabilities = await transport.capabilities();
+        if (!capabilities.supportsJoin) {
+          res.status(400).json({
+            error: 'This engine does not support joins, so attributes cannot be attached.',
+            code: 'unsupported_join',
+          });
+          return;
+        }
+        // Validate the key here rather than waiting for the first query: the
+        // engine only rejects a non-conformed `using` when a query runs, so a
+        // misconfigured join would register happily and then fail on every sheet,
+        // long after the user made the choice.
+        const target = join.using?.trim();
+        if (target) {
+          const [primaryCatalog, joinedCatalog] = await Promise.all([
+            transport.describe(dataset.trim()),
+            transport.describe(join.cube),
+          ]);
+          const inPrimary = primaryCatalog.columns.some((column) => column.name === target);
+          const inJoined = joinedCatalog.columns.some((column) => column.name === target);
+          if (!inPrimary || !inJoined) {
+            res.status(400).json({
+              error: `"${target}" is not a conformed dimension: it must exist in both ${dataset.trim()} and ${join.cube}.`,
+              code: 'invalid_join_key',
+            });
+            return;
+          }
+        }
+
+        joinRequest = {
+          cube: join.cube,
+          using: target || undefined,
+          attributes: Array.isArray(join.attributes) ? join.attributes : [],
+        };
+      }
+
       const created = await createRemoteDataset({
         name: name?.trim() || dataset.trim(),
         dataset: dataset.trim(),
         transport,
+        join: joinRequest,
       });
       res.status(201).json({ dataset: created.meta });
     } catch (error) {
@@ -455,3 +600,4 @@ export function samplePath(): string {
 }
 
 export { DATA_DIR, PROJECT_ROOT };
+

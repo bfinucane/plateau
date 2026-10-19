@@ -30,7 +30,7 @@ import { buildTableFromRows, classifyKind, findColumn } from '../core/table.js';
 import { parseCsv } from '../core/csv.js';
 import { evaluateExpression, formulaAst, parseFormula, containsAggregate } from '../core/expression.js';
 import type { QuerySpec } from '../core/engine.js';
-import type { EngineTransport } from '../core/protocol.js';
+import type { EngineTransport, JoinRequest } from '../core/protocol.js';
 import {
   LocalBackend,
   RemoteBackend,
@@ -54,6 +54,8 @@ export interface ColumnInfo {
   max: number | null;
   isCalculated: boolean;
   formula?: string;
+  /** Conformed dimension an attribute column was joined through, when joined. */
+  joinedVia?: string;
   /** Aggregation the UI should apply by default when this field is dropped. */
   defaultAggregation: string;
   sampleValues: (string | number | boolean)[];
@@ -116,6 +118,7 @@ export function describeColumns(schema: ColumnSchema[]): ColumnInfo[] {
     max: column.max,
     isCalculated: Boolean(column.isCalculated),
     formula: column.formula,
+    joinedVia: column.joinedVia,
     defaultAggregation: defaultAggregation(column),
     sampleValues: column.sampleValues.slice(0, 20).map(serializeCell) as (string | number | boolean)[],
   }));
@@ -192,6 +195,14 @@ export async function createRemoteDataset(options: {
   name: string;
   dataset: string;
   transport: EngineTransport;
+  /**
+   * Attributes to attach through a conformed dimension.
+   *
+   * A join is a property of the DATA SOURCE, not of a sheet: it determines the
+   * shape of the data every sheet sees, so it lives on the backend and is applied
+   * to every query.
+   */
+  join?: JoinRequest;
 }): Promise<Dataset> {
   const id = randomUUID();
   const backend = new RemoteBackend({
@@ -201,6 +212,8 @@ export async function createRemoteDataset(options: {
     createdAt: new Date().toISOString(),
     transport: options.transport,
   });
+
+  if (options.join) backend.setJoin(options.join);
 
   // Eagerly prove the connection works before registering anything.
   const schema = await backend.schema();

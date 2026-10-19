@@ -1923,3 +1923,37 @@ textarea {
     width: 190px;
   }
 }
+
+/* ------------------------------------------------------------ joins --- */
+
+/* The join block sits inside the connect dialog, above the display name. */
+.connect-join {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin: 4px 0 12px;
+  background: var(--bg-subtle);
+}
+
+.connect-attributes {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  margin: 0 0 8px;
+}
+
+.connect-attributes legend {
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+.connect-attributes .marks-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
+}

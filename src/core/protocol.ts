@@ -61,6 +61,39 @@ export interface CatalogResponse {
   rowCount: number;
   /** Optional column name holding the member label for a dimension table. */
   primaryKey?: string;
+  /**
+   * The column whose MEMBERS are the attachable attribute names.
+   *
+   * Attribute values are text, so in `columns[]` the attribute-name column looks
+   * like an ordinary string dimension. Nothing else distinguishes it, which is
+   * why this field exists.
+   */
+  measureDimension?: string | null;
+  /** True when this cube is an attribute source rather than a measure cube. */
+  isAttributeTable?: boolean;
+}
+
+/**
+ * Attaches attributes from an attribute cube through a CONFORMED dimension — one
+ * with the same name in both cubes. There is no arbitrary predicate, because
+ * cubes are not relational tables.
+ */
+export interface JoinRequest {
+  /** The attribute cube to attach from. */
+  cube: string;
+  /**
+   * The conformed dimension to key on.
+   *
+   * Omitted means infer, which fails as `invalid_argument` when more than one
+   * dimension conforms — so a client that can determine it should send it.
+   */
+  using?: string;
+  /**
+   * Members of the joined cube's measure dimension, in the output order wanted.
+   *
+   * May be empty. Attribute columns are APPENDED after the queried columns.
+   */
+  attributes: string[];
 }
 
 /**
@@ -81,6 +114,14 @@ export interface Capabilities {
   filterOperators: Filter['operator'][];
   /** Whether the engine evaluates `lod` AST nodes itself. */
   supportsLod: boolean;
+  /**
+   * Whether the engine honours a `join` block.
+   *
+   * Check this BEFORE offering joins: an older engine ignores `join` SILENTLY, so
+   * the user would get un-joined data with no error at all — the worst outcome,
+   * because the view looks right.
+   */
+  supportsJoin?: boolean;
   /** Expression functions the engine implements, by uppercase name. */
   expressionFunctions: string[];
   /** Whether the engine can return filter value lists in the query round trip. */
@@ -152,6 +193,15 @@ export interface QueryRequest {
    * engine already has the values to hand while grouping.
    */
   domainFor?: string[];
+  /**
+   * Attach attributes from an attribute cube.
+   *
+   * One join per request, left join only: every primary row is kept and a key with
+   * no attribute row yields `null`. The conformed key MUST also appear in
+   * `groupBy` — the engine refuses an attribute whose key is not projected, since
+   * there is no hidden-field mechanism.
+   */
+  join?: JoinRequest;
 }
 
 /**
@@ -245,6 +295,13 @@ export interface EngineTransport {
   sample(request: SampleRequest): Promise<SampleResponse>;
   query(request: QueryRequest): Promise<QueryResponse>;
   capabilities(): Promise<Capabilities>;
+  /**
+   * Names of the cubes the engine holds.
+   *
+   * Optional because v1 did not define it: without it a client can validate a name
+   * but never discover one, which is why the dataset field was a guess.
+   */
+  listDatasets?(): Promise<string[]>;
 }
 
 // ------------------------------------------------------------ conversion ---

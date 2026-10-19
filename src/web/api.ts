@@ -195,6 +195,13 @@ export interface EngineCapabilities {
   countDistinctExact?: boolean;
   filterOperators: string[];
   supportsLod: boolean;
+  /**
+   * Whether the engine honours a `join` block.
+   *
+   * An older engine ignores `join` SILENTLY, so joins must never be offered when
+   * this is not true — the user would get un-joined data with no error.
+   */
+  supportsJoin?: boolean;
   expressionFunctions: string[];
   supportsInlineDomain: boolean;
   maxRows?: number;
@@ -224,12 +231,40 @@ export async function registerRemoteDataset(options: {
   url: string;
   dataset: string;
   name?: string;
+  join?: { cube: string; using?: string; attributes: string[] };
 }): Promise<DatasetMeta> {
   const data = await request<{ dataset: DatasetMeta }>('/datasets/remote', {
     method: 'POST',
     body: JSON.stringify(options),
   });
   return data.dataset;
+}
+
+/** Cubes an engine holds. Empty when the engine predates the endpoint. */
+export async function fetchCubes(url: string): Promise<string[]> {
+  const data = await request<{ cubes: string[]; unsupported?: boolean }>(
+    `/engine/cubes?url=${encodeURIComponent(url)}`,
+  );
+  return data.cubes ?? [];
+}
+
+/** An attribute cube that can be joined to a given cube, and what it offers. */
+export interface JoinCandidate {
+  cube: string;
+  /** Dimensions present in BOTH cubes; the join key must be one of these. */
+  using: string[];
+  measureDimension: string;
+  attributes: string[];
+}
+
+export async function fetchJoinCandidates(
+  url: string,
+  dataset: string,
+): Promise<JoinCandidate[]> {
+  const data = await request<{ candidates: JoinCandidate[] }>(
+    `/engine/join-candidates?url=${encodeURIComponent(url)}&dataset=${encodeURIComponent(dataset)}`,
+  );
+  return data.candidates ?? [];
 }
 
 export async function runQuery(spec: QuerySpec): Promise<QueryResponse> {
