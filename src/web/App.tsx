@@ -556,6 +556,7 @@ export function App() {
                 querying={querying}
                 error={queryError}
                 tab={viewTab}
+                onRetry={app.retryQuery}
               />
             </div>
           </div>

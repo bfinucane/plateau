@@ -49,6 +49,7 @@ interface State {
 type Action =
   | { type: 'datasets/loaded'; datasets: DatasetMeta[] }
   | { type: 'dataset/selected'; dataset: DatasetMeta | null; datasetId: string | null }
+  | { type: 'dataset/rebound'; dataset: DatasetMeta; datasetId: string }
   | { type: 'dataset/updated'; dataset: DatasetMeta }
   | { type: 'workbook/loaded'; workbook: WorkbookState | null }
   | { type: 'sheet/added' }
@@ -141,6 +142,24 @@ function reducer(state: State, action: Action): State {
         activeDatasetId: action.datasetId,
         // Switching data sources invalidates the view.
         workbook: createInitialWorkbook(),
+      };
+
+    /*
+     * The SAME dataset under a new id.
+     *
+     * A restarted server re-seeds its datasets, so the id changes while the
+     * dataset does not. Resetting the workbook here would throw away the user's
+     * sheets in response to a server restart — the error would clear and the view
+     * would be silently wiped, which is worse than the error.
+     */
+    case 'dataset/rebound':
+      return {
+        ...state,
+        dataset: action.dataset,
+        activeDatasetId: action.datasetId,
+        datasets: state.datasets.map((d) =>
+          d.name === action.dataset.name ? { ...d, ...action.dataset } : d,
+        ),
       };
 
     case 'dataset/updated':
@@ -411,9 +430,19 @@ export function useAppState() {
   const [queryResult, setQueryResult] = useState<QueryResponse | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [querying, setQuerying] = useState(false);
+  /** Bumped by a retry so the query effect re-runs the same spec. */
+  const [attempt, setAttempt] = useState(0);
 
   // Track the in-flight request so stale responses cannot overwrite newer ones.
   const requestIdRef = useRef(0);
+
+  /**
+   * The active dataset's name, readable from callbacks without re-subscribing.
+   *
+   * Recovery matches by name because a restarted server re-seeds under a new id.
+   */
+  const datasetNameRef = useRef<string | null>(null);
+  datasetNameRef.current = state.dataset?.name ?? null;
 
   // --- initial load ------------------------------------------------------
   useEffect(() => {
@@ -477,13 +506,77 @@ export function useAppState() {
       })
       .catch((error: unknown) => {
         if (requestId !== requestIdRef.current) return;
+        const message = error instanceof Error ? error.message : 'Query failed';
+
+        /*
+         * A server restart loses its datasets: they live in memory, and the
+         * sample is re-seeded under a NEW id. The client is then holding a stale
+         * id and every query fails with "Dataset not found" — which looks like
+         * the app is broken, and no amount of changing the view fixes it.
+         *
+         * So resolve it once: re-read the dataset list, pick the same dataset by
+         * NAME (the id changed, the dataset did not), and let the retry re-run
+         * the query against the new id.
+         */
+        if (/dataset not found/i.test(message) && !recoveringRef.current) {
+          recoveringRef.current = true;
+          void recoverDataset()
+            .then((recovered) => {
+              recoveringRef.current = false;
+              if (recovered) {
+                // The new id flows into `spec`, which re-runs the query.
+                setAttempt((value) => value + 1);
+                return;
+              }
+              setQueryResult(null);
+              setQueryError(message);
+            })
+            .catch(() => {
+              recoveringRef.current = false;
+              setQueryResult(null);
+              setQueryError(message);
+            });
+          return;
+        }
+
         setQueryResult(null);
-        setQueryError(error instanceof Error ? error.message : 'Query failed');
+        setQueryError(message);
       })
       .finally(() => {
         if (requestId === requestIdRef.current) setQuerying(false);
       });
-  }, [specKey, spec]);
+    // `attempt` lets a retry re-run the same spec: the query only re-runs when the
+    // spec changes, so a failure would otherwise never clear.
+  }, [specKey, spec, attempt]);
+
+  /** Re-runs the active sheet's query. */
+  const retryQuery = useCallback(() => setAttempt((value) => value + 1), []);
+
+  /** Guards against several failed queries all trying to recover at once. */
+  const recoveringRef = useRef(false);
+
+  /**
+   * Re-points the app at a live dataset after the server lost its state.
+   *
+   * Matching by NAME rather than id is the point: a restarted server re-seeds the
+   * sample under a new id, so the id is exactly the thing that cannot be trusted.
+   *
+   * @returns true when a usable dataset was found and selected.
+   */
+  const recoverDataset = useCallback(async (): Promise<boolean> => {
+    const wanted = datasetNameRef.current;
+    const datasets = await fetchDatasets();
+    if (datasets.length === 0) return false;
+
+    const match =
+      (wanted ? datasets.find((dataset) => dataset.name === wanted) : undefined) ?? datasets[0];
+
+    const dataset = await fetchDataset(match.id);
+    // `rebound`, not `selected`: it is the same dataset, so the user's sheets must
+    // survive the id change.
+    dispatch({ type: 'dataset/rebound', dataset, datasetId: dataset.id });
+    return true;
+  }, []);
 
   // --- actions -----------------------------------------------------------
   const selectDataset = useCallback(async (datasetId: string) => {
@@ -563,6 +656,7 @@ export function useAppState() {
     queryResult,
     queryError,
     querying,
+    retryQuery,
     selectDataset,
     refreshDatasets,
     addFieldToShelf,
@@ -574,3 +668,4 @@ export function useAppState() {
 }
 
 export type AppApi = ReturnType<typeof useAppState>;
+

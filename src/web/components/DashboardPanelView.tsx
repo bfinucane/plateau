@@ -43,7 +43,7 @@ export function DashboardPanelView({
   onResize,
   onOpenSheet,
 }: DashboardPanelViewProps) {
-  const { result, error, loading, empty } = useSheetQuery(sheet ?? null, datasetId);
+  const { result, error, loading, empty, retry } = useSheetQuery(sheet ?? null, datasetId);
   const [dropTarget, setDropTarget] = useState(false);
 
   const style: React.CSSProperties = {
@@ -79,7 +79,7 @@ export function DashboardPanelView({
         onDragEnd={onEndDrag}
         title="Drag to reposition this panel"
       >
-        <span className="dash-panel-grip" aria-hidden="true">⣿</span>
+        <span className="dash-panel-grip" aria-hidden="true">â£¿</span>
         <span className="dash-panel-title">{panel.title ?? sheet?.name ?? 'Missing worksheet'}</span>
 
         <div className="dash-panel-actions">
@@ -90,7 +90,7 @@ export function DashboardPanelView({
               title="Swap position with the next panel"
               onClick={() => onSwapWith(panel.id, swapTargetId)}
             >
-              ⇄
+              â‡„
             </button>
           )}
           <label className="dash-size" title="Panel width in columns">
@@ -128,7 +128,7 @@ export function DashboardPanelView({
               title="Open this worksheet"
               onClick={() => onOpenSheet(sheet.id)}
             >
-              ↗
+              â†—
             </button>
           )}
           <button
@@ -137,7 +137,7 @@ export function DashboardPanelView({
             title="Remove from dashboard"
             onClick={() => onRemove(panel.id)}
           >
-            ×
+            Ã—
           </button>
         </div>
       </header>
@@ -165,6 +165,7 @@ export function DashboardPanelView({
               querying={loading}
               error={error}
               tab="viz"
+              onRetry={retry}
             />
           </ViewErrorBoundary>
         )}
@@ -175,5 +176,6 @@ export function DashboardPanelView({
 
 /** Compact grid geometry used by the layout hint. */
 export function panelGeometry(panel: DashboardPanel): string {
-  return `${panel.w}×${panel.h} at column ${panel.x + 1}, row ${panel.y + 1}`;
+  return `${panel.w}Ã—${panel.h} at column ${panel.x + 1}, row ${panel.y + 1}`;
 }
+

@@ -16,12 +16,22 @@ export interface SheetQuery {
   loading: boolean;
   /** True when the sheet has no fields placed and therefore issues no query. */
   empty: boolean;
+  /**
+   * Re-runs the query.
+   *
+   * Needed because the query only re-runs when the SPEC changes: turning a split
+   * or a table calculation on and off changes the rendering but not the query, so
+   * a previous failure — a server restart, a dropped connection — would otherwise
+   * sit on screen forever with no way out.
+   */
+  retry: () => void;
 }
 
 export function useSheetQuery(sheet: Sheet | null, datasetId: string | null): SheetQuery {
   const [result, setResult] = useState<QueryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   const empty = !sheet || isSheetEmpty(sheet);
 
@@ -66,7 +76,14 @@ export function useSheetQuery(sheet: Sheet | null, datasetId: string | null): Sh
       // Mark any in-flight response as stale when the spec changes.
       requestIdRef.current++;
     };
-  }, [specKey, spec]);
+    // `attempt` is in the dependency list so a retry re-runs the same spec.
+  }, [specKey, spec, attempt]);
 
-  return { result, error, loading, empty };
+  return {
+    result,
+    error,
+    loading,
+    empty,
+    retry: () => setAttempt((value) => value + 1),
+  };
 }
