@@ -538,6 +538,10 @@ export function App() {
                 onDropPayload={handleDropPayload}
                 onRemove={handleRemoveEncoding}
                 onUpdate={handleUpdateEncoding}
+                paneBy={activeSheet.paneBy}
+                onPaneChange={(paneBy) =>
+                  dispatch({ type: 'sheet/paneSplit', sheetId: activeSheet.id, paneBy })
+                }
               />
             )}
 

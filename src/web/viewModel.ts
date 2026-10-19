@@ -82,6 +82,15 @@ export interface Sheet {
   filters: Filter[];
   /** Optional fixed colour palette index. */
   palette?: number;
+  /**
+   * Dimension to repeat the view by, one pane per distinct value.
+   *
+   * Tableau's "split": the same view drawn once per pane, so several categories
+   * can be compared side by side instead of overlaid. The field must appear in
+   * the result — a dimension on any shelf — because the split is done on the
+   * returned rows, not by re-querying.
+   */
+  paneBy?: string;
 }
 
 /**

@@ -17,6 +17,7 @@ const SUITES = [
   ['remote dataset (registration, failure modes)', '../src/server/__tests__/remoteDataset.test.ts'],
   ['table calculations (partitions, addressing, null handling)', '../src/web/__tests__/tableCalcs.test.ts'],
   ['workbook backup (rotation, restore, corruption)', '../src/server/__tests__/workbookBackup.test.ts'],
+  ['split into panes (partitioning, ordering, refusals)', '../src/web/__tests__/split.test.ts'],
 ];
 
 const failures = [];

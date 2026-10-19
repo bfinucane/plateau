@@ -13,6 +13,9 @@ interface MarksCardProps {
   onDropPayload: (shelf: ShelfId, payload: DragPayload, index?: number) => void;
   onRemove: (shelf: ShelfId, encodingId: string) => void;
   onUpdate: (encodingId: string, patch: Partial<Encoding>) => void;
+  /** Dimension the view is repeated by, one pane per value. */
+  paneBy?: string;
+  onPaneChange: (paneBy?: string) => void;
 }
 
 /** The encodings that live on the Marks card, in Tableau's order. */
@@ -31,7 +34,31 @@ export function MarksCard({
   onDropPayload,
   onRemove,
   onUpdate,
+  paneBy,
+  onPaneChange,
 }: MarksCardProps) {
+  /**
+   * Dimensions that could be split by.
+   *
+   * Only dimensions already on a shelf: the split partitions the returned rows,
+   * so a field that is not in the result has nothing to partition. Offering it
+   * would be a control that cannot work.
+   */
+  const paneOptions = (() => {
+    const seen = new Set<string>();
+    for (const shelf of MARK_SHELVES) {
+      for (const encoding of shelves[shelf.id] ?? []) {
+        if (encoding.kind === 'dimension') seen.add(encoding.field);
+      }
+    }
+    for (const id of ['columns', 'rows'] as ShelfId[]) {
+      for (const encoding of shelves[id] ?? []) {
+        if (encoding.kind === 'dimension') seen.add(encoding.field);
+      }
+    }
+    return [...seen];
+  })();
+
   return (
     <div className="marks-card">
       <div className="marks-header">
@@ -49,6 +76,27 @@ export function MarksCard({
           ))}
         </select>
       </div>
+
+      {paneOptions.length > 0 && (
+        <div className="marks-split">
+          <label>
+            <span>Split by</span>
+            <select
+              className="pane-select"
+              value={paneBy ?? ''}
+              onChange={(event) => onPaneChange(event.target.value || undefined)}
+              title="Repeat the view once per value of this dimension"
+            >
+              <option value="">No split</option>
+              {paneOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
 
       <div className="marks-body">
         {MARK_SHELVES.map((shelf) => (
@@ -92,6 +140,7 @@ function MarkShelf({
       <span className="mark-shelf-label">{label}</span>
       <div
         className={`mark-shelf-drop${encodings.length === 0 ? ' is-empty' : ''}`}
+        data-shelf={id}
         onDragOver={(event) => {
           if (!hasDragPayload(event)) return;
           event.preventDefault();

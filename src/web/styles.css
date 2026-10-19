@@ -1803,6 +1803,88 @@ textarea {
   opacity: 0.65;
 }
 
+/* ---------------------------------------------------- split into panes --- */
+
+/* A split repeats the view once per value. The grid auto-fits so panes stay
+   readable as the window changes, rather than squeezing an arbitrary count into
+   a fixed number of columns. */
+.pane-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  padding: 8px;
+  overflow: auto;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 180px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+
+.pane-title {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--bg);
+}
+
+.pane-canvas {
+  flex: 1;
+  min-height: 0;
+}
+
+.pane-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* The split control sits under the mark type, above the encoding shelves. */
+.marks-split {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.marks-split label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.marks-split label > span {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+.marks-split select {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  font-size: 11px;
+}
+
 /* ------------------------------------------------------------------ narrow */
 
 @media (max-width: 1200px) {

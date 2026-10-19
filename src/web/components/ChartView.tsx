@@ -6,6 +6,7 @@
 import { useMemo } from 'react';
 import type { QueryResponse } from '../api';
 import { applyTableCalcs, buildChart, formatNumber, type ResolvedMark } from '../chartSpec';
+import { splitIntoPanes } from '../split';
 import { EChart } from '../EChart';
 import { effectiveMark, type Sheet } from '../viewModel';
 import { DataGrid } from './DataGrid';
@@ -44,6 +45,16 @@ function ChartViewInner({ sheet, result, querying, error, tab }: ChartViewProps)
     // extra measure column with a derived name.
     return buildChart(applyTableCalcs(result, sheet), sheet, mark);
   }, [result, sheet, mark]);
+
+  /**
+   * Panes, when the sheet is split.
+   *
+   * Computed from the un-split result so the same partition feeds every pane.
+   */
+  const split = useMemo(
+    () => (result && sheet.paneBy ? splitIntoPanes(result, sheet.paneBy) : { panes: [] }),
+    [result, sheet.paneBy],
+  );
 
   if (error) {
     return (
@@ -90,6 +101,42 @@ function ChartViewInner({ sheet, result, querying, error, tab }: ChartViewProps)
       <div className="view-message">
         <strong>{build.notice}</strong>
         <p>{summarise(result)}</p>
+      </div>
+    );
+  }
+
+  // A split renders one chart per pane. Each pane is built from its own slice of
+  // the result, so the same builder produces all of them and they cannot drift.
+  if (split.panes.length > 1) {
+    return (
+      <div className="view-chart view-panes">
+        <div className="pane-grid" data-pane-count={split.panes.length}>
+          {split.panes.map((pane) => {
+            const paneBuild = buildChart(applyTableCalcs(pane.result, sheet), sheet, mark);
+            return (
+              <div className="pane" key={pane.value}>
+                <div className="pane-title" title={pane.value}>
+                  {pane.value}
+                </div>
+                {paneBuild.notice ? (
+                  <div className="pane-placeholder">{paneBuild.notice}</div>
+                ) : (
+                  <EChart option={paneBuild.option} className="chart-canvas pane-canvas" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="view-footer">
+          <span>
+            {result.rows.length.toLocaleString()} mark{result.rows.length === 1 ? '' : 's'}
+          </span>
+          <span className="dot">·</span>
+          <span>
+            {split.panes.length} panes by {sheet.paneBy}
+          </span>
+        </div>
       </div>
     );
   }

@@ -56,6 +56,7 @@ type Action =
   | { type: 'sheet/selected'; sheetId: string }
   | { type: 'sheet/renamed'; sheetId: string; name: string }
   | { type: 'sheet/mark'; sheetId: string; mark: MarkType }
+  | { type: 'sheet/paneSplit'; sheetId: string; paneBy?: string }
   | { type: 'sheet/encodingAdded'; sheetId: string; shelf: ShelfId; encoding: Encoding }
   | { type: 'sheet/encodingRemoved'; sheetId: string; shelf: ShelfId; encodingId: string }
   | { type: 'sheet/encodingUpdated'; sheetId: string; encodingId: string; patch: Partial<Encoding> }
@@ -190,6 +191,17 @@ function reducer(state: State, action: Action): State {
 
     case 'sheet/mark':
       return mapSheet(state, action.sheetId, (sheet) => ({ ...sheet, mark: action.mark }));
+
+    case 'sheet/paneSplit':
+      return mapSheet(state, action.sheetId, (sheet) => {
+        // `undefined` clears the split; the key is dropped rather than set to
+        // undefined so the saved workbook stays clean.
+        if (!action.paneBy) {
+          const { paneBy: _dropped, ...rest } = sheet;
+          return rest;
+        }
+        return { ...sheet, paneBy: action.paneBy };
+      });
 
     case 'sheet/encodingAdded':
       return mapSheet(state, action.sheetId, (sheet) => {
