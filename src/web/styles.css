@@ -1980,3 +1980,20 @@ textarea {
   text-transform: none;
   letter-spacing: 0;
 }
+
+/* An attribute hangs off the dimension it keys on, so it is drawn as its child. */
+.field-row-indented {
+  margin-left: 18px;
+  position: relative;
+}
+
+/* The elbow that shows the parent-child relationship rather than mere offset. */
+.field-row-indented::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  width: 8px;
+  height: 1px;
+  background: var(--border);
+}

@@ -709,7 +709,35 @@ function buildBarLike(
       ...AXIS_LABEL_STYLE,
       rotate: axisLabels.length > 8 ? 32 : 0,
       hideOverlap: true,
-      ...(secondaryIndex >= 0 ? { lineHeight: 13 } : {}),
+      /*
+       * The indent has to be drawn, not typed.
+       *
+       * A multi-line category label is centred line by line, so leading spaces in
+       * the second line are cancelled and the child looks like a sibling. Rich
+       * styles give each line its own left edge and padding, which is what makes
+       * the hierarchy visible.
+       */
+      ...(secondaryIndex >= 0
+        ? {
+            lineHeight: 13,
+            /*
+             * Nested labels are wider, so the overlap hider starts dropping whole
+             * categories — two of four regions disappeared, which loses more than
+             * the overlap ever cost. At small counts every label is shown; past
+             * that the hider earns its keep again.
+             */
+            interval: (axisLabels.length <= 12 ? 0 : 'auto') as number | 'auto',
+            hideOverlap: axisLabels.length > 12,
+            formatter: (value: string) => {
+              const [outer = '', inner = ''] = String(value).split('\n');
+              return `{outer|${outer}}\n{inner|${inner.trim()}}`;
+            },
+            rich: {
+              outer: { align: 'left' as const, fontSize: 11, color: '#5b6472' },
+              inner: { align: 'left' as const, fontSize: 11, color: '#5b6472', padding: [0, 0, 0, 14] },
+            },
+          }
+        : {}),
     },
     axisLine: AXIS_LINE_STYLE,
     axisTick: { show: false },

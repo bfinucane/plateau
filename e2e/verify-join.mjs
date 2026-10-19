@@ -245,11 +245,31 @@ try {
   })()`);
   console.log('  groups:', JSON.stringify(groups));
   const dimensionsGroup = groups.find((group) => /^Dimensions/.test(group.title));
-  const attributesGroup = groups.find((group) => /attributes/i.test(group.title));
   check('dimensions are counted without the attribute',
     dimensionsGroup?.count === '3', JSON.stringify(dimensionsGroup));
-  check('attributes get their own group',
-    attributesGroup?.count === '1', JSON.stringify(attributesGroup));
+
+  /*
+   * The attribute must sit UNDER the dimension it keys on, not in a group of its
+   * own and not merely somewhere in the list: indented, immediately after Region,
+   * with the same treatment as a child row.
+   */
+  const paneOrder = await evaluate(`(() => {
+    return [...document.querySelectorAll('.field-list .field-row')].map(row => ({
+      name: row.querySelector('.field-name')?.textContent.trim() ?? '',
+      indented: row.classList.contains('field-row-indented'),
+      offset: row.getBoundingClientRect().left,
+    }));
+  })()`);
+  console.log('  pane rows:', JSON.stringify(paneOrder.map((r) => `${r.name}${r.indented ? '*' : ''}`)));
+  const regionIndex = paneOrder.findIndex((row) => row.name === 'Region');
+  const managerRow = paneOrder.find((row) => row.name === 'Manager');
+  const managerIndex = paneOrder.findIndex((row) => row.name === 'Manager');
+  check('the attribute follows its key directly',
+    managerIndex === regionIndex + 1, `${regionIndex} -> ${managerIndex}`);
+  check('the attribute row is marked as indented', managerRow?.indented === true);
+  check('the attribute is drawn to the right of its key',
+    (managerRow?.offset ?? 0) > (paneOrder[regionIndex]?.offset ?? 0),
+    `${paneOrder[regionIndex]?.offset} -> ${managerRow?.offset}`);
 
   const badge = await evaluate(`(() => {
     const row = [...document.querySelectorAll('.field-row')]

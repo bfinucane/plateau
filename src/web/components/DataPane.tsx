@@ -3,7 +3,7 @@
  * measures, with search and calculated-field management.
  */
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import type { ColumnInfo } from './../api';
 import { setDragPayload } from './../dnd';
 
@@ -63,22 +63,38 @@ export function DataPane({
   const [showAttributes, setShowAttributes] = useState(true);
   const [contextColumn, setContextColumn] = useState<ColumnInfo | null>(null);
 
-  const { dimensions, measures, attributes } = useMemo(() => {
+  const { dimensions, measures, attributesByKey, orphanAttributes } = useMemo(() => {
     const filtered = columns.filter((column) => matchesSearch(column, search));
+    const attributeColumns = filtered.filter((c) => c.kind === 'dimension' && c.joinedVia);
+    const dimensionColumns = filtered.filter((c) => c.kind === 'dimension' && !c.joinedVia);
+
+    // Grouped by key so each attribute can be rendered under its own dimension.
+    const byKey = new Map<string, ColumnInfo[]>();
+    for (const attribute of attributeColumns) {
+      const key = attribute.joinedVia as string;
+      byKey.set(key, [...(byKey.get(key) ?? []), attribute]);
+    }
+
+    const dimensionNames = new Set(dimensionColumns.map((column) => column.name));
+
     return {
       // Joined attributes are dimensions to the engine, but they are not
       // dimensions of this dataset: they arrive through a join, one row per key.
       // Counting them as dimensions made the pane claim 4 where the data has 3.
-      attributes: filtered.filter((c) => c.kind === 'dimension' && c.joinedVia),
-      dimensions: filtered.filter((c) => c.kind === 'dimension' && !c.joinedVia),
+      attributesByKey: byKey,
+      // An attribute whose key is not present cannot be nested anywhere.
+      orphanAttributes: attributeColumns.filter(
+        (attribute) => !dimensionNames.has(attribute.joinedVia as string),
+      ),
+      dimensions: dimensionColumns,
       measures: filtered.filter((c) => c.kind === 'measure'),
     };
   }, [columns, search]);
 
-  const renderField = (column: ColumnInfo) => (
+  const renderField = (column: ColumnInfo, indented = false) => (
     <li key={column.name}>
       <div
-        className={`field-row${column.isCalculated ? ' is-calculated' : ''}`}
+        className={`field-row${column.isCalculated ? ' is-calculated' : ''}${indented ? ' field-row-indented' : ''}`}
         draggable
         onDragStart={(event) => setDragPayload(event, { type: 'field', column })}
         onClick={() => onFieldClick(column)}
@@ -181,18 +197,31 @@ export function DataPane({
           {showDimensions && (
             <ul className="field-list">
               {dimensions.length === 0 && <li className="empty-note">No dimensions</li>}
-              {dimensions.map(renderField)}
+              {/*
+                An attribute is listed immediately BELOW the dimension it keys on,
+                indented, rather than in a group of its own: it belongs to that
+                dimension, and a separate section said so only by its heading.
+
+                Attributes whose key is not in the dataset still fall through to
+                their own group below, so nothing can go missing.
+              */}
+              {dimensions.map((dimension) => (
+                <Fragment key={dimension.name}>
+                  {renderField(dimension)}
+                  {(attributesByKey.get(dimension.name) ?? []).map((attribute) => (
+                    <Fragment key={attribute.name}>{renderField(attribute, true)}</Fragment>
+                  ))}
+                </Fragment>
+              ))}
             </ul>
           )}
         </section>
 
         {/*
-          Attached attributes get their own group, indented under the dimensions
-          they hang off. They are joined enrichment, not columns of the dataset, and
-          listing them as dimensions both miscounted the pane and hid where they
-          come from.
+          Only attributes whose key is missing land here. Nesting under the key is
+          the normal case, handled in the Dimensions list above.
         */}
-        {attributes.length > 0 && (
+        {orphanAttributes.length > 0 && (
           <section className="data-section data-section-attributes">
             <button
               type="button"
@@ -202,10 +231,12 @@ export function DataPane({
             >
               <span className="caret">{showAttributes ? '▾' : '▸'}</span>
               Attached attributes
-              <span className="count">{attributes.length}</span>
+              <span className="count">{orphanAttributes.length}</span>
             </button>
             {showAttributes && (
-              <ul className="field-list field-list-indented">{attributes.map(renderField)}</ul>
+              <ul className="field-list field-list-indented">
+                {orphanAttributes.map((attribute) => renderField(attribute, true))}
+              </ul>
             )}
           </section>
         )}
@@ -224,7 +255,7 @@ export function DataPane({
           {showMeasures && (
             <ul className="field-list">
               {measures.length === 0 && <li className="empty-note">No measures</li>}
-              {measures.map(renderField)}
+              {measures.map((measure) => renderField(measure))}
             </ul>
           )}
         </section>
