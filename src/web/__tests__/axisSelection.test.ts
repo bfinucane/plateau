@@ -11,7 +11,7 @@
  * until you read the axis.
  */
 
-import { pickCategoryEncoding } from '../chartSpec.js';
+import { pickCategoryEncoding, nestCategories } from '../chartSpec.js';
 import type { Encoding } from '../viewModel.js';
 
 let passed = 0;
@@ -103,6 +103,56 @@ section('Measures never beat dimensions, whatever the aggregation');
     check(`${aggregation}: the dimension still wins`, picked?.field === 'Segment',
       `${aggregation} -> ${picked?.field}`);
   }
+}
+
+// ------------------------------------------------- nested axis labels ---
+
+section('A second dimension is nested into the axis label, not dropped');
+
+{
+  // The reported case: Region and Manager together. The manager names must appear,
+  // indented under their region, rather than the region repeating alone.
+  const labels = nestCategories(
+    ['Central', 'East', 'South'],
+    ['Ava Thompson', 'Ben Carter', 'Cara Diaz'],
+  );
+
+  check('one label per row', labels.length === 3, String(labels.length));
+  check('the outer value appears on the first line',
+    labels[0].startsWith('Central'), JSON.stringify(labels[0]));
+  check('the inner value is indented on the second line',
+    labels[0].endsWith('\n   Ava Thompson'), JSON.stringify(labels[0]));
+}
+
+{
+  // Repeats in the outer dimension print once, so a group reads as a group.
+  const labels = nestCategories(
+    ['Consumer', 'Consumer', 'Corporate'],
+    ['Ava', 'Ben', 'Cara'],
+  );
+
+  check('a repeated outer value is not printed twice',
+    labels[1].startsWith('\n'), JSON.stringify(labels[1]));
+  check('its member is still labelled',
+    labels[1].endsWith('\n   Ben'), JSON.stringify(labels[1]));
+  check('a new outer value is printed again',
+    labels[2].startsWith('Corporate'), JSON.stringify(labels[2]));
+  check('every inner value survives',
+    labels.every((label, index) => label.includes(['Ava', 'Ben', 'Cara'][index])),
+    JSON.stringify(labels));
+}
+
+{
+  // A value that repeats non-adjacently is a new group, not a continuation.
+  const labels = nestCategories(['A', 'B', 'A'], ['x', 'y', 'z']);
+  check('a non-adjacent repeat is printed again',
+    labels[2].startsWith('A'), JSON.stringify(labels[2]));
+}
+
+{
+  check('empty input gives no labels', nestCategories([], []).length === 0);
+  const short = nestCategories(['A'], []);
+  check('a missing inner value does not crash', short[0] === 'A\n   ', JSON.stringify(short[0]));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

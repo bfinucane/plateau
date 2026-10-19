@@ -1957,3 +1957,26 @@ textarea {
   gap: 6px;
   padding: 1px 0;
 }
+
+/* ---------------------------------------------------- attached attributes --- */
+
+/* Indented so the nesting reads: attributes belong to the dimension they key on. */
+.field-list-indented {
+  margin-left: 10px;
+  border-left: 2px solid var(--border);
+  padding-left: 6px;
+}
+
+.data-section-attributes .section-toggle {
+  color: var(--text-muted);
+}
+
+/* Names the conformed key, in place of a generic "calc" badge. */
+.field-badge-join {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}

@@ -60,12 +60,17 @@ export function DataPane({
 }: DataPaneProps) {
   const [showDimensions, setShowDimensions] = useState(true);
   const [showMeasures, setShowMeasures] = useState(true);
+  const [showAttributes, setShowAttributes] = useState(true);
   const [contextColumn, setContextColumn] = useState<ColumnInfo | null>(null);
 
-  const { dimensions, measures } = useMemo(() => {
+  const { dimensions, measures, attributes } = useMemo(() => {
     const filtered = columns.filter((column) => matchesSearch(column, search));
     return {
-      dimensions: filtered.filter((c) => c.kind === 'dimension'),
+      // Joined attributes are dimensions to the engine, but they are not
+      // dimensions of this dataset: they arrive through a join, one row per key.
+      // Counting them as dimensions made the pane claim 4 where the data has 3.
+      attributes: filtered.filter((c) => c.kind === 'dimension' && c.joinedVia),
+      dimensions: filtered.filter((c) => c.kind === 'dimension' && !c.joinedVia),
       measures: filtered.filter((c) => c.kind === 'measure'),
     };
   }, [columns, search]);
@@ -85,14 +90,26 @@ export function DataPane({
         title={
           column.isCalculated
             ? `Calculated field: ${column.formula}`
-            : `${column.logicalType} · ${column.cardinality.toLocaleString()} distinct value(s)${
-                column.nullCount ? ` · ${column.nullCount} null(s)` : ''
-              }`
+            : column.joinedVia
+              ? `Joined attribute · keyed on ${column.joinedVia} · ${column.cardinality.toLocaleString()} distinct value(s)`
+              : `${column.logicalType} · ${column.cardinality.toLocaleString()} distinct value(s)${
+                  column.nullCount ? ` · ${column.nullCount} null(s)` : ''
+                }`
         }
       >
         <span className={`field-icon type-${column.dataType}`}>{typeGlyph(column)}</span>
         <span className="field-name">{column.label}</span>
         {column.isCalculated && <span className="field-badge">calc</span>}
+        {/*
+          Says where an attribute came from. Without it the pane offers "Manager"
+          as though it were a column of the dataset, and the association with
+          Region — the reason it behaves differently — is invisible.
+        */}
+        {column.joinedVia && (
+          <span className="field-badge field-badge-join" title={`Joined attribute, keyed on ${column.joinedVia}`}>
+            {column.joinedVia}
+          </span>
+        )}
       </div>
 
       {contextColumn?.name === column.name && (
@@ -168,6 +185,30 @@ export function DataPane({
             </ul>
           )}
         </section>
+
+        {/*
+          Attached attributes get their own group, indented under the dimensions
+          they hang off. They are joined enrichment, not columns of the dataset, and
+          listing them as dimensions both miscounted the pane and hid where they
+          come from.
+        */}
+        {attributes.length > 0 && (
+          <section className="data-section data-section-attributes">
+            <button
+              type="button"
+              className="section-toggle"
+              onClick={() => setShowAttributes((v) => !v)}
+              aria-expanded={showAttributes}
+            >
+              <span className="caret">{showAttributes ? '▾' : '▸'}</span>
+              Attached attributes
+              <span className="count">{attributes.length}</span>
+            </button>
+            {showAttributes && (
+              <ul className="field-list field-list-indented">{attributes.map(renderField)}</ul>
+            )}
+          </section>
+        )}
 
         <section className="data-section">
           <button

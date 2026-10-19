@@ -233,6 +233,31 @@ try {
   check('the base fields are still there',
     names.includes('Region') && names.includes('value'), JSON.stringify(names));
 
+  /*
+   * The pane must not pass an attribute off as a dimension of the dataset: the
+   * data has three dimensions, and Manager is enrichment hung off Region.
+   */
+  const groups = await evaluate(`(() => {
+    return [...document.querySelectorAll('.data-section')].map(section => ({
+      title: section.querySelector('.section-toggle')?.textContent.replace(/[^A-Za-z ]/g, '').trim() ?? '',
+      count: section.querySelector('.count')?.textContent ?? '',
+    }));
+  })()`);
+  console.log('  groups:', JSON.stringify(groups));
+  const dimensionsGroup = groups.find((group) => /^Dimensions/.test(group.title));
+  const attributesGroup = groups.find((group) => /attributes/i.test(group.title));
+  check('dimensions are counted without the attribute',
+    dimensionsGroup?.count === '3', JSON.stringify(dimensionsGroup));
+  check('attributes get their own group',
+    attributesGroup?.count === '1', JSON.stringify(attributesGroup));
+
+  const badge = await evaluate(`(() => {
+    const row = [...document.querySelectorAll('.field-row')]
+      .find(r => r.querySelector('.field-name')?.textContent.trim() === 'Manager');
+    return row?.querySelector('.field-badge-join')?.textContent.trim() ?? '';
+  })()`);
+  check('the attribute names the dimension it is joined through', badge === 'Region', badge);
+
   // Build a view keyed on the conformed dimension so the attribute resolves.
   const drop = (field, shelf) => evaluate(`(() => {
     const r = [...document.querySelectorAll('.field-row')]
@@ -339,6 +364,52 @@ try {
     JSON.stringify(axisLabels));
 
   await screenshot('49-join-attribute-alone.png');
+
+  // ----------------------------------------- the attribute NESTED under its key
+  //
+  // The case that looked broken: Region and Manager together. The region must be
+  // printed once and the manager indented beneath it, not the region repeating
+  // with the manager silently dropped.
+  console.log('\nRegion and Manager together: the attribute nests under its key');
+  await evaluate(`(() => {
+    const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Clear sheet');
+    if (b) b.click();
+    return true;
+  })()`);
+  await sleep(1200);
+
+  check('Region -> Rows', (await drop('Region', 'rows')) === 'ok');
+  await sleep(500);
+  check('Manager -> Rows', (await drop('Manager', 'rows')) === 'ok');
+  await sleep(500);
+  check('value -> Columns', (await drop('value', 'columns')) === 'ok');
+  await sleep(3500);
+
+  const nestedError = await evaluate(`document.querySelector('.view-error')?.innerText ?? ''`);
+  check('no error with both dimensions', nestedError === '', nestedError.slice(0, 120));
+  check('a chart is drawn',
+    (await evaluate(`document.querySelectorAll('.chart-canvas canvas').length`)) > 0);
+
+  const nestedLabels = await evaluate(`(() => {
+    const echarts = window.__ECHARTS__;
+    const el = document.querySelector('.chart-canvas');
+    const inst = echarts && el ? echarts.getInstanceByDom(el) : null;
+    if (!inst) return [];
+    const opt = inst.getOption();
+    return ((opt.yAxis ?? [])[0]?.data ?? (opt.xAxis ?? [])[0]?.data ?? []).map(String);
+  })()`);
+  console.log('  nested labels:', JSON.stringify(nestedLabels));
+  check('the key labels the outer line',
+    Array.isArray(nestedLabels) && nestedLabels.some((label) => label.startsWith('Central')),
+    JSON.stringify(nestedLabels?.slice(0, 3)));
+  check('the attribute sits indented beneath it',
+    Array.isArray(nestedLabels) && nestedLabels.some((label) => /\n\s+Ava Thompson/.test(label)),
+    JSON.stringify(nestedLabels?.slice(0, 3)));
+  check('the key is not repeated for every member',
+    nestedLabels.filter((label) => label.startsWith('Central')).length === 1,
+    JSON.stringify(nestedLabels));
+
+  await screenshot('50-join-nested-axis.png');
 
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 2).join(' | '));
 

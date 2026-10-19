@@ -35,6 +35,13 @@ export interface ColumnInfo {
   max: number | null;
   isCalculated: boolean;
   formula?: string;
+  /**
+   * The conformed dimension an attribute column was joined through.
+   *
+   * Present only on joined attributes. It is what lets the UI say where the field
+   * comes from, and why counting it as a dimension of the dataset would be wrong.
+   */
+  joinedVia?: string;
   defaultAggregation: Aggregation;
   sampleValues: (string | number | boolean)[];
 }

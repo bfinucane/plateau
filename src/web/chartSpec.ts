@@ -179,6 +179,33 @@ export function pickCategoryEncoding(
 }
 
 /**
+ * Folds a second dimension into a category axis as an indented second line.
+ *
+ * The outer value is printed once, on the first row of its group, and its members
+ * sit beneath it — the reading a nested (hierarchical) axis gives:
+ *
+ *     Consumer
+ *        Ava Thompson
+ *        Ben Carter
+ *     Corporate
+ *        Cara Diaz
+ *
+ * ECharts has no nested category axis, so the nesting is expressed in the label
+ * rather than in the axis structure. That keeps it working for every mark that has
+ * a category axis instead of only the ones with bespoke handling.
+ *
+ * @param outer Outer dimension values, one per row.
+ * @param inner Inner dimension values, one per row.
+ */
+export function nestCategories(outer: string[], inner: string[]): string[] {
+  return outer.map((value, index) => {
+    const repeated = index > 0 && outer[index - 1] === value;
+    const head = repeated ? '' : value;
+    return `${head}\n   ${inner[index] ?? ''}`;
+  });
+}
+
+/**
  * Maps each shelf encoding to its column in the query result.
  *
  * Column names must be taken from the RESPONSE rather than reconstructed
@@ -649,10 +676,41 @@ function buildBarLike(
     }
   }
 
+  /*
+   * A second dimension has nowhere to go in a single-axis chart: it groups the
+   * query but is never shown, so the axis repeats the first dimension's labels and
+   * the second is invisible. That is what made "Manager with any other dimension"
+   * look broken — the manager was in the data and nowhere on screen.
+   *
+   * Only dimensions the user actually PLACED are nested. A join can add the
+   * conformed key to the grouping without it being on a shelf, and printing that
+   * would put Region under Manager even though Region was never asked for.
+   */
+  const placedDimensions = [...(sheet?.shelves.columns ?? []), ...(sheet?.shelves.rows ?? [])].filter(
+    (encoding) => encoding.kind === 'dimension' && encoding.id !== axisEncoding?.id,
+  );
+  const secondaryEncoding = colorEncoding?.kind === 'dimension'
+    ? placedDimensions.find((encoding) => encoding.id !== colorEncoding.id)
+    : placedDimensions[0];
+  const secondaryIndex = secondaryEncoding && columns ? columns.indexOf(secondaryEncoding) : -1;
+
+  const axisLabels =
+    secondaryIndex >= 0
+      ? nestCategories(
+          result.rows.map((row) => formatCategory(row[dimensionIndex], isDate)),
+          result.rows.map((row) => formatCategory(row[secondaryIndex], false)),
+        )
+      : categories;
+
   const categoryAxis = {
     type: 'category',
-    data: categories,
-    axisLabel: { ...AXIS_LABEL_STYLE, rotate: categories.length > 8 ? 32 : 0, hideOverlap: true },
+    data: axisLabels,
+    axisLabel: {
+      ...AXIS_LABEL_STYLE,
+      rotate: axisLabels.length > 8 ? 32 : 0,
+      hideOverlap: true,
+      ...(secondaryIndex >= 0 ? { lineHeight: 13 } : {}),
+    },
     axisLine: AXIS_LINE_STYLE,
     axisTick: { show: false },
   };
