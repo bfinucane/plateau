@@ -231,6 +231,34 @@ try {
 
   await screenshot('46-measuresplit-bars.png');
 
+  /*
+   * The axis must be labelled with CATEGORY NAMES, not measure values.
+   *
+   * This is the bug that made a correct chart misleading: with a measure on
+   * Columns and a dimension on Rows, the axis picked the measure and every bar was
+   * labelled with a sales total. Nothing looked broken unless you read the axis.
+   */
+  const axisLabels = await evaluate(`(() => {
+    const echarts = window.__ECHARTS__;
+    return [...document.querySelectorAll('.pane')].map(pane => {
+      const el = pane.querySelector('.chart-canvas');
+      const inst = echarts && el ? echarts.getInstanceByDom(el) : null;
+      if (!inst) return [];
+      const opt = inst.getOption();
+      return ((opt.xAxis ?? [])[0]?.data ?? []).map(String);
+    });
+  })()`);
+  console.log('  axis labels:', JSON.stringify(axisLabels));
+  check('every pane labels its axis with category names, not measure values',
+    axisLabels.length === 2 &&
+      axisLabels.every((labels) => labels.length > 0 && labels.every((label) => !/^-?\d/.test(label))),
+    JSON.stringify(axisLabels));
+  check('the axis labels are the categories from the data',
+    axisLabels.every((labels) =>
+      labels.some((label) => ['Furniture', 'Technology', 'Office Supplies'].includes(label)),
+    ),
+    JSON.stringify(axisLabels));
+
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 2).join(' | '));
 
   const failed = results.filter((r) => !r.ok);

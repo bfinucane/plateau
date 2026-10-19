@@ -139,6 +139,46 @@ function planColumns(result: QueryResponse): ColumnPlan {
 }
 
 /**
+ * Picks the field that labels the category axis of a bar-like chart.
+ *
+ * A dimension always wins over a measure, anywhere on either shelf. That rule is
+ * the whole point of this function and it used to be violated: the previous
+ * version looked at one shelf at a time and would accept a MEASURE from it,
+ * falling through to the other shelf only when the first was empty.
+ *
+ * The ordinary layout — measure on Columns, dimension on Rows — therefore put the
+ * measure on the category axis, so every bar was labelled with a sales total
+ * instead of a category name. The chart looked fine and was labelled wrongly,
+ * which is worse than failing.
+ *
+ * Orientation only decides which shelf is consulted FIRST, so a view with
+ * dimensions on both shelves still gets the reading Tableau would give it:
+ *
+ *   vertical bars   categories on Columns
+ *   horizontal bars categories on Rows
+ *
+ * @returns the dimension to label the axis with, or a measure when the view has
+ *          no dimension at all (a single-number bar), or undefined when empty.
+ */
+export function pickCategoryEncoding(
+  columnShelf: Encoding[],
+  rowShelf: Encoding[],
+  horizontal: boolean,
+): Encoding | undefined {
+  const dimensions = (shelf: Encoding[]) => shelf.filter((e) => e.kind === 'dimension');
+
+  const preferred = horizontal ? dimensions(rowShelf) : dimensions(columnShelf);
+  const other = horizontal ? dimensions(columnShelf) : dimensions(rowShelf);
+
+  const dimension = preferred[0] ?? other[0];
+  if (dimension) return dimension;
+
+  // No dimension anywhere: one measure on each shelf is a single-value bar, and
+  // labelling it with the measure is the best available answer.
+  return columnShelf[0] ?? rowShelf[0];
+}
+
+/**
  * Maps each shelf encoding to its column in the query result.
  *
  * Column names must be taken from the RESPONSE rather than reconstructed
@@ -520,14 +560,7 @@ function buildBarLike(
    * Within the chosen shelf a dimension is preferred, since a measure there
    * would mean a value axis rather than categories.
    */
-  const pickAxis = (shelf: Encoding[]): Encoding | undefined =>
-    shelf.find((e) => e.kind === 'dimension') ??
-    shelf.find((e) => e.kind === 'measure') ??
-    shelf[0];
-
-  const axisEncoding = horizontal
-    ? pickAxis(rowShelf) ?? pickAxis(columnShelf)
-    : pickAxis(columnShelf) ?? pickAxis(rowShelf);
+  const axisEncoding = pickCategoryEncoding(columnShelf, rowShelf, horizontal);
 
   const colorEncoding = columns?.shelf('color')[0];
   const colorIndex =

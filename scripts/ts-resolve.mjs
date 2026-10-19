@@ -32,6 +32,35 @@ registerHooks({
         void parentDir;
       }
     }
+
+    /*
+     * Extensionless relative specifiers.
+     *
+     * The web modules are bundled by Vite, so they import `./viewModel` rather
+     * than `./viewModel.js` — legal for a bundler, unresolvable by Node. Without
+     * this, no unit test could import anything from src/web, which is why the
+     * renderer went untested for so long.
+     *
+     * Mirrors what a bundler tries, in order: the file itself, then a directory
+     * index.
+     */
+    if ((specifier.startsWith('./') || specifier.startsWith('../')) && !/\.[a-z]+$/i.test(specifier)) {
+      const parent = context.parentURL;
+      if (parent) {
+        const base = fileURLToPath(new URL(specifier, parent));
+        for (const candidate of [
+          `${base}.ts`,
+          `${base}.tsx`,
+          `${base}/index.ts`,
+          `${base}/index.tsx`,
+        ]) {
+          if (existsSync(candidate)) {
+            return nextResolve(pathToFileURL(candidate).href, context);
+          }
+        }
+      }
+    }
+
     return nextResolve(specifier, context);
   },
 });

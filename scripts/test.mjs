@@ -18,6 +18,7 @@ const SUITES = [
   ['table calculations (partitions, addressing, null handling)', '../src/web/__tests__/tableCalcs.test.ts'],
   ['workbook backup (rotation, restore, corruption)', '../src/server/__tests__/workbookBackup.test.ts'],
   ['split into panes (partitioning, ordering, refusals)', '../src/web/__tests__/split.test.ts'],
+  ['category axis selection (dimensions beat measures)', '../src/web/__tests__/axisSelection.test.ts'],
 ];
 
 const failures = [];
