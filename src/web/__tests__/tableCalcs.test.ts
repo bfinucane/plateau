@@ -15,6 +15,7 @@ import {
   toTableNumber,
   type TableCalculation,
   type TableCalcSpec,
+  type TableCellValue,
 } from '../tableCalcs.js';
 import type { CellValue } from '../../core/types.js';
 
@@ -63,7 +64,7 @@ const ROWS: CellValue[][] = [
   ['West', 'Mar', 15],
 ];
 
-function run(calculation: TableCalculation, extra: Partial<TableCalcSpec> = {}): CellValue[] {
+function run(calculation: TableCalculation, extra: Partial<TableCalcSpec> = {}): TableCellValue[] {
   return computeTableCalculation(ROWS, COLUMNS, 'Sales', { calculation, ...extra }).values;
 }
 

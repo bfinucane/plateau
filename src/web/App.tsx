@@ -11,6 +11,7 @@ import { fetchPreview, fetchWorkbook, saveWorkbook, uploadDataset } from './api'
 import type { DragPayload } from './dnd';
 import { useAppState } from './useAppState';
 import {
+  ENCODING_SHELVES,
   describeQuery,
   isSheetEmpty,
   makeEncoding,
@@ -68,11 +69,26 @@ export function App() {
   const columns = state.dataset?.columns ?? [];
 
   // --- restore / persist the workbook -----------------------------------
+  /**
+   * Whether it is safe to autosave.
+   *
+   * Autosave must not run until the saved workbook has been restored, or its
+   * absence confirmed. State on first render is a fresh single-sheet workbook; if
+   * the restore REQUEST fails — server starting, temporarily down — writing that
+   * fresh state over an existing `data/workbook.json` destroys real work. Silent
+   * data loss, so the guard is worth the extra state.
+   */
+  const [restoreOk, setRestoreOk] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     fetchWorkbook<Partial<WorkbookState>>()
       .then((saved) => {
-        if (cancelled || !saved?.sheets?.length) return;
+        if (cancelled) return;
+        // The read succeeded. Whether a workbook existed or not, saving over it is
+        // now safe: there is nothing unseen to lose.
+        setRestoreOk(true);
+        if (!saved?.sheets?.length) return;
         // Workbooks saved before dashboards existed lack these fields; fill in
         // defaults rather than rendering an undefined dashboard list.
         dispatch({
@@ -87,7 +103,8 @@ export function App() {
         });
       })
       .catch(() => {
-        // A missing or unreadable workbook is not an error worth surfacing.
+        // A failed read leaves autosave DISARMED: a server that is down must not
+        // be able to replace the workbook with this session's empty default.
       });
     return () => {
       cancelled = true;
@@ -108,13 +125,15 @@ export function App() {
 
   // Debounced autosave so dragging pills does not hammer the disk.
   useEffect(() => {
+    // Never autosave before the restore attempt has succeeded: see `restoreOk`.
+    if (!restoreOk) return;
     const handle = setTimeout(() => {
       saveWorkbook(state.workbook).catch(() => {
         // Autosave is best effort.
       });
     }, 1200);
     return () => clearTimeout(handle);
-  }, [state.workbook]);
+  }, [state.workbook, restoreOk]);
 
   // --- inspector ---------------------------------------------------------
   useEffect(() => {
@@ -265,8 +284,7 @@ export function App() {
     [handleUpload],
   );
 
-  /** A remote dataset has already been registered; bring it into view. */
-  const handleConnected = useCallback(
+  /** A remote dataset has already been registered; bring it into view. */  const handleConnected = useCallback(
     async (datasetId: string) => {
       try {
         await app.refreshDatasets();
@@ -289,6 +307,24 @@ export function App() {
 
   const sheets = state.workbook.sheets;
   const queryDescription = useMemo(() => (spec ? describeQuery(spec) : 'No fields placed'), [spec]);
+
+  /**
+   * Dimensions a table calculation can be partitioned by.
+   *
+   * Only dimensions already on a shelf: partitioning by a field that is not in
+   * the result has nothing to group by, so offering it would be a control that
+   * cannot work.
+   */
+  const partitionOptions = useMemo(() => {
+    if (!activeSheet) return [];
+    const seen = new Set<string>();
+    for (const shelfId of ENCODING_SHELVES) {
+      for (const encoding of activeSheet.shelves[shelfId] ?? []) {
+        if (encoding.kind === 'dimension') seen.add(encoding.field);
+      }
+    }
+    return [...seen];
+  }, [activeSheet]);
 
   return (
     <div className="app">
@@ -477,6 +513,7 @@ export function App() {
               onDropPayload={handleDropPayload}
               onRemove={handleRemoveEncoding}
               onUpdate={handleUpdateEncoding}
+              partitionOptions={partitionOptions}
             />
             <Shelf
               id="rows"
@@ -486,6 +523,7 @@ export function App() {
               onDropPayload={handleDropPayload}
               onRemove={handleRemoveEncoding}
               onUpdate={handleUpdateEncoding}
+              partitionOptions={partitionOptions}
             />
           </div>
 

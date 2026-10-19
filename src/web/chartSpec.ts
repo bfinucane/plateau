@@ -11,12 +11,14 @@ import {
   outputColumnName,
   pillLabel,
   sortDirection,
+  ENCODING_SHELVES,
   type Encoding,
   type ShelfId,
   type Sheet,
   effectiveMark,
   type MarkType,
 } from './viewModel';
+import { computeTableCalculation, type TableCalcSpec } from './tableCalcs';
 
 /** A printable mark type (automatic already resolved). */
 export type ResolvedMark = Exclude<MarkType, 'automatic'>;
@@ -156,6 +158,116 @@ export interface EncodingColumns {
   labelOf(index: number): string;
 }
 
+/**
+ * The column name a table calculation is materialised under.
+ *
+ * Derived from the source column so it is unique and self-describing in the Data
+ * tab: `RUNNING_SUM(Sum of Sales)`. Two calculations over the same measure
+ * therefore get distinct columns even before the partitioning differs.
+ */
+export function tableCalcColumnName(sourceColumn: string, spec: TableCalcSpec): string {
+  return `${spec.calculation}(${sourceColumn})`;
+}
+
+/**
+ * Applies every table calculation on the sheet to a query result.
+ *
+ * Returns a NEW result in which each calculated measure's values are **replaced
+ * in place**, and where the raw values are preserved in an appended
+ * `<CALC>(<column>)` column.
+ *
+ * The replacement is what makes the calculation visible. Chart builders resolve
+ * their measure through the query *plan* — indices computed before any table
+ * calculation ran — so a calculation that only appended a column would be
+ * computed, stored, and never plotted. Overwriting the planned column is what
+ * makes every mark type honour it without each builder needing to know about
+ * table calculations.
+ *
+ * The appended column keeps the raw aggregate available for the Data tab and for
+ * comparison, under a name that says what was done to it.
+ *
+ * This runs on the client by design: a table calculation is defined over the rows
+ * the query returned, so it needs nothing from the engine and behaves identically
+ * for a local CSV and a remote Patricia cube.
+ */
+export function applyTableCalcs(result: QueryResponse, sheet: Sheet): QueryResponse {
+  const encodings: Encoding[] = [];
+  for (const shelfId of ENCODING_SHELVES) {
+    for (const encoding of sheet.shelves[shelfId] ?? []) {
+      if (encoding.kind === 'measure' && encoding.tableCalc) encodings.push(encoding);
+    }
+  }
+  if (encodings.length === 0) return result;
+
+  const columns = resolveEncodingColumns(result, sheet);
+
+  const nextColumns = [...result.columns];
+  const nextMeta = [...result.columnMeta];
+  const nextRows = result.rows.map((row) => [...row]);
+  const nextMeasureNames = [...result.measureNames];
+  const nextMeasureLabels = [...result.measureLabels];
+
+  let applied = 0;
+
+  for (const encoding of encodings) {
+    const sourceIndex = columns.indexOf(encoding);
+    // A measure whose column is not in the result cannot be calculated over.
+    if (sourceIndex === -1) continue;
+
+    const sourceColumn = result.columns[sourceIndex];
+    const spec = encoding.tableCalc!;
+    const derivedName = tableCalcColumnName(sourceColumn, spec);
+
+    let computed;
+    try {
+      computed = computeTableCalculation(result.rows, result.columns, sourceColumn, spec);
+    } catch {
+      // A bad partition/order reference is the sheet's problem; leaving the
+      // result untouched is better than producing a half-applied one.
+      continue;
+    }
+    applied++;
+
+    // 1. Replace the planned column, so every builder plots the calculation.
+    for (let row = 0; row < nextRows.length; row++) {
+      const value = computed.values[row];
+      nextRows[row][sourceIndex] =
+        value === undefined || value instanceof Date ? null : value;
+    }
+
+    // 2. Keep the raw values alongside, for the Data tab and for comparison.
+    if (!nextColumns.includes(derivedName)) {
+      nextColumns.push(derivedName);
+      for (let row = 0; row < nextRows.length; row++) {
+        nextRows[row].push(result.rows[row][sourceIndex] ?? null);
+      }
+      const sourceMeta = result.columnMeta[sourceIndex];
+      nextMeta.push({
+        ...sourceMeta,
+        name: derivedName,
+        kind: 'measure',
+        dataType: 'number',
+        logicalType: 'real',
+        semanticType: 'quantitative',
+        defaultAggregation: 'SUM',
+      });
+      nextMeasureNames.push(derivedName);
+      nextMeasureLabels.push(derivedName);
+    }
+  }
+
+  if (applied === 0) return result;
+
+  return {
+    ...result,
+    columns: nextColumns,
+    columnMeta: nextMeta,
+    rows: nextRows,
+    measureNames: nextMeasureNames,
+    measureLabels: nextMeasureLabels,
+  };
+}
+
 export function resolveEncodingColumns(result: QueryResponse, sheet: Sheet): EncodingColumns {
   const lookup = new Map<string, number>();
 
@@ -181,6 +293,24 @@ export function resolveEncodingColumns(result: QueryResponse, sheet: Sheet): Enc
   }
 
   const indexOf = (encoding: Encoding): number => {
+    // A table-calculated encoding resolves to its DERIVED column, not the source
+    // one. Without this the chart would silently plot the raw aggregate and the
+    // calculation would appear to do nothing.
+    if (encoding.tableCalc) {
+      const source = sourceIndexOf(encoding);
+      const sourceColumn = source === -1 ? null : result.columns[source];
+      if (sourceColumn) {
+        const derived = tableCalcColumnName(sourceColumn, encoding.tableCalc);
+        const direct = result.columns.indexOf(derived);
+        if (direct !== -1) return direct;
+      }
+      // Not materialised (no calculation ran); fall through to the source so the
+      // view still renders rather than disappearing.
+    }
+    return sourceIndexOf(encoding);
+  };
+
+  const sourceIndexOf = (encoding: Encoding): number => {
     if (encoding.kind === 'measure') {
       const key = `measure:${pillLabel(encoding)}`;
       if (lookup.has(key)) return lookup.get(key)!;

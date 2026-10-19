@@ -12,6 +12,7 @@ import {
   type ShelfId,
 } from '../viewModel';
 import type { Aggregation } from '../api';
+import { TABLE_CALC_META, type TableCalculation } from '../tableCalcs';
 
 interface PillProps {
   encoding: Encoding;
@@ -20,6 +21,8 @@ interface PillProps {
   onUpdate: (patch: Partial<Encoding>) => void;
   onDropBefore?: (payload: DragPayload, index: number) => void;
   index: number;
+  /** Dimensions available to partition a table calculation by. */
+  partitionOptions?: string[];
 }
 
 const DATE_PARTS: { value: NonNullable<Encoding['datePart']>; label: string }[] = [
@@ -30,7 +33,15 @@ const DATE_PARTS: { value: NonNullable<Encoding['datePart']>; label: string }[] 
   { value: 'day', label: 'Day' },
 ];
 
-export function Pill({ encoding, shelf, onRemove, onUpdate, onDropBefore, index }: PillProps) {
+export function Pill({
+  encoding,
+  shelf,
+  onRemove,
+  onUpdate,
+  onDropBefore,
+  index,
+  partitionOptions = [],
+}: PillProps) {
   const [editing, setEditing] = useState(false);
 
   const isMeasure = encoding.kind === 'measure';
@@ -129,6 +140,61 @@ export function Pill({ encoding, shelf, onRemove, onUpdate, onDropBefore, index 
             </select>
           </label>
 
+          {isMeasure && (
+            <label>
+              <span>Table calc</span>
+              <select
+                value={encoding.tableCalc?.calculation ?? ''}
+                onChange={(event) => {
+                  const calculation = event.target.value;
+                  if (!calculation) {
+                    onUpdate({ tableCalc: undefined });
+                    return;
+                  }
+                  // Keep the partition that is already chosen, so switching
+                  // calculation does not silently reset "compute using".
+                  onUpdate({
+                    tableCalc: {
+                      ...(encoding.tableCalc ?? {}),
+                      calculation: calculation as TableCalculation,
+                    },
+                  });
+                }}
+              >
+                <option value="">None</option>
+                {TABLE_CALC_META.map((calc) => (
+                  <option key={calc.key} value={calc.key} title={calc.hint}>
+                    {calc.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {isMeasure && encoding.tableCalc && (
+            <label>
+              <span>Partition by</span>
+              <select
+                value={encoding.tableCalc.partitionBy ?? ''}
+                onChange={(event) =>
+                  onUpdate({
+                    tableCalc: {
+                      ...encoding.tableCalc!,
+                      partitionBy: event.target.value || undefined,
+                    },
+                  })
+                }
+              >
+                <option value="">Whole result</option>
+                {partitionOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           <label className="kind-toggle">
             <span>Treat as</span>
             <select
@@ -159,6 +225,8 @@ interface ShelfProps {
   onDropPayload: (shelf: ShelfId, payload: DragPayload, index?: number) => void;
   onRemove: (shelf: ShelfId, encodingId: string) => void;
   onUpdate: (encodingId: string, patch: Partial<Encoding>) => void;
+  /** Dimensions a table calculation may be partitioned by. */
+  partitionOptions?: string[];
 }
 
 export function Shelf({
@@ -169,6 +237,7 @@ export function Shelf({
   onDropPayload,
   onRemove,
   onUpdate,
+  partitionOptions,
 }: ShelfProps) {
   const [hover, setHover] = useState(false);
 
@@ -202,6 +271,7 @@ export function Shelf({
             onRemove={() => onRemove(id, encoding.id)}
             onUpdate={(patch) => onUpdate(encoding.id, patch)}
             onDropBefore={(payload, at) => onDropPayload(id, payload, at)}
+            partitionOptions={partitionOptions}
           />
         ))}
       </div>

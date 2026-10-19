@@ -5,7 +5,7 @@
 
 import { useMemo } from 'react';
 import type { QueryResponse } from '../api';
-import { buildChart, formatNumber, type ResolvedMark } from '../chartSpec';
+import { applyTableCalcs, buildChart, formatNumber, type ResolvedMark } from '../chartSpec';
 import { EChart } from '../EChart';
 import { effectiveMark, type Sheet } from '../viewModel';
 import { DataGrid } from './DataGrid';
@@ -39,7 +39,10 @@ function ChartViewInner({ sheet, result, querying, error, tab }: ChartViewProps)
 
   const build = useMemo(() => {
     if (!result) return null;
-    return buildChart(result, sheet, mark);
+    // Table calculations are applied before the builder sees the result, so the
+    // renderer never needs to know a calculation happened — it just finds an
+    // extra measure column with a derived name.
+    return buildChart(applyTableCalcs(result, sheet), sheet, mark);
   }, [result, sheet, mark]);
 
   if (error) {

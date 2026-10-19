@@ -12,9 +12,9 @@
  * Tableau's "compute using" has two parts, and getting them confused is the usual
  * source of wrong numbers:
  *
- *   - **Partition** — the calculation restarts for each distinct value of these
+ *   - **Partition** â€” the calculation restarts for each distinct value of these
  *     dimensions. `RUNNING_SUM` per Region restarts at the first row of each region.
- *   - **Address** — the order the accumulation walks *within* a partition.
+ *   - **Address** â€” the order the accumulation walks *within* a partition.
  *
  * Both index into the returned rows. This module addresses the `(partition,
  * address)` pair explicitly rather than guessing from shelf order, because a
@@ -27,7 +27,15 @@
  * covers the calculations people actually reach for first.
  */
 
-import type { CellValue } from '../core/types.js';
+/**
+ * A cell as table calculations see it.
+ *
+ * Wider than the renderer's `CellValue` because it also accepts `Date` and
+ * `undefined`: results arrive from two layers with slightly different cell types,
+ * and a calculation should not care which. Dates are not numbers to aggregate, so
+ * `toTableNumber` maps them to null.
+ */
+export type TableCellValue = string | number | boolean | Date | null | undefined;
 
 /** The calculations this module implements. */
 export const TABLE_CALCULATIONS = [
@@ -85,7 +93,7 @@ export const TABLE_CALC_META: TableCalcDisplay[] = [
  *
  * `partitionBy` and `orderBy` name **dimension columns**. Omitted `orderBy` means
  * "the order the query returned", which is the natural reading when the view is
- * already sorted — and is why sorting interacts correctly with running totals.
+ * already sorted â€” and is why sorting interacts correctly with running totals.
  */
 export interface TableCalcSpec {
   calculation: TableCalculation;
@@ -101,7 +109,7 @@ export interface TableCalcSpec {
 
 /** A column of computed values, aligned to the input rows. */
 export interface TableCalcColumn {
-  values: CellValue[];
+  values: TableCellValue[];
   /** Nulls are expected for the first row of a running difference, and so on. */
   nullCount: number;
 }
@@ -110,7 +118,7 @@ export interface TableCalcColumn {
  * Normalises a cell to a number, or null.
  *
  * Result cells arrive as numbers, numeric strings, or null. A string with a
- * locale decimal comma is accepted — a remote engine may format values that way —
+ * locale decimal comma is accepted â€” a remote engine may format values that way â€”
  * but only when the reading is unambiguous:
  *
  *   "6436941,57" -> 6436941.57   two decimals, clearly European notation
@@ -118,10 +126,10 @@ export interface TableCalcColumn {
  *   "1,234,567"  -> null         thousands grouping
  *
  * Refusing the ambiguous case matters more than parsing it. Guessing wrong turns
- * 1,234 into 1.234 — off by a factor of a thousand, and plausible enough that
+ * 1,234 into 1.234 â€” off by a factor of a thousand, and plausible enough that
  * nobody notices.
  */
-export function toTableNumber(value: CellValue): number | null {
+export function toTableNumber(value: TableCellValue): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value === 'boolean') return value ? 1 : 0;
@@ -152,7 +160,7 @@ type RowIndex = number;
  * a running total would be non-deterministic.
  */
 function buildPartitions(
-  rows: CellValue[][],
+  rows: TableCellValue[][],
   columns: string[],
   spec: TableCalcSpec,
 ): RowIndex[][] {
@@ -186,7 +194,7 @@ function buildPartitions(
 }
 
 /** Compares two cells, numbers numerically and everything else as text. */
-function compareCells(left: CellValue, right: CellValue): number {
+function compareCells(left: TableCellValue, right: TableCellValue): number {
   const leftNumber = toTableNumber(left);
   const rightNumber = toTableNumber(right);
   if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
@@ -205,7 +213,7 @@ function compareCells(left: CellValue, right: CellValue): number {
  * @param spec      How to partition and address.
  */
 export function computeTableCalculation(
-  rows: CellValue[][],
+  rows: TableCellValue[][],
   columns: string[],
   valueColumn: string,
   spec: TableCalcSpec,
@@ -221,7 +229,7 @@ export function computeTableCalculation(
     throw new Error(`Table calculation orders by unknown column "${spec.orderBy}"`);
   }
 
-  const values: CellValue[] = new Array(rows.length).fill(null);
+  const values: TableCellValue[] = new Array(rows.length).fill(null);
   const partitions = buildPartitions(rows, columns, spec);
 
   for (const partition of partitions) {
@@ -247,7 +255,7 @@ export function computeTableCalculation(
     for (let position = 0; position < partition.length; position++) {
       const row = partition[position];
       const value = numbers[position];
-      let result: CellValue = null;
+      let result: TableCellValue = null;
 
       if (value !== null) {
         runningSum += value;

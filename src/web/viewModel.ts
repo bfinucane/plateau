@@ -7,6 +7,7 @@
  */
 
 import type { Aggregation, ColumnInfo, Filter, QueryField, QuerySpec } from './api';
+import type { TableCalcSpec } from './tableCalcs';
 
 /** Drop targets, mirroring Tableau's shelves and the Marks card. */
 export type ShelfId =
@@ -63,6 +64,14 @@ export interface Encoding {
   datePart?: 'year' | 'quarter' | 'month' | 'week' | 'day';
   /** Sort applied to this individual encoding, used by the layout. */
   sort?: 'asc' | 'desc';
+  /**
+   * A table calculation applied to this measure.
+   *
+   * Computed on the result set rather than the data source, so it needs nothing
+   * from the engine and works identically for local and remote datasets.
+   * Dimension encodings ignore it.
+   */
+  tableCalc?: TableCalcSpec;
 }
 
 export interface Sheet {
@@ -237,7 +246,7 @@ export function outputColumnName(encoding: Encoding): string {
 const MEASURE_CHANNELS: ShelfId[] = ['size'];
 
 /** All shelves that contribute encodings to the query, in a stable order. */
-const ENCODING_SHELVES: ShelfId[] = ['columns', 'rows', 'color', 'size', 'detail', 'label', 'tooltip'];
+export const ENCODING_SHELVES: ShelfId[] = ['columns', 'rows', 'color', 'size', 'detail', 'label', 'tooltip'];
 
 /**
  * Flattens a sheet into the set of fields the engine must return.
