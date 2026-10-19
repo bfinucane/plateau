@@ -6,7 +6,7 @@
 import { useMemo } from 'react';
 import type { QueryResponse } from '../api';
 import { applyTableCalcs, buildChart, formatNumber, type ResolvedMark } from '../chartSpec';
-import { splitIntoPanes } from '../split';
+import { splitIntoPanes, splitByMeasurePanes } from '../split';
 import { EChart } from '../EChart';
 import { effectiveMark, type Sheet } from '../viewModel';
 import { DataGrid } from './DataGrid';
@@ -50,10 +50,24 @@ function ChartViewInner({ sheet, result, querying, error, tab }: ChartViewProps)
    * Panes, when the sheet is split.
    *
    * Computed from the un-split result so the same partition feeds every pane.
+   * Two different splits share the layout: small multiples repeat by a dimension
+   * value, a measure split divides by measure.
    */
   const split = useMemo(
     () => (result && sheet.paneBy ? splitIntoPanes(result, sheet.paneBy) : { panes: [] }),
     [result, sheet.paneBy],
+  );
+
+  /**
+   * One pane per measure, Tableau's split.
+   *
+   * Drawn as a text table per measure: the panes share their dimension columns as
+   * row headers and differ only in the measure shown, which is what makes them
+   * comparable side by side.
+   */
+  const measureSplit = useMemo(
+    () => (result && sheet.splitMeasures ? splitByMeasurePanes(result) : { panes: [] }),
+    [result, sheet.splitMeasures],
   );
 
   if (error) {
@@ -86,6 +100,35 @@ function ChartViewInner({ sheet, result, querying, error, tab }: ChartViewProps)
   }
 
   if (!build) return null;
+
+  // A measure split renders one text table per measure. Checked before the plain
+  // text-table branch, since a split text table is not one table.
+  if (measureSplit.panes.length > 1) {
+    return (
+      <div className="view-chart view-panes">
+        <div className="pane-grid" data-pane-count={measureSplit.panes.length}>
+          {measureSplit.panes.map((pane) => (
+            <div className="pane" key={pane.value}>
+              <div className="pane-title" title={pane.value}>
+                {pane.value}
+              </div>
+              <div className="pane-data">
+                <DataGrid result={pane.result} maxRows={2000} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="view-footer">
+          <span>
+            {result.rows.length.toLocaleString()} row{result.rows.length === 1 ? '' : 's'}
+          </span>
+          <span className="dot">·</span>
+          <span>{measureSplit.panes.length} panes, one per measure</span>
+        </div>
+      </div>
+    );
+  }
 
   // The text mark and the guidance case fall through to non-chart rendering.
   if (build.notice === 'table') {

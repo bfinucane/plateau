@@ -542,6 +542,10 @@ export function App() {
                 onPaneChange={(paneBy) =>
                   dispatch({ type: 'sheet/paneSplit', sheetId: activeSheet.id, paneBy })
                 }
+                splitMeasures={activeSheet.splitMeasures}
+                onMeasureSplitChange={(splitMeasures) =>
+                  dispatch({ type: 'sheet/measureSplit', sheetId: activeSheet.id, splitMeasures })
+                }
               />
             )}
 

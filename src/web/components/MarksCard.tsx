@@ -16,6 +16,9 @@ interface MarksCardProps {
   /** Dimension the view is repeated by, one pane per value. */
   paneBy?: string;
   onPaneChange: (paneBy?: string) => void;
+  /** One pane per measure, for a text table. */
+  splitMeasures?: boolean;
+  onMeasureSplitChange: (split: boolean) => void;
 }
 
 /** The encodings that live on the Marks card, in Tableau's order. */
@@ -36,6 +39,8 @@ export function MarksCard({
   onUpdate,
   paneBy,
   onPaneChange,
+  splitMeasures,
+  onMeasureSplitChange,
 }: MarksCardProps) {
   /**
    * Dimensions that could be split by.
@@ -59,6 +64,19 @@ export function MarksCard({
     return [...seen];
   })();
 
+  /**
+   * Whether a measure split applies.
+   *
+   * Tableau's split divides a text table by measure, so it needs the text mark
+   * and two or more measures. Offering it elsewhere would be a control that
+   * cannot do anything.
+   */
+  const measureCount = (['columns', 'rows', 'detail', 'label'] as ShelfId[]).reduce(
+    (count, id) => count + (shelves[id] ?? []).filter((e) => e.kind === 'measure').length,
+    0,
+  );
+  const canSplitMeasures = (mark === 'text' || mark === 'automatic') && measureCount >= 2;
+
   return (
     <div className="marks-card">
       <div className="marks-header">
@@ -80,7 +98,7 @@ export function MarksCard({
       {paneOptions.length > 0 && (
         <div className="marks-split">
           <label>
-            <span>Split by</span>
+            <span>Small multiples</span>
             <select
               className="pane-select"
               value={paneBy ?? ''}
@@ -94,6 +112,20 @@ export function MarksCard({
                 </option>
               ))}
             </select>
+          </label>
+        </div>
+      )}
+
+      {canSplitMeasures && (
+        <div className="marks-split">
+          <label className="marks-checkbox" title="One pane per measure">
+            <input
+              type="checkbox"
+              className="measure-split-check"
+              checked={Boolean(splitMeasures)}
+              onChange={(event) => onMeasureSplitChange(event.target.checked)}
+            />
+            <span>One pane per measure</span>
           </label>
         </div>
       )}

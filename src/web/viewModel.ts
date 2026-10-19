@@ -85,12 +85,19 @@ export interface Sheet {
   /**
    * Dimension to repeat the view by, one pane per distinct value.
    *
-   * Tableau's "split": the same view drawn once per pane, so several categories
-   * can be compared side by side instead of overlaid. The field must appear in
-   * the result — a dimension on any shelf — because the split is done on the
-   * returned rows, not by re-querying.
+   * **Small multiples.** The field must appear in the result — a dimension on any
+   * shelf — because the split is done on the returned rows, not by re-querying.
    */
   paneBy?: string;
+  /**
+   * One pane per measure, for a text table.
+   *
+   * **Tableau's "split"**, which is a different feature from `paneBy` above:
+   * that one repeats by a dimension value, this one divides by measure. Only
+   * meaningful with two or more measures; the panes share their row headers and
+   * differ in the value shown.
+   */
+  splitMeasures?: boolean;
 }
 
 /**

@@ -6,7 +6,7 @@
  * from the wrong subset still renders a plausible chart.
  */
 
-import { splitIntoPanes, canSplit } from '../split.js';
+import { splitIntoPanes, splitByMeasurePanes, canSplit } from '../split.js';
 import type { CellValue, QueryResponse } from '../api.js';
 
 let passed = 0;
@@ -163,6 +163,124 @@ section('The original result is not mutated');
   const before = JSON.stringify(result);
   splitIntoPanes(result, 'Region');
   check('splitting leaves the input untouched', JSON.stringify(result) === before);
+}
+
+// --------------------------------------------------------- measure split ---
+
+section('Measure split: one pane per measure');
+
+/** A text-table result: one dimension, two measures. */
+function makeTextResult(): QueryResponse {
+  const columns = ['Category', 'Sum of Sales', 'Sum of Profit'];
+  return {
+    columns,
+    columnMeta: [
+      { name: 'Category', kind: 'dimension', dataType: 'string', logicalType: 'string', semanticType: 'nominal', defaultAggregation: 'COUNT' },
+      { name: 'Sum of Sales', kind: 'measure', dataType: 'number', logicalType: 'real', semanticType: 'quantitative', defaultAggregation: 'SUM' },
+      { name: 'Sum of Profit', kind: 'measure', dataType: 'number', logicalType: 'real', semanticType: 'quantitative', defaultAggregation: 'SUM' },
+    ],
+    rows: [
+      ['Furniture', 1000, 200],
+      ['Technology', 3000, 600],
+    ],
+    dimensionNames: ['Category'],
+    measureNames: ['Sum of Sales', 'Sum of Profit'],
+    measureLabels: ['SUM(Sales)', 'SUM(Profit)'],
+    domain: {},
+    elapsedMs: 1,
+    truncated: false,
+    sourceRowCount: 2,
+  };
+}
+
+{
+  const split = splitByMeasurePanes(makeTextResult());
+  check('no problem is reported', split.problem === undefined, split.problem);
+  check('one pane per measure', split.panes.length === 2, String(split.panes.length));
+  check('panes are titled with the measure label, not the column name',
+    split.panes.map((p) => p.value).join(',') === 'SUM(Sales),SUM(Profit)',
+    split.panes.map((p) => p.value).join(','));
+
+  const sales = split.panes[0];
+  check('each pane keeps the dimension column',
+    JSON.stringify(sales.result.columns) === JSON.stringify(['Category', 'Sum of Sales']),
+    JSON.stringify(sales.result.columns));
+  check('each pane carries only its own measure values',
+    JSON.stringify(sales.result.rows) === JSON.stringify([['Furniture', 1000], ['Technology', 3000]]),
+    JSON.stringify(sales.result.rows));
+  check('the second pane carries the other measure',
+    JSON.stringify(split.panes[1].result.rows) === JSON.stringify([['Furniture', 200], ['Technology', 600]]),
+    JSON.stringify(split.panes[1].result.rows));
+
+  // The panes must agree on their row headers, or they cannot be compared.
+  check('both panes share the same row headers',
+    JSON.stringify(split.panes[0].result.rows.map((r) => r[0])) ===
+      JSON.stringify(split.panes[1].result.rows.map((r) => r[0])));
+  check('each pane lists exactly one measure',
+    split.panes.every((p) => p.result.measureNames.length === 1));
+}
+
+section('Measure split refusals');
+
+{
+  const oneMeasure: QueryResponse = {
+    ...makeTextResult(),
+    columns: ['Category', 'Sum of Sales'],
+    columnMeta: makeTextResult().columnMeta.slice(0, 2),
+    rows: [['Furniture', 1000]],
+    measureNames: ['Sum of Sales'],
+    measureLabels: ['SUM(Sales)'],
+  };
+  const split = splitByMeasurePanes(oneMeasure);
+  check('one measure explains that splitting needs two',
+    split.panes.length === 0 && /two or more measures/.test(split.problem ?? ''),
+    split.problem);
+}
+
+{
+  const noMeasure: QueryResponse = {
+    ...makeTextResult(),
+    columns: ['Category'],
+    columnMeta: makeTextResult().columnMeta.slice(0, 1),
+    rows: [['Furniture']],
+    measureNames: [],
+    measureLabels: [],
+  };
+  const split = splitByMeasurePanes(noMeasure);
+  check('no measure explains that there is nothing to split',
+    split.panes.length === 0 && /no measure/.test(split.problem ?? ''),
+    split.problem);
+}
+
+section('The two splits are different features');
+
+{
+  // A dimension split iterates over values; a measure split iterates over
+  // columns. Conflating them is the mistake this suite exists to prevent.
+  const result = makeTextResult();
+  const byDimension = splitIntoPanes(result, 'Category');
+  const byMeasure = splitByMeasurePanes(result);
+
+  check('a dimension split yields panes per value',
+    byDimension.panes.map((p) => p.value).join(',') === 'Furniture,Technology',
+    byDimension.panes.map((p) => p.value).join(','));
+  check('a measure split yields panes per measure',
+    byMeasure.panes.map((p) => p.value).join(',') === 'SUM(Sales),SUM(Profit)',
+    byMeasure.panes.map((p) => p.value).join(','));
+  // The shapes differ structurally, not just in count: a dimension split gives
+  // each pane a subset of the ROWS and all the measures; a measure split gives
+  // each pane all the rows and one measure. Asserting the shape, not the count,
+  // because both happen to yield two panes for this fixture.
+  check('a dimension split divides the rows',
+    byDimension.panes.every((p) => p.result.rows.length === 1),
+    JSON.stringify(byDimension.panes.map((p) => p.result.rows.length)));
+  check('a measure split keeps every row in every pane',
+    byMeasure.panes.every((p) => p.result.rows.length === 2),
+    JSON.stringify(byMeasure.panes.map((p) => p.result.rows.length)));
+
+  check('a dimension split keeps every measure in each pane',
+    byDimension.panes.every((p) => p.result.measureNames.length === 2),
+    JSON.stringify(byDimension.panes.map((p) => p.result.measureNames.length)));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

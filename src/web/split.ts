@@ -130,3 +130,74 @@ export function canSplit(result: QueryResponse, paneBy: string | undefined): boo
   const split = splitIntoPanes(result, paneBy);
   return !split.problem && split.panes.length > 1;
 }
+
+/**
+ * Partitions a result into one pane per MEASURE.
+ *
+ * This is Tableau's "split", and it is a different feature from the small
+ * multiples above — easy to conflate, because both repeat a view into panes:
+ *
+ *   small multiples   one pane per value of a DIMENSION  (pane per Region)
+ *   split             one pane per MEASURE               (pane per Sum of Sales)
+ *
+ * The distinction is practical, not pedantic. A small multiple needs the
+ * dimension to be in the result, so the field must sit on a shelf. A measure
+ * split needs nothing extra: the measures are already columns, which is why it
+ * belongs to text tables with two or more measures.
+ *
+ * Each pane keeps every dimension column and exactly one measure, so the panes
+ * share their row headers and differ only in the value they show.
+ */
+export function splitByMeasurePanes(
+  result: QueryResponse,
+  maxPanes = 40,
+): SplitResult {
+  // Dimensions are everything that is not a measure; panes keep them all so the
+  // same rows line up across panes.
+  const dimensionIndices: number[] = [];
+  const measureIndices: number[] = [];
+  result.columnMeta.forEach((meta, index) => {
+    if (meta.kind === 'measure') measureIndices.push(index);
+    else dimensionIndices.push(index);
+  });
+
+  if (measureIndices.length < 2) {
+    return {
+      panes: [],
+      problem:
+        measureIndices.length === 0
+          ? 'There is no measure to split into panes.'
+          : 'Splitting needs two or more measures; with one there would be a single pane.',
+    };
+  }
+
+  if (measureIndices.length > maxPanes) {
+    return {
+      panes: [],
+      problem: `${measureIndices.length} measures is too many to split into panes (limit ${maxPanes}).`,
+    };
+  }
+
+  const panes: Pane[] = measureIndices.map((measureIndex, position) => {
+    const keep = [...dimensionIndices, measureIndex];
+    const meta = result.columnMeta[measureIndex];
+    // Labels are indexed by MEASURE position, not column position.
+    const title = result.measureLabels?.[position] ?? meta.name;
+
+    const projected: QueryResponse = {
+      ...result,
+      columns: keep.map((index) => result.columns[index]),
+      columnMeta: keep.map((index) => result.columnMeta[index]),
+      rows: result.rows.map((row) => keep.map((index) => row[index])),
+      dimensionNames: result.dimensionNames.filter((name) =>
+        keep.some((index) => result.columns[index] === name),
+      ),
+      measureNames: [meta.name],
+      measureLabels: [title],
+    };
+
+    return { value: title, result: projected };
+  });
+
+  return { panes };
+}

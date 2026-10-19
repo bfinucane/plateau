@@ -57,6 +57,7 @@ type Action =
   | { type: 'sheet/renamed'; sheetId: string; name: string }
   | { type: 'sheet/mark'; sheetId: string; mark: MarkType }
   | { type: 'sheet/paneSplit'; sheetId: string; paneBy?: string }
+  | { type: 'sheet/measureSplit'; sheetId: string; splitMeasures: boolean }
   | { type: 'sheet/encodingAdded'; sheetId: string; shelf: ShelfId; encoding: Encoding }
   | { type: 'sheet/encodingRemoved'; sheetId: string; shelf: ShelfId; encodingId: string }
   | { type: 'sheet/encodingUpdated'; sheetId: string; encodingId: string; patch: Partial<Encoding> }
@@ -201,6 +202,15 @@ function reducer(state: State, action: Action): State {
           return rest;
         }
         return { ...sheet, paneBy: action.paneBy };
+      });
+
+    case 'sheet/measureSplit':
+      return mapSheet(state, action.sheetId, (sheet) => {
+        if (!action.splitMeasures) {
+          const { splitMeasures: _dropped, ...rest } = sheet;
+          return rest;
+        }
+        return { ...sheet, splitMeasures: true };
       });
 
     case 'sheet/encodingAdded':

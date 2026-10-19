@@ -1856,6 +1856,34 @@ textarea {
   color: var(--text-muted);
 }
 
+/* A measure pane holds a table rather than a chart. It needs to scroll on its
+   own: several panes of different heights must not stretch the page. */
+.pane-data {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pane-data .data-grid {
+  font-size: 11px;
+}
+
+/* A checkbox in the marks card reads as a setting, not a field control. */
+.marks-checkbox {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.marks-checkbox > span {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-weight: 500 !important;
+  font-size: 11px !important;
+}
+
 /* The split control sits under the mark type, above the encoding shelves. */
 .marks-split {
   padding: 6px 8px;
