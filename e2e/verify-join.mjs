@@ -287,6 +287,59 @@ try {
 
   await screenshot('48-join-result.png');
 
+  // ------------------------------- an attribute without its key in the view
+  //
+  // The engine refuses an attribute whose conformed key is not grouped, and has no
+  // hidden-field mechanism — so Plateau groups by the key behind the scenes. Before
+  // that, dropping Manager on a shelf alone produced
+  // "groupBy names unknown column 'Manager'", which explains nothing.
+  console.log('\nUsing the attribute WITHOUT putting its key in the view');
+  // Back to the chart view: the previous section switched to Data to read columns,
+  // and a canvas assertion would fail against a grid that is there by design.
+  await evaluate(`(() => {
+    const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'View');
+    if (b) b.click();
+    return true;
+  })()`);
+  await evaluate(`(() => {
+    const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Clear sheet');
+    if (b) b.click();
+    return true;
+  })()`);
+  await sleep(1200);
+
+  check('Manager -> Columns (no key on any shelf)', (await drop('Manager', 'columns')) === 'ok');
+  await sleep(3000);
+
+  const aloneError = await evaluate(`document.querySelector('.view-error')?.innerText ?? ''`);
+  check('no error when only the attribute is placed',
+    aloneError === '', aloneError.slice(0, 120));
+
+  check('value -> Columns', (await drop('value', 'columns')) === 'ok');
+  await sleep(3500);
+
+  const joinedError = await evaluate(`document.querySelector('.view-error')?.innerText ?? ''`);
+  check('no error once a measure is added', joinedError === '', joinedError.slice(0, 120));
+
+  const joinedCanvas = await evaluate(`document.querySelectorAll('.chart-canvas canvas').length`);
+  check('the attribute renders without its key being placed', joinedCanvas > 0, String(joinedCanvas));
+
+  const axisLabels = await evaluate(`(() => {
+    const echarts = window.__ECHARTS__;
+    const el = document.querySelector('.chart-canvas');
+    const inst = echarts && el ? echarts.getInstanceByDom(el) : null;
+    if (!inst) return [];
+    const opt = inst.getOption();
+    return ((opt.xAxis ?? [])[0]?.data ?? []).map(String);
+  })()`);
+  console.log('  axis labels:', JSON.stringify(axisLabels));
+  check('the axis is labelled with attribute values',
+    Array.isArray(axisLabels) &&
+      axisLabels.some((label) => /Thompson|Carter|Diaz|Ellis/.test(label)),
+    JSON.stringify(axisLabels));
+
+  await screenshot('49-join-attribute-alone.png');
+
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 2).join(' | '));
 
   const failed = results.filter((r) => !r.ok);

@@ -237,6 +237,82 @@ async function main(): Promise<void> {
       JSON.stringify(names));
   }
 
+  section('An attribute on a shelf is grouped by its key');
+
+  {
+    /*
+     * Attributes are enrichment columns: the engine appends them to the result and
+     * REFUSES them in `groupBy`, because they are not columns of the queried cube.
+     * Placing Manager therefore has to become "group by Region", which yields one
+     * row per manager and still delivers Manager as a column to label with.
+     */
+    sent.length = 0;
+    const backend = makeBackend(makeTransport({ supportsJoin: true }));
+    backend.setJoin({ cube: 'RegionAttr', using: 'Region', attributes: ['Manager'] });
+
+    await backend.query({ fields: [{ name: 'Manager', kind: 'dimension' }] });
+
+    const groupBy = sent[0]?.groupBy.map((d) => d.name) ?? [];
+    check('the attribute is not sent as a grouping column',
+      !groupBy.includes('Manager'), JSON.stringify(groupBy));
+    check('the conformed key is grouped instead',
+      JSON.stringify(groupBy) === JSON.stringify(['Region']), JSON.stringify(groupBy));
+    check('the join still asks for the attribute',
+      JSON.stringify(sent[0]?.join?.attributes) === JSON.stringify(['Manager']),
+      JSON.stringify(sent[0]?.join?.attributes));
+  }
+
+  {
+    // Attribute and key both placed: one Region, no duplicate.
+    sent.length = 0;
+    const backend = makeBackend(makeTransport({ supportsJoin: true }));
+    backend.setJoin({ cube: 'RegionAttr', using: 'Region', attributes: ['Manager'] });
+
+    await backend.query({
+      fields: [
+        { name: 'Region', kind: 'dimension' },
+        { name: 'Manager', kind: 'dimension' },
+        { name: 'value', kind: 'measure', aggregation: 'SUM' },
+      ],
+    });
+
+    const groupBy = sent[0]?.groupBy.map((d) => d.name) ?? [];
+    check('the key is grouped exactly once',
+      groupBy.filter((name) => name === 'Region').length === 1, JSON.stringify(groupBy));
+    check('the attribute is still excluded',
+      !groupBy.includes('Manager'), JSON.stringify(groupBy));
+  }
+
+  {
+    // A query that never mentions an attribute is left completely alone.
+    sent.length = 0;
+    const backend = makeBackend(makeTransport({ supportsJoin: true }));
+    backend.setJoin({ cube: 'RegionAttr', using: 'Region', attributes: ['Manager'] });
+
+    await backend.query(SPEC);
+
+    check('an unrelated query is untouched',
+      JSON.stringify(sent[0]?.groupBy) === JSON.stringify([{ name: 'Region' }]),
+      JSON.stringify(sent[0]?.groupBy));
+  }
+
+  {
+    /*
+     * Without a known key there is nothing to substitute, and inventing one would
+     * be guessing. Only the keyless-but-attached case reaches here, and it is
+     * better to let the engine reject it than to invent a grouping.
+     */
+    sent.length = 0;
+    const backend = makeBackend(makeTransport({ supportsJoin: true }));
+    backend.setJoin({ cube: 'RegionAttr', attributes: ['Manager'] });
+
+    await backend.query({ fields: [{ name: 'Manager', kind: 'dimension' }] });
+
+    const groupBy = sent[0]?.groupBy.map((d) => d.name) ?? [];
+    check('no grouping is invented when the join names no key',
+      JSON.stringify(groupBy) === JSON.stringify(['Manager']), JSON.stringify(groupBy));
+  }
+
   console.log(`\n${passed} passed, ${failed} failed\n`);
   if (failed > 0) process.exitCode = 1;
 }

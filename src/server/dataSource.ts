@@ -256,6 +256,41 @@ export class RemoteBackend implements DatasetBackend {
     return this.join;
   }
 
+  /**
+   * Translates an attribute on a shelf into the grouping the engine can accept.
+   *
+   * Attributes are ENRICHMENT columns: the engine appends them to the result and
+   * refuses them in `groupBy`, because they are not columns of the queried cube —
+   * they are members of the attribute cube's measure dimension. Putting `Manager`
+   * on a shelf therefore produced `groupBy names unknown column 'Manager'`, which
+   * is accurate and useless to the user.
+   *
+   * Grouping by the conformed KEY instead is exactly equivalent for an attribute
+   * table: one row per key, so grouping the key yields one row per attribute value.
+   * The attribute still arrives in the result, so the chart can label with it. The
+   * key genuinely is projected, which is what the contract requires — this is not
+   * a hidden field.
+   *
+   * The caveat, and it is real: if two keys share an attribute value, two rows
+   * carry the same label. That is the honest picture of the data; silently
+   * de-duplicating would hide it.
+   */
+  private resolveAttributeGrouping(request: QueryRequest): void {
+    const join = this.join;
+    if (!join?.using) return;
+
+    const key = join.using;
+    const attributes = new Set(join.attributes);
+
+    const usesAttribute = request.groupBy.some((dimension) => attributes.has(dimension.name));
+    if (!usesAttribute) return;
+
+    request.groupBy = request.groupBy.filter((dimension) => !attributes.has(dimension.name));
+    if (!request.groupBy.some((dimension) => dimension.name === key)) {
+      request.groupBy.push({ name: key });
+    }
+  }
+
   /** Forgets a calculated field. */
   forgetFormula(name: string): void {
     this.formulas.delete(name);
@@ -346,6 +381,7 @@ export class RemoteBackend implements DatasetBackend {
         );
       }
       request.join = this.join;
+      this.resolveAttributeGrouping(request);
     }
 
     // Attach the formulas for any calculated field the query references. Without
