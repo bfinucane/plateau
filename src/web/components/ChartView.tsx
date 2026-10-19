@@ -119,23 +119,39 @@ function ChartViewInner({ sheet, result, querying, error, tab, onRetry }: ChartV
     return (
       <div className="view-chart view-panes">
         <div className="pane-grid" data-pane-count={measureSplit.panes.length}>
-          {measureSplit.panes.map((pane) => (
-            <div className="pane" key={pane.value}>
-              <div className="pane-title" title={pane.value}>
-                {pane.value}
+          {measureSplit.panes.map((pane) => {
+            /*
+             * Each pane draws whatever the mark draws — a chart for a chart mark,
+             * a table for the text mark. Splitting divides the view by measure; it
+             * does not change what a pane looks like. Forcing a table here was
+             * wrong: it made the split useless for the bar and line views where
+             * comparing two measures side by side is most valuable.
+             */
+            const paneBuild = buildChart(applyTableCalcs(pane.result, sheet), sheet, mark);
+            return (
+              <div className="pane" key={pane.value}>
+                <div className="pane-title" title={pane.value}>
+                  {pane.value}
+                </div>
+                {paneBuild.notice === 'table' ? (
+                  <div className="pane-data">
+                    <DataGrid result={pane.result} maxRows={2000} />
+                  </div>
+                ) : paneBuild.notice ? (
+                  <div className="pane-placeholder">{paneBuild.notice}</div>
+                ) : (
+                  <EChart option={paneBuild.option} className="chart-canvas pane-canvas" />
+                )}
               </div>
-              <div className="pane-data">
-                <DataGrid result={pane.result} maxRows={2000} />
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="view-footer">
           <span>
             {result.rows.length.toLocaleString()} row{result.rows.length === 1 ? '' : 's'}
           </span>
-          <span className="dot">Â·</span>
+          <span className="dot">·</span>
           <span>{measureSplit.panes.length} panes, one per measure</span>
         </div>
       </div>

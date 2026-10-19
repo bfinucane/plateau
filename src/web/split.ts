@@ -142,11 +142,11 @@ export function canSplit(result: QueryResponse, paneBy: string | undefined): boo
  *
  * The distinction is practical, not pedantic. A small multiple needs the
  * dimension to be in the result, so the field must sit on a shelf. A measure
- * split needs nothing extra: the measures are already columns, which is why it
- * belongs to text tables with two or more measures.
+ * split needs nothing extra: the measures are already columns.
  *
- * Each pane keeps every dimension column and exactly one measure, so the panes
- * share their row headers and differ only in the value they show.
+ * Each pane keeps every dimension column and exactly one measure. What the pane
+ * *looks* like is the mark's business — a measure split of a bar view gives bars,
+ * of a text view gives tables.
  */
 export function splitByMeasurePanes(
   result: QueryResponse,

@@ -67,15 +67,16 @@ export function MarksCard({
   /**
    * Whether a measure split applies.
    *
-   * Tableau's split divides a text table by measure, so it needs the text mark
-   * and two or more measures. Offering it elsewhere would be a control that
-   * cannot do anything.
+   * Any mark: splitting divides the view by measure, and each pane draws whatever
+   * the mark draws. Restricting it to the text mark confused "this is how people
+   * usually use split" with "this is the only thing split can do" — and the split
+   * is most useful precisely on a bar or line view of two measures.
    */
   const measureCount = (['columns', 'rows', 'detail', 'label'] as ShelfId[]).reduce(
     (count, id) => count + (shelves[id] ?? []).filter((e) => e.kind === 'measure').length,
     0,
   );
-  const canSplitMeasures = (mark === 'text' || mark === 'automatic') && measureCount >= 2;
+  const canSplitMeasures = measureCount >= 2;
 
   return (
     <div className="marks-card">

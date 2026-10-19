@@ -106,6 +106,7 @@ const paneInfo = () => evaluate(`(() => {
     title: pane.querySelector('.pane-title')?.textContent ?? '',
     headers: [...pane.querySelectorAll('.data-grid thead th')].map(th => th.textContent.trim()),
     rows: pane.querySelectorAll('.data-grid tbody tr').length,
+    canvases: pane.querySelectorAll('.chart-canvas canvas').length,
   }));
 })()`);
 
@@ -203,6 +204,32 @@ try {
   check('one data grid is rendered',
     (await evaluate(`document.querySelectorAll('.data-grid').length`)) === 1,
     String(await evaluate(`document.querySelectorAll('.data-grid').length`)));
+
+  // --------------------------------------------------- the same, on a chart
+  console.log('\nSplitting a BAR view, not a text table');
+  check('mark -> Bar', (await setMark('column')) === 'set');
+  await sleep(2600);
+  check('the chart mark renders a canvas, not a table',
+    (await evaluate(`document.querySelectorAll('.chart-canvas canvas').length`)) === 1,
+    String(await evaluate(`document.querySelectorAll('.chart-canvas canvas').length`)));
+  check('the split control is still offered on a chart mark',
+    (await evaluate(`Boolean(document.querySelector('.measure-split-check'))`)) === true);
+
+  check('the control accepts a click', (await toggleMeasureSplit(true)) === 'ok');
+  await sleep(3200);
+
+  const barPanes = await paneInfo();
+  console.log('  bar panes:', JSON.stringify(barPanes.map((p) => ({ t: p.title, c: p.canvases }))));
+  check('the bar view splits into one pane per measure', barPanes.length === 2,
+    String(barPanes.length));
+  check('each pane draws a CHART, not a table',
+    barPanes.every((p) => p.canvases === 1),
+    JSON.stringify(barPanes.map((p) => p.canvases)));
+  check('no table is rendered inside the panes',
+    barPanes.every((p) => p.headers.length === 0),
+    JSON.stringify(barPanes.map((p) => p.headers)));
+
+  await screenshot('46-measuresplit-bars.png');
 
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 2).join(' | '));
 
