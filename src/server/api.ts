@@ -8,7 +8,7 @@
 
 import express from 'express';
 import multer from 'multer';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,12 +38,54 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, '..', '..');
 const DATA_DIR = resolve(PROJECT_ROOT, 'data');
 const WORKBOOK_PATH = resolve(DATA_DIR, 'workbook.json');
+/** Previous generation, kept so a bad save is recoverable. */
+const WORKBOOK_BACKUP_PATH = resolve(DATA_DIR, 'workbook.json.bak');
 const SUPERSTORE_PATH = resolve(DATA_DIR, 'superstore.csv');
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 64 * 1024 * 1024 },
 });
+
+/**
+ * Writes the workbook, keeping the previous generation beside it.
+ *
+ * The current file is copied to `workbook.json.bak` before being replaced, so a
+ * bad save — an empty session, a bug — costs at most the changes since the last
+ * save rather than the whole workbook. One generation is deliberate: more needs a
+ * pruning policy, and the point is recoverability, not history.
+ *
+ * Written to a temporary file and renamed, so an interrupted save cannot leave a
+ * half-written workbook. Same hazard as Patricia's persistence layer, same fix.
+ */
+function saveWorkbookFile(workbook: unknown): void {
+  mkdirSync(DATA_DIR, { recursive: true });
+
+  // Rotate the current file aside, but only if it is readable and non-empty:
+  // copying a corrupt file over a good backup would defeat the purpose.
+  if (existsSync(WORKBOOK_PATH)) {
+    try {
+      const current = readFileSync(WORKBOOK_PATH, 'utf8');
+      if (current.trim().length > 0) writeFileSync(WORKBOOK_BACKUP_PATH, current, 'utf8');
+    } catch {
+      // An unreadable current file must not block the save.
+    }
+  }
+
+  const tempPath = `${WORKBOOK_PATH}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tempPath, JSON.stringify(workbook ?? null, null, 2), 'utf8');
+    renameSync(tempPath, WORKBOOK_PATH);
+  } catch (error) {
+    // Do not leave a partial file behind if the rename never happened.
+    try {
+      if (existsSync(tempPath)) rmSync(tempPath, { force: true });
+    } catch {
+      // Best effort.
+    }
+    throw error;
+  }
+}
 
 export function createServer() {
   const app = express();
@@ -351,11 +393,40 @@ export function createServer() {
 
   app.put('/api/workbook', (req, res) => {
     try {
-      mkdirSync(DATA_DIR, { recursive: true });
-      writeFileSync(WORKBOOK_PATH, JSON.stringify(req.body?.workbook ?? null, null, 2), 'utf8');
-      res.json({ saved: true, path: WORKBOOK_PATH });
+      saveWorkbookFile(req.body?.workbook ?? null);
+      res.json({ saved: true, path: WORKBOOK_PATH, backup: WORKBOOK_BACKUP_PATH });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'Save failed' });
+    }
+  });
+
+  /** Reports whether a previous generation exists, so a restore can be offered. */
+  app.get('/api/workbook/backup', (_req, res) => {
+    if (!existsSync(WORKBOOK_BACKUP_PATH)) {
+      res.json({ backup: null });
+      return;
+    }
+    try {
+      res.json({ backup: JSON.parse(readFileSync(WORKBOOK_BACKUP_PATH, 'utf8')) });
+    } catch {
+      res.json({ backup: null });
+    }
+  });
+
+  /** Restores the previous generation, rotating the current one aside first. */
+  app.post('/api/workbook/restore', (req, res) => {
+    if (!existsSync(WORKBOOK_BACKUP_PATH)) {
+      res.status(404).json({ error: 'No backup to restore' });
+      return;
+    }
+    try {
+      const backup = readFileSync(WORKBOOK_BACKUP_PATH, 'utf8');
+      // Move the CURRENT file to the backup position rather than discarding it,
+      // so a restore is itself undoable.
+      saveWorkbookFile(JSON.parse(backup));
+      res.json({ restored: true });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Restore failed' });
     }
   });
 

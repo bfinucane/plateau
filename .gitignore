@@ -14,8 +14,10 @@ data/superstore.csv
 # Derived data; the 1.2 MB raw dump especially does not belong in history.
 engine-fixtures/
 
-# Saved workbook state (user-specific)
+# Saved workbook state (user-specific), including the previous generation
 data/workbook.json
+data/workbook.json.bak
+data/workbook.json.*.tmp
 
 # Editor / OS noise
 .DS_Store
