@@ -225,6 +225,19 @@ Optional per-sheet fields are `mark`, `paneBy`, `splitMeasures`, `palette`,
 file should open on a dashboard. Opening a file also makes it the saved workbook, so
 it survives a reload.
 
+![A hand-authored workbook file opened in the app](docs/screenshots/57-workbook-imported.png)
+
+#### The starter test set
+
+`workbooks/test-set.json` is a worked example and a smoke suite: 14 worksheets
+covering every mark family, nested axes, small multiples, a table calculation, a
+filter, a measure split, plus a dashboard. Open it with **Workbook ▾ → Open from
+file** to click through them all.
+
+`e2e/verify-test-set.mjs` opens that file and renders every sheet in it, asserting
+each view is produced without an error. Extending the JSON extends the check — the
+fixture *is* the test, so it can grow without the harness growing with it.
+
 Each Marks-card channel does real work, and every mark type honours it:
 
 | Channel | Effect |
@@ -355,11 +368,12 @@ node e2e/verify-split.mjs      # 16 checks: split panes
 node e2e/verify-measuresplit.mjs # 26 checks: one pane per measure
 node e2e/verify-retry.mjs      # 13 checks: a failed query is recoverable
 node e2e/verify-workbook.mjs   # 36 checks: save, start-up restore, menu, JSON files, backup safety
+node e2e/verify-test-set.mjs   # 20 checks: opens workbooks/test-set.json and renders every sheet
 node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips without it
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **890 checks** — 520 unit, 370 browser.
+Total: **910 checks** — 520 unit, 390 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -390,6 +404,8 @@ so a pushed-down calculated measure arriving as a bare aggregation would fail th
 check rather than hide behind a canned response. `verify-workbook.mjs` downloads a
 real file and opens a hand-written one through the hidden file input, so the JSON
 round trip is exercised as a browser would do it, not in-process.
+`verify-test-set.mjs` opens `workbooks/test-set.json` and visits every worksheet in
+it, so the spreadsheet-shaped fixture is itself the UI smoke suite.
 
 ---
 
@@ -613,7 +629,9 @@ reason, instead of accepting the field and failing on its first query.
   pushed down as ASTs
 - Workbook autosave with a restorable previous generation, and portable JSON
   workbook files for keeping, sharing or hand-authoring test sheets
-- 890 checks green (520 unit, 370 browser)
+- A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
+  in the browser
+- 910 checks green (520 unit, 390 browser)
 
 ### Connecting to an engine
 

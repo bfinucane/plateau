@@ -1,0 +1,193 @@
+{
+  "formatVersion": 1,
+  "sheets": [
+    {
+      "id": "sheet-bar",
+      "name": "Bar - Sales by Category",
+      "mark": "column",
+      "shelves": {
+        "columns": [{ "id": "e1", "field": "Category", "kind": "dimension" }],
+        "rows": [{ "id": "e2", "field": "Sales", "kind": "measure", "aggregation": "SUM" }]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-bar-horizontal",
+      "name": "Bar - Profit by Sub-Category",
+      "mark": "bar",
+      "shelves": {
+        "columns": [{ "id": "e3", "field": "Profit", "kind": "measure", "aggregation": "SUM" }],
+        "rows": [{ "id": "e4", "field": "Sub-Category", "kind": "dimension" }]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-line",
+      "name": "Line - Sales by Month",
+      "mark": "line",
+      "shelves": {
+        "columns": [
+          { "id": "e5", "field": "Order Date", "kind": "dimension", "datePart": "month" }
+        ],
+        "rows": [{ "id": "e6", "field": "Sales", "kind": "measure", "aggregation": "SUM" }]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-pie",
+      "name": "Pie - Sales by Region",
+      "mark": "pie",
+      "shelves": {
+        "columns": [{ "id": "e7", "field": "Region", "kind": "dimension" }],
+        "rows": [{ "id": "e8", "field": "Sales", "kind": "measure", "aggregation": "SUM" }]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-scatter",
+      "name": "Scatter - Profit vs Discount",
+      "mark": "scatter",
+      "shelves": {
+        "columns": [{ "id": "e9", "field": "Profit", "kind": "measure", "aggregation": "SUM" }],
+        "rows": [{ "id": "e10", "field": "Discount", "kind": "measure", "aggregation": "AVG" }],
+        "detail": [{ "id": "e11", "field": "Sub-Category", "kind": "dimension" }],
+        "color": [{ "id": "e12", "field": "Region", "kind": "dimension" }]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-heatmap",
+      "name": "Heat map - Profit by Region and Category",
+      "mark": "heatmap",
+      "shelves": {
+        "columns": [{ "id": "e13", "field": "Region", "kind": "dimension" }],
+        "rows": [{ "id": "e14", "field": "Category", "kind": "dimension" }],
+        "size": [{ "id": "e15", "field": "Profit", "kind": "measure", "aggregation": "SUM" }]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-treemap",
+      "name": "Treemap - Sales by Sub-Category",
+      "mark": "treemap",
+      "shelves": {
+        "columns": [{ "id": "e16", "field": "Sub-Category", "kind": "dimension" }],
+        "rows": [{ "id": "e17", "field": "Sales", "kind": "measure", "aggregation": "SUM" }],
+        "color": [{ "id": "e18", "field": "Region", "kind": "dimension" }]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-text",
+      "name": "Text - Sales by Segment",
+      "mark": "text",
+      "shelves": {
+        "columns": [{ "id": "e19", "field": "Segment", "kind": "dimension" }],
+        "rows": [{ "id": "e20", "field": "Sales", "kind": "measure", "aggregation": "SUM" }]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-stacked",
+      "name": "Stacked bar - Sales by Category and Ship Mode",
+      "mark": "column",
+      "shelves": {
+        "columns": [{ "id": "e21", "field": "Category", "kind": "dimension" }],
+        "rows": [{ "id": "e22", "field": "Sales", "kind": "measure", "aggregation": "SUM" }],
+        "color": [{ "id": "e23", "field": "Ship Mode", "kind": "dimension" }]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-nested-axis",
+      "name": "Nested axis - Region under Category",
+      "mark": "column",
+      "shelves": {
+        "columns": [
+          { "id": "e24", "field": "Category", "kind": "dimension" },
+          { "id": "e25", "field": "Region", "kind": "dimension" }
+        ],
+        "rows": [{ "id": "e26", "field": "Sales", "kind": "measure", "aggregation": "SUM" }]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-panes",
+      "name": "Small multiples - Sales by Region per Category",
+      "mark": "column",
+      "paneBy": "Category",
+      "shelves": {
+        "columns": [{ "id": "e27", "field": "Region", "kind": "dimension" }],
+        "rows": [{ "id": "e28", "field": "Sales", "kind": "measure", "aggregation": "SUM" }]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-filtered",
+      "name": "Filtered - Office Supplies only",
+      "mark": "column",
+      "shelves": {
+        "columns": [{ "id": "e29", "field": "Sub-Category", "kind": "dimension" }],
+        "rows": [{ "id": "e30", "field": "Sales", "kind": "measure", "aggregation": "SUM" }]
+      },
+      "filters": [
+        {
+          "id": "f1",
+          "field": "Category",
+          "scope": "dimension",
+          "operator": "in",
+          "values": ["Office Supplies"]
+        }
+      ]
+    },
+    {
+      "id": "sheet-tablecalc",
+      "name": "Table calc - Running sales by month",
+      "mark": "line",
+      "shelves": {
+        "columns": [
+          { "id": "e31", "field": "Order Date", "kind": "dimension", "datePart": "month" }
+        ],
+        "rows": [
+          {
+            "id": "e32",
+            "field": "Sales",
+            "kind": "measure",
+            "aggregation": "SUM",
+            "tableCalc": { "calculation": "RUNNING_SUM" }
+          }
+        ]
+      },
+      "filters": []
+    },
+    {
+      "id": "sheet-split",
+      "name": "Split - Sales vs Profit",
+      "mark": "text",
+      "splitMeasures": true,
+      "shelves": {
+        "columns": [{ "id": "e33", "field": "Category", "kind": "dimension" }],
+        "rows": [
+          { "id": "e34", "field": "Sales", "kind": "measure", "aggregation": "SUM" },
+          { "id": "e35", "field": "Profit", "kind": "measure", "aggregation": "SUM" }
+        ]
+      },
+      "filters": []
+    }
+  ],
+  "activeSheetId": "sheet-bar",
+  "dashboards": [
+    {
+      "id": "dash-overview",
+      "name": "Overview",
+      "panels": [
+        { "id": "p1", "sheetId": "sheet-bar", "x": 0, "y": 0, "w": 6, "h": 2 },
+        { "id": "p2", "sheetId": "sheet-line", "x": 6, "y": 0, "w": 6, "h": 2 },
+        { "id": "p3", "sheetId": "sheet-pie", "x": 0, "y": 2, "w": 4, "h": 2 },
+        { "id": "p4", "sheetId": "sheet-treemap", "x": 4, "y": 2, "w": 8, "h": 2 }
+      ]
+    }
+  ],
+  "view": "sheet",
+  "activeDashboardId": null
+}
