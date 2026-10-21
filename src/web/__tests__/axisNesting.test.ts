@@ -219,5 +219,130 @@ section('A heat map nests every dimension on each shelf');
     JSON.stringify(labels));
 }
 
+// ---------------------------------------------------------------- treemap ---
+
+interface Tile {
+  name: string;
+  value: number;
+  path: string[];
+  children?: Tile[];
+}
+
+function treemapOption() {
+  return (built: { option: unknown }) => {
+    const series = ((built.option as { series?: Record<string, unknown>[] }).series ?? [])[0] ?? {};
+    return series as {
+      data?: Tile[];
+      levels?: unknown[];
+      breadcrumb?: { show?: boolean };
+      tooltip?: unknown;
+    };
+  };
+}
+
+section('A treemap nests every placed dimension');
+
+{
+  const sheet = createSheet('Tree');
+  sheet.mark = 'treemap';
+  sheet.shelves.columns = [
+    { id: 'c-region', field: 'Region', kind: 'dimension' },
+    { id: 'c-category', field: 'Category', kind: 'dimension' },
+  ];
+  sheet.shelves.color = [{ id: 'col-segment', field: 'Segment', kind: 'dimension' }];
+  sheet.shelves.size = [{ id: 's-sales', field: 'Sales', kind: 'measure', aggregation: 'SUM' }];
+
+  const result = resultWith(
+    [
+      { name: 'Region', kind: 'dimension' },
+      { name: 'Category', kind: 'dimension' },
+      { name: 'Segment', kind: 'dimension' },
+      { name: 'Sum of Sales', kind: 'measure' },
+    ],
+    [
+      ['East', 'Furniture', 'Consumer', 10],
+      ['East', 'Furniture', 'Corporate', 20],
+      ['West', 'Office', 'Consumer', 30],
+    ],
+  );
+
+  const built = buildChart(result, sheet, 'treemap');
+  const series = treemapOption()(built);
+  const roots = series.data ?? [];
+  const leaves = roots.flatMap((root) => root.children ?? []).flatMap((child) => child.children ?? []);
+
+  check('the hierarchy has a level per placed dimension', (series.levels ?? []).length === 4,
+    String((series.levels ?? []).length));
+  check('the tree reaches the third dimension', leaves.length === 3, JSON.stringify(roots));
+  check('a leaf is labelled with its whole path',
+    leaves[0]?.path.length === 3 && (leaves[0]?.name ?? '').includes(' / '),
+    JSON.stringify(leaves[0]));
+  check('the breadcrumb is offered while drilling',
+    series.breadcrumb?.show === true, JSON.stringify(series.breadcrumb));
+
+  const formatter = (built.option as { tooltip?: { formatter?: (p: unknown) => string } }).tooltip
+    ?.formatter;
+  const text = formatter && leaves[0] ? formatter({ data: { path: leaves[0].path }, value: 10 }) : '';
+  check('the tooltip names every level',
+    /Region: East/.test(text) && /Category: Furniture/.test(text) && /Segment: Consumer/.test(text),
+    text);
+}
+
+{
+  // Two levels — the layout every existing treemap uses — must be unchanged.
+  const sheet = createSheet('Tree');
+  sheet.mark = 'treemap';
+  sheet.shelves.columns = [{ id: 'c-region', field: 'Region', kind: 'dimension' }];
+  sheet.shelves.color = [{ id: 'col-category', field: 'Category', kind: 'dimension' }];
+  sheet.shelves.size = [{ id: 's-sales', field: 'Sales', kind: 'measure', aggregation: 'SUM' }];
+
+  const result = resultWith(
+    [
+      { name: 'Region', kind: 'dimension' },
+      { name: 'Category', kind: 'dimension' },
+      { name: 'Sum of Sales', kind: 'measure' },
+    ],
+    [
+      ['East', 'Furniture', 10],
+      ['West', 'Office', 20],
+    ],
+  );
+
+  const built = buildChart(result, sheet, 'treemap');
+  const series = treemapOption()(built);
+  const roots = series.data ?? [];
+  check('a two-dimension treemap keeps two levels plus the root',
+    (series.levels ?? []).length === 3, String((series.levels ?? []).length));
+  check('and its roots are the axis dimension with one child each',
+    roots.length === 2 && (roots[0].children?.length ?? 0) === 1, JSON.stringify(roots));
+  check('the leaf label still carries the path',
+    (roots[0].children?.[0]?.name ?? '').includes(' / '), JSON.stringify(roots[0]));
+}
+
+{
+  // One dimension: a single flat tile level, no breadcrumb.
+  const sheet = createSheet('Tree');
+  sheet.mark = 'treemap';
+  sheet.shelves.columns = [{ id: 'c-region', field: 'Region', kind: 'dimension' }];
+  sheet.shelves.size = [{ id: 's-sales', field: 'Sales', kind: 'measure', aggregation: 'SUM' }];
+
+  const result = resultWith(
+    [
+      { name: 'Region', kind: 'dimension' },
+      { name: 'Sum of Sales', kind: 'measure' },
+    ],
+    [
+      ['East', 10],
+      ['West', 20],
+    ],
+  );
+
+  const built = buildChart(result, sheet, 'treemap');
+  const series = treemapOption()(built);
+  check('a one-dimension treemap has root plus leaf config only',
+    (series.levels ?? []).length === 2, String((series.levels ?? []).length));
+  check('and no breadcrumb', (series.breadcrumb as { show?: boolean } | undefined)?.show === false);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exitCode = 1;

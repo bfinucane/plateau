@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, eleven session commits on top of `0e252ab`. Every number
+Written on branch `main`, twelve session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,12 +13,12 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 33 total; **2 unpushed** (`origin/main` is at `7581189`) |
-| Source | 56 files in `src/`, ~22,000 lines |
-| Unit tests | **584 checks**, 17 suites, all passing |
+| Commits | 34 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Source | 56 files in `src/`, ~22,100 lines |
+| Unit tests | **594 checks**, 17 suites, all passing |
 | Browser tests | **413 checks**, 15 harnesses, all passing |
 | Screenshots | 53, in `docs/screenshots/` |
-| Bundle | `dist/web/assets/index-Dkq1T7vP.js` (built this session) |
+| Bundle | `dist/web/assets/index-Drt3ZGWy.js` (built this session) |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -255,7 +255,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Eleven commits on top of `0e252ab` — seven features, a wire follow-up and two notes on
+Twelve commits on top of `0e252ab` — seven features, a wire follow-up and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
 | Was | Now |
@@ -277,12 +277,12 @@ verification hygiene. The commit messages have the detail; the shape:
 | Two measures on one shelf inferred a scatter, which plotted a dimension on an axis and collapsed every point to zero | A scatter needs a measure on each axis; two measures on one shelf are a clustered bar |
 | Harnesses assumed a blank start and inherited the previous run's saved workbook once restore worked | `resetWorkbook()` in `e2e/harness.mjs` starts each run blank and puts the previous workbook back on teardown |
 | `maxRows` was reported and ignored; `supportsInlineDomain: false` still got `domainFor`; filter support was one global list | Limits are clamped to the engine cap (a partial materialisation is refused as `row_limit`), inline-domain-less engines get a bounded-sample value list, and the optional per-scope filter report gates dialogs and server-side refusals |
-| A third dimension vanished from line/area charts, and heat maps showed at most two dimensions | Every placed dimension nests into the axis labels: extras after the series on line/area, per shelf on a heat map |
+| A third dimension vanished from line/area charts, and heat maps and treemaps stopped at two levels | Every placed dimension nests: extras after the series on line/area, per shelf on a heat map, and every level of a treemap's hierarchy |
 | `verify-ui`'s restore check passed only because a stale backup file happened to exist | The harness makes a real change before its save, so the skip-identical rewrite cannot leave it without a generation to restore |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (29),
 `capabilityGating.test.ts` (43), `workbookFile.test.ts` (43),
-`nullCells.test.ts` (22), `markInference.test.ts` (7) and `axisNesting.test.ts` (10).
+`nullCells.test.ts` (22), `markInference.test.ts` (7) and `axisNesting.test.ts` (20).
 `verify-ui` grew from 25 to 43 checks and `verify-connect` from 26 to 80;
 `verify-workbook.mjs` (36 checks, own server and data directory) and
 `verify-test-set.mjs` (28 checks, data-driven from the workbook file) are new.
@@ -324,10 +324,9 @@ and returns **`null` in every group**; the join harness passes 38/38 against it.
 
 Ordered by what I would do next.
 
-### 8.1 Two commits unpushed
-The user already pushed the wire follow-up (`7581189`). Unpushed now: the handover
-correction and the capability/nesting work. `origin` is
-https://github.com/bfinucane/plateau.git.
+### 8.1 Nothing is unpushed
+The wire follow-up, the capability/nesting work and the treemap hierarchy are pushed;
+`origin/main` matches `HEAD`. `origin` is https://github.com/bfinucane/plateau.git.
 
 Pushing from an agent command needs the **wider sandbox**: the confined one fails with
 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`, because the
@@ -366,21 +365,22 @@ an optional per-scope `filterOperatorsByScope` honoured). What is left:
   the operator (`top`/`bottom` are measure-scope; a range on a measure column is
   measure-scope in Plateau's model) rather than stated.
 
-### 8.4 Nesting now reaches line/area and heat maps; treemap and text differ
-Bar-like, line/area and heat-map marks now nest every placed dimension:
+### 8.4 Every mark with a hierarchy now nests; the text mark is still flat
+Bar-like, line/area and heat-map marks show every placed dimension, and the treemap's
+hierarchy is now every placed dimension too:
 
 - **bar-like** — every placed dimension except the colour series;
 - **line / area** — the first dimension on the axis, the second (or the colour) as the
   series, every further placed dimension nested after it;
 - **heat map** — nests per shelf: all Columns-shelf dimensions across, all Rows-shelf
   dimensions down;
-- **treemap** — still axis dimension + colour as its two hierarchy levels; a third
-  dimension is not shown;
-- **text** — a flat DOM grid: every dimension appears as its own column, and there is
-  no cross-tab (the earlier handover note saying "first dimension per axis" was wrong).
+- **treemap** — every placed dimension (Columns, then Rows, then Colour) is a
+  hierarchy level, with a breadcrumb and a `levels` array generated for the depth;
+  leaves carry their full path and the tooltip names every level.
 
-Remaining work here is the treemap's N-level hierarchy, and a real cross-tab for the
-text mark if that is wanted.
+The one remaining gap is the **text mark**: it renders a flat DOM grid where every
+dimension is its own column, not a cross-tab. That is a DataGrid feature, not a
+nesting one.
 
 ### 8.5 The folder is still called `tableau-clone`
 The project is Plateau. The rename is blocked only because the user's browser and
@@ -473,14 +473,14 @@ audited once more but still predates some of the join work.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 584 unit checks
+node scripts/test.mjs                                   # 594 unit checks
 node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 ```
 
 Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset` 38,
 `queryValidation` 17, `capabilityGating` 43, `tableCalcs` 51, `workbookBackup` 14,
 `split` 35, `axisSelection` 34, `aggregationMenu` 29, `workbookFile` 43, `nullCells` 22,
-`markInference` 7, `axisNesting` 10, `join` 28.
+`markInference` 7, `axisNesting` 20, `join` 28.
 
 Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 18, `verify-viz`
 27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 80,
@@ -497,7 +497,7 @@ is worth showing.
 
 ## 11. Provenance
 
-33 commits, `55482d0` … HEAD. The last eleven are this session; the 14 before them are
+34 commits, `55482d0` … HEAD. The last twelve are this session; the 14 before them are
 the work of earlier sessions and are described by their commit messages, which record
 what went wrong as well as what was built — including four test mistakes and one place
 where a fix was worse than the bug.

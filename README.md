@@ -338,7 +338,7 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 584 unit checks, 17 suites
+npm test         # 594 unit checks, 17 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
@@ -381,7 +381,7 @@ node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **997 checks** — 584 unit, 413 browser.
+Total: **1007 checks** — 594 unit, 413 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -400,7 +400,7 @@ Total: **997 checks** — 584 unit, 413 browser.
 | workbook file | 43 | round trip, hand-authored files, refusals, repairs |
 | null cells | 22 | absence is not zero, in every mark |
 | mark inference | 7 | a scatter needs a measure on each axis |
-| axis nesting | 10 | line and heat map show every placed dimension |
+| axis nesting | 20 | line, heat map and treemap show every placed dimension |
 | joins | 28 | join schema, gating, capability refusal |
 
 Both browser and transport suites run against the real thing — a loopback HTTP
@@ -678,15 +678,16 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   menus, filter operators are per scope where reported, requested limits are clamped
   to `maxRows`, and an engine without inline domains gets a bounded-sample fallback
   instead of an empty filter list
-- Line, area and heat-map marks nest every placed dimension into the axis labels, on
-  top of the bar-like marks that already did; heat maps nest per shelf
+- Line, area, heat-map and treemap marks nest every placed dimension, on top of the
+  bar-like marks that already did; heat maps nest per shelf (Columns across, Rows
+  down) and a treemap turns every placed dimension into a hierarchy level
 - Absent measure cells kept distinct from zero everywhere: charts, tooltips, tables,
   CSV, table calculations
 - Workbook autosave with a restorable previous generation, and portable JSON
   workbook files for keeping, sharing or hand-authoring test sheets
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 997 checks green (584 unit, 413 browser)
+- 1007 checks green (594 unit, 413 browser)
 
 ### Connecting to an engine
 
@@ -855,11 +856,11 @@ Deliberately out of scope for this build, and the honest next steps:
   does not report it yet, so Plateau falls back to its global list. An engine that
   reports it gets scope-accurate dialogs and refusals; one that does not is treated
   exactly as before.
-- **Nesting reaches the category axis for bar-like, line/area and heat-map marks.**
-  Line and heat map now show every PLACED dimension (heat map nests per shelf —
-  Columns across, Rows down). A treemap still uses axis dimension + colour as its
-  hierarchy levels, and the text mark is a flat DOM grid that shows every dimension
-  as its own column rather than a cross-tab.
+- **Nesting reaches every mark with a hierarchy.** Bar-like, line/area and heat-map
+  marks show every PLACED dimension (heat map nests per shelf — Columns across, Rows
+  down), and a treemap turns every placed dimension into a hierarchy level. The text
+  mark is a flat DOM grid that shows every dimension as its own column rather than a
+  cross-tab.
 - **Dashboards use a snapping grid, not a free-form canvas.** Panels carry column and
   row spans; there is no pixel positioning, overlapping, floating text, or
   cross-panel filtering. Dragging a header to swap positions is best-effort — the

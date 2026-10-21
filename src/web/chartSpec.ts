@@ -1626,17 +1626,16 @@ function buildHeatmap(
 }
 
 /**
- * Treemap of a measure across the axis dimension, optionally nested by colour.
+ * Treemap whose hierarchy is EVERY placed dimension, in shelf order.
  *
- * Two things matter for correctness here:
+ * The tile label must identify the GROUP the value belongs to. Labelling every tile
+ * with the first dimension produces a wall of repeated names (a dozen tiles all
+ * reading "West"), and a sub-category total looks like a region total. Each level is
+ * therefore a hierarchy level, and the leaf label carries the full path.
  *
- *  1. The tile label must identify the GROUP the value belongs to. Labelling
- *     every tile with the first dimension produces a wall of repeated names
- *     (a dozen tiles all reading "West") and makes a sub-category total look
- *     like a region total.
- *  2. A dimension on Color must become a second hierarchy level. The colour
- *     channel already groups the query; ignoring it here both loses the
- *     grouping and leaves the identical tiles indistinguishable.
+ * The hierarchy used to stop at two levels — the axis dimension plus Colour — so a
+ * third dimension grouped the query and vanished from the screen. Any number now
+ * nests, which is also what makes the breadcrumb a complete route while drilling.
  */
 function buildTreemap(
   result: QueryResponse,
@@ -1645,28 +1644,44 @@ function buildTreemap(
   columns?: EncodingColumns,
 ): ChartBuildResult {
   const measureIndex = plan.measureIndices[0];
-  const dimensionIndex = plan.dimensionIndices[0];
+  if (measureIndex === undefined) {
+    return {
+      option: baseOption(),
+      notice: 'A treemap needs a measure on Columns, Rows, Size or Label.',
+    };
+  }
 
-  if (dimensionIndex === undefined) {
+  /*
+   * Every placed dimension, in shelf order (Columns, then Rows, then Colour), is a
+   * level. Planned dimensions that are not on a shelf are left out for the same
+   * reason the bar nesting leaves them out: a join adds its conformed key to the
+   * grouping, and printing that key as a level would show a hierarchy nobody placed.
+   *
+   * With no shelves available (a builder call from a test, or a very old workbook)
+   * the plan's dimension order is the only information there is.
+   */
+  const placedIndices = [
+    ...new Set(
+      [
+        ...(sheet?.shelves.columns ?? []),
+        ...(sheet?.shelves.rows ?? []),
+        ...(sheet?.shelves.color ?? []),
+      ]
+        .filter((encoding) => encoding.kind === 'dimension')
+        .map((encoding) => (columns ? columns.indexOf(encoding) : -1))
+        .filter((index) => index >= 0),
+    ),
+  ];
+  const levelIndices = placedIndices.length > 0 ? placedIndices : [...new Set(plan.dimensionIndices)];
+
+  if (levelIndices.length === 0) {
     return { option: baseOption(), notice: 'A treemap needs a dimension and a measure.' };
   }
 
-  const isDate = plan.isTemporal[plan.dimensionIndices.indexOf(dimensionIndex)];
   const measureName = result.columnMeta[measureIndex]?.name ?? 'Value';
-
-  const colorEncoding = columns?.shelf('color')[0];
-  const colorIndex =
-    columns && colorEncoding && colorEncoding.kind === 'dimension' && colorEncoding.field !== result.columnMeta[dimensionIndex]?.name
-      ? columns.indexOf(colorEncoding)
-      : -1;
-  const colorIsDate =
-    colorIndex >= 0 &&
-    (result.columnMeta[colorIndex]?.dataType === 'date' ||
-      result.columnMeta[colorIndex]?.logicalType === 'date' ||
-      result.columnMeta[colorIndex]?.logicalType === 'datetime');
-
-  const axisName = result.columnMeta[dimensionIndex]?.name ?? 'Group';
-  const colorName = colorIndex >= 0 ? result.columnMeta[colorIndex]?.name ?? 'Colour' : null;
+  const levelNames = levelIndices.map(
+    (index) => result.columnMeta[index]?.name ?? `Level ${index + 1}`,
+  );
 
   // --- build the hierarchy -------------------------------------------------
   interface Tile {
@@ -1676,12 +1691,12 @@ function buildTreemap(
     children?: Tile[];
   }
 
-  const rootTiles = new Map<string, Tile>();
+  const roots: Tile[] = [];
+  /** Keyed by the full value path, so equal names under different parents stay apart. */
+  const byPath = new Map<string, Tile>();
+  let leafCount = 0;
 
   for (const row of result.rows) {
-    const primary = formatCategory(row[dimensionIndex], isDate) || '(none)';
-    const secondary = colorIndex >= 0 ? formatCategory(row[colorIndex], colorIsDate) || '(none)' : null;
-
     /*
      * An absent value has no area, and a tile with area 0 would be a lie about the
      * smallest tiles. The group simply does not appear, which is what "no data"
@@ -1690,32 +1705,39 @@ function buildTreemap(
     const measureValue = toNumber(row[measureIndex]);
     if (measureValue === null) continue;
     const value = Math.abs(measureValue);
+    leafCount += 1;
 
-    const path = secondary ? [primary, secondary] : [primary];
+    const names = levelIndices.map(
+      (index) => formatCategory(row[index], isTemporalColumn(result, index)) || '(none)',
+    );
 
-    let parent = rootTiles.get(primary);
-    if (!parent) {
-      parent = { name: primary, value: 0, path: [primary] };
-      if (secondary) parent.children = [];
-      rootTiles.set(primary, parent);
-    }
-    parent.value += value;
-
-    if (secondary && parent.children) {
-      parent.children.push({
-        // A leaf shows the full group path. ECharts' parent-title mechanism
-        // (upperLabel) did not render reliably at these sizes, and without a
-        // visible parent name a grid of region tiles gives no way to tell which
-        // sub-category a tile belongs to. Qualifying the leaf is self-describing
-        // and cannot silently fail.
-        name: `${primary} / ${secondary}`,
-        value,
-        path,
-      });
+    let parent: Tile | null = null;
+    for (let level = 0; level < names.length; level++) {
+      const key = names.slice(0, level + 1).join('\u0000');
+      let tile = byPath.get(key);
+      if (!tile) {
+        tile = {
+          /*
+           * A leaf is labelled with its whole path: ECharts' parent-title mechanism
+           * did not render reliably at these sizes, and a tile labelled only
+           * "Furniture" cannot be told from an identical sibling in another region.
+           * Intermediate nodes are labelled by upperLabel instead.
+           */
+          name: level === names.length - 1 ? names.join(' / ') : names[level],
+          value: 0,
+          path: names.slice(0, level + 1),
+        };
+        if (level < names.length - 1) tile.children = [];
+        byPath.set(key, tile);
+        if (parent) parent.children?.push(tile);
+        else roots.push(tile);
+      }
+      tile.value += value;
+      parent = tile;
     }
   }
 
-  if (rootTiles.size === 0) {
+  if (roots.length === 0) {
     return {
       option: baseOption(),
       notice:
@@ -1724,63 +1746,51 @@ function buildTreemap(
     };
   }
 
-  const data = [...rootTiles.values()];
-  const tileCount = data.reduce((sum, tile) => sum + (tile.children?.length ?? 1), 0);
-
-  // A Detail field raises the grouping to the row grain, which turns the map
-  // into thousands of unreadable slivers. Say so rather than rendering noise.
-  if (tileCount > 400) {
+  // A Detail field raises the grouping to the row grain, which turns the map into
+  // thousands of unreadable slivers. Say so rather than rendering noise.
+  if (leafCount > 400) {
     return {
       option: baseOption(),
       notice:
-        `${tileCount.toLocaleString()} tiles is too many to read. The Detail shelf is ` +
+        `${leafCount.toLocaleString()} tiles is too many to read. The Detail shelf is ` +
         `raising the level of detail to individual rows — remove it, or filter first.`,
     };
   }
 
-  const nested = colorIndex >= 0;
+  const depth = levelIndices.length;
+  const nested = depth > 1;
 
   /**
-   * When tiles are nested, each top-level group needs a header naming it,
-   * otherwise the grid is a wall of colour with no way to tell which
-   * sub-category a tile belongs to.
+   * ECharts wants one config per node depth: `levels[0]` is the root, the last is
+   * the leaves, and everything between is an intermediate group header.
    *
-   * `upperLabel` is the mechanism ECharts renders for a parent node when its
-   * children occupy the body of the rectangle. The per-level `label.show`
-   * settings are what actually suppress the child labels; setting `upperLabel`
-   * alone leaves the children labelled instead.
+   * The headers are what make a hierarchy readable; `upperLabel` is the mechanism
+   * ECharts renders for a parent whose children fill its rectangle, and the
+   * per-level `label.show` settings are what actually suppress the children's
+   * labels. Setting `upperLabel` alone leaves the children labelled instead.
    */
-  const levels = nested
-    ? [
-        {},
-        {
-          // Top level: the sub-category group.
-          itemStyle: { borderWidth: 0, gapWidth: 4 },
-          upperLabel: {
-            show: true,
-            height: 20,
-            fontSize: 11,
-            color: '#fff',
-            fontWeight: 'bold' as const,
-          },
-        },
-        {
-          // Leaf level: the region inside a sub-category. The label carries the
-          // full path, so it is truncated rather than allowed to overflow.
-          itemStyle: { borderWidth: 1, gapWidth: 1, borderColor: '#fff' },
-          label: { show: true, overflow: 'truncate', width: 90 },
-          upperLabel: { show: false },
-        },
-      ]
-    : [
-        {},
-        {
-          // No nesting: the axis dimension is the only group, so label it.
-          itemStyle: { borderWidth: 2, gapWidth: 3, borderColor: '#fff' },
-          label: { show: true },
-          upperLabel: { show: false },
-        },
-      ];
+  const leafLevel = {
+    itemStyle: {
+      borderWidth: depth === 1 ? 2 : 1,
+      gapWidth: depth === 1 ? 3 : 1,
+      borderColor: '#fff',
+    },
+    label: { show: true, overflow: 'truncate' as const, width: 90 },
+    upperLabel: { show: false },
+  };
+  const groupLevel = {
+    itemStyle: { borderWidth: 0, gapWidth: 4 },
+    upperLabel: {
+      show: true,
+      height: 20,
+      fontSize: 11,
+      color: '#fff',
+      fontWeight: 'bold' as const,
+    },
+  };
+  const levels = [{}, ...Array.from({ length: depth - 1 }, () => groupLevel), leafLevel];
+
+  const data = roots;
 
   return {
     option: {
@@ -1794,12 +1804,10 @@ function buildTreemap(
           const path = item.data?.path ?? (item.name ? [item.name] : []);
           const heading = path.join(' / ');
           const lines = [`<div style="font-weight:600;margin-bottom:3px">${heading}</div>`];
-          if (path.length > 1) {
-            lines.push(`${axisName}: ${path[0]}`);
-            lines.push(`${colorName}: ${path[1]}`);
-          } else {
-            lines.push(`${axisName}: ${path[0] ?? item.name ?? ''}`);
-          }
+          path.forEach((value, level) => {
+            const dimension = levelNames[level];
+            if (dimension) lines.push(`${dimension}: ${value}`);
+          });
           lines.push(`${measureName}: <b>${formatFull(item.value ?? null)}</b>`);
           return lines.join('<br/>');
         },
