@@ -22,8 +22,8 @@
  */
 
 import { spawn, execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { teardown } from './harness.mjs';
 
@@ -37,12 +37,31 @@ const APP_PORT = 5194;
 const CDP_PORT = 9247;
 const APP_URL = `http://127.0.0.1:${APP_PORT}/`;
 const DATA_DIR = resolve(OUT_DIR, 'workbook-data');
+const DOWNLOAD_DIR = resolve(OUT_DIR, 'workbook-downloads');
 const PROFILE = resolve(OUT_DIR, 'cdp-workbook');
 
 mkdirSync(OUT_DIR, { recursive: true });
 rmSync(DATA_DIR, { recursive: true, force: true });
+rmSync(DOWNLOAD_DIR, { recursive: true, force: true });
 rmSync(PROFILE, { recursive: true, force: true });
 mkdirSync(DATA_DIR, { recursive: true });
+mkdirSync(DOWNLOAD_DIR, { recursive: true });
+// Pin Chrome's download directory through its preferences as well as CDP: the
+// browser-level `Browser.setDownloadBehavior` call was ignored in headless mode, and
+// the file landed in the user's real Downloads folder. A harness must not write
+// there.
+mkdirSync(resolve(PROFILE, 'Default'), { recursive: true });
+writeFileSync(
+  resolve(PROFILE, 'Default', 'Preferences'),
+  JSON.stringify({
+    download: {
+      default_directory: DOWNLOAD_DIR,
+      prompt_for_download: false,
+      directory_upgrade: true,
+    },
+  }),
+  'utf8',
+);
 // The dataset has to exist or the app has nothing to query; the workbook does not.
 copyFileSync(resolve(PROJECT, 'data', 'superstore.csv'), resolve(DATA_DIR, 'superstore.csv'));
 
@@ -207,6 +226,101 @@ const syncIndicator = () => evaluate(
   `document.querySelector('.workbook-state')?.textContent?.trim() ?? ''`,
 );
 
+/** Opens the Workbook menu; `workbookMenuAction` presses one of its items. */
+const openWorkbookMenu = () => evaluate(`(() => {
+  const trigger = document.querySelector('.workbook-menu-trigger');
+  if (!trigger) return 'no trigger';
+  trigger.click();
+  return 'ok';
+})()`);
+
+const workbookMenuAction = async (action) => {
+  const opened = await openWorkbookMenu();
+  if (opened !== 'ok') return opened;
+  await sleep(250);
+  return evaluate(`(() => {
+    const item = document.querySelector('[data-workbook-action=${action}]');
+    if (!item) return 'no item';
+    if (item.disabled) return 'disabled';
+    item.click();
+    return 'ok';
+  })()`);
+};
+
+/** Points the hidden file input at a real file, which fires React's change handler. */
+async function setWorkbookFileInput(path) {
+  await send('DOM.enable');
+  const { root } = await send('DOM.getDocument', { depth: -1, pierce: true });
+  const { nodeId } = await send('DOM.querySelector', {
+    nodeId: root.nodeId,
+    selector: 'input[data-testid=workbook-file-input]',
+  });
+  if (!nodeId) throw new Error('The workbook file input was not found');
+  await send('DOM.setFileInputFiles', { nodeId, files: [path] });
+}
+
+/**
+ * Allows and directs browser downloads.
+ *
+ * Two mechanisms, both attempted: the deprecated page-level command, which some
+ * builds still honour, and the browser-level one, which needs its own short-lived
+ * connection to the browser target. The profile preferences set at launch are the
+ * backstop, because neither CDP call was reliable under `--headless=new`.
+ */
+async function enableDownloads() {
+  try {
+    await send('Page.setDownloadBehavior', {
+      behavior: 'allow',
+      downloadPath: DOWNLOAD_DIR,
+    });
+  } catch {
+    // Removed in newer builds; the browser-level call and prefs cover it.
+  }
+
+  const version = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json();
+  const browserWs = new WebSocket(version.webSocketDebuggerUrl);
+  try {
+    await new Promise((res, rej) => {
+      browserWs.addEventListener('open', res, { once: true });
+      browserWs.addEventListener('error', () => rej(new Error('Browser WebSocket failed')), {
+        once: true,
+      });
+    });
+    await new Promise((res, rej) => {
+      browserWs.addEventListener('message', (event) => {
+        const message = JSON.parse(event.data);
+        if (message.id !== 1) return;
+        if (message.error) rej(new Error(message.error.message));
+        else res();
+      });
+      browserWs.send(
+        JSON.stringify({
+          id: 1,
+          method: 'Browser.setDownloadBehavior',
+          params: { behavior: 'allow', downloadPath: DOWNLOAD_DIR },
+        }),
+      );
+    });
+  } finally {
+    browserWs.close();
+  }
+}
+
+/** Waits for a finished download and returns its path. */
+async function waitForDownload(timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const files = readdirSync(DOWNLOAD_DIR).filter((name) => !name.endsWith('.crdownload'));
+    if (files.length > 0) {
+      // Give Chrome a moment to flush the last bytes.
+      await sleep(250);
+      return resolve(DOWNLOAD_DIR, files[0]);
+    }
+    await sleep(150);
+  }
+  return null;
+}
+
 let server = await startServer();
 console.log(`App server (isolated data dir) up on ${APP_URL}`);
 
@@ -286,7 +400,7 @@ try {
   console.log('  indicator after a change:', JSON.stringify(dirtyIndicator));
   check('a change is reported as unsaved', /unsaved/i.test(dirtyIndicator), dirtyIndicator);
 
-  check('the Save workbook button is present', (await clickButton('Save workbook')) === 'ok');
+  check('Save workbook is a menu action', (await workbookMenuAction('save')) === 'ok');
   await sleep(900);
 
   const afterSave = await getWorkbook();
@@ -317,7 +431,7 @@ try {
   check('a different workbook was written to disk', await putWorkbook(workbookWith('Server Marker')));
   await sleep(300);
 
-  check('the Open workbook button is present', (await clickButton('Open workbook')) === 'ok');
+  check('Open saved workbook is a menu action', (await workbookMenuAction('open')) === 'ok');
   await sleep(1500);
 
   const openedTabs = await sheetTabs();
@@ -337,7 +451,130 @@ try {
     JSON.stringify((afterOpen?.sheets ?? []).map((sheet) => sheet.name)));
 
   // =====================================================================
-  //  4. No saved workbook is said plainly, not silently ignored
+  //  4. Download the workbook as JSON
+  // =====================================================================
+  //
+  // The file is the artifact a user keeps: versioned, hand-editable, and the
+  // medium for a hand-authored set of test sheets.
+  console.log('\nDownloading the workbook as JSON');
+
+  await enableDownloads();
+  check('the Workbook menu opens', (await openWorkbookMenu()) === 'ok');
+  await sleep(300);
+  await screenshot('56-workbook-menu.png');
+
+  check('Download as JSON is a menu action', (await evaluate(`(() => {
+    const item = document.querySelector('[data-workbook-action=export]');
+    if (!item) return 'no item';
+    item.click();
+    return 'ok';
+  })()`)) === 'ok');
+
+  const downloadPath = await waitForDownload();
+  console.log('  downloaded:', String(downloadPath));
+  check('a .json file was downloaded', Boolean(downloadPath), String(downloadPath));
+
+  const exportedText = downloadPath ? readFileSync(downloadPath, 'utf8') : '';
+  const exported = exportedText ? JSON.parse(exportedText) : null;
+  console.log('  exported sheets:',
+    JSON.stringify((exported?.sheets ?? []).map((sheet) => sheet.name)));
+
+  check('the download declares its format version', exported?.formatVersion === 1,
+    String(exported?.formatVersion));
+  check('the download carries every sheet in the workbook',
+    (exported?.sheets ?? []).map((sheet) => sheet.name).join(',') === 'Server Marker',
+    JSON.stringify((exported?.sheets ?? []).map((sheet) => sheet.name)));
+  check('the download is pretty-printed, so it can be diffed and edited',
+    exportedText.includes('\n  "sheets"'));
+  check('the download is named with the date',
+    /plateau-workbook-\d{4}-\d{2}-\d{2}\.json/.test(basename(downloadPath ?? '')),
+    basename(downloadPath ?? ''));
+
+  // =====================================================================
+  //  5. Open a hand-written workbook file
+  // =====================================================================
+  console.log('\nOpening a hand-written workbook file');
+
+  const handAuthoredPath = resolve(OUT_DIR, 'hand-authored-workbook.json');
+  writeFileSync(
+    handAuthoredPath,
+    JSON.stringify(
+      [
+        {
+          name: 'Imported One',
+          mark: 'column',
+          shelves: {
+            columns: [{ field: 'Category', kind: 'dimension' }],
+            rows: [{ field: 'Sales', kind: 'measure' }],
+          },
+        },
+        { name: 'Imported Two', mark: 'not-a-mark' },
+      ],
+      null,
+      2,
+    ),
+    'utf8',
+  );
+
+  await setWorkbookFileInput(handAuthoredPath);
+  await sleep(2200);
+
+  const importedTabs = await sheetTabs();
+  console.log('  sheet tabs after import:', JSON.stringify(importedTabs));
+  check('a bare array of sheets is accepted',
+    importedTabs.length === 2 && importedTabs[0].includes('Imported One'),
+    JSON.stringify(importedTabs));
+  check('the second hand-written sheet is there too',
+    importedTabs.some((tab) => tab.includes('Imported Two')), JSON.stringify(importedTabs));
+
+  const importedServed = await getWorkbook();
+  check('opening a file makes it the saved workbook',
+    (importedServed?.sheets ?? []).map((sheet) => sheet.name).join(',') ===
+      'Imported One,Imported Two',
+    JSON.stringify((importedServed?.sheets ?? []).map((sheet) => sheet.name)));
+  const importStatus = await statusMessage();
+  console.log('  import status:', JSON.stringify(importStatus));
+  check('the open is confirmed with the sheet count', /2 sheets/.test(importStatus), importStatus);
+  check('a corrected field is reported as an adjustment', /adjustment/.test(importStatus),
+    importStatus);
+  check('the imported workbook is marked saved', /saved/i.test(await syncIndicator()),
+    await syncIndicator());
+
+  await screenshot('57-workbook-imported.png');
+
+  // =====================================================================
+  //  6. A bad file is refused, and the current workbook is left alone
+  // =====================================================================
+  console.log('\nA bad workbook file is refused');
+
+  const invalidPath = resolve(OUT_DIR, 'broken-workbook.json');
+  writeFileSync(invalidPath, '{ "sheets": [ ', 'utf8');
+  await setWorkbookFileInput(invalidPath);
+  await sleep(1200);
+  const invalidStatus = await statusMessage();
+  console.log('  invalid status:', JSON.stringify(invalidStatus));
+  check('invalid JSON is refused with a reason', /not valid JSON/i.test(invalidStatus),
+    invalidStatus);
+  check('the current view is unchanged',
+    (await sheetTabs()).join(',') === importedTabs.join(','), JSON.stringify(await sheetTabs()));
+
+  const futurePath = resolve(OUT_DIR, 'future-workbook.json');
+  writeFileSync(
+    futurePath,
+    JSON.stringify({ formatVersion: 999, sheets: [{ name: 'From The Future' }] }),
+    'utf8',
+  );
+  await setWorkbookFileInput(futurePath);
+  await sleep(1200);
+  const futureStatus = await statusMessage();
+  console.log('  future status:', JSON.stringify(futureStatus));
+  check('a file from a newer Plateau is refused, not half-loaded',
+    /newer Plateau/i.test(futureStatus), futureStatus);
+  check('the newer file did not replace the workbook',
+    (await sheetTabs()).join(',') === importedTabs.join(','));
+
+  // =====================================================================
+  //  7. No saved workbook is said plainly, not silently ignored
   // =====================================================================
   console.log('\nOpen with nothing saved says so');
 
@@ -346,7 +583,7 @@ try {
   await evaluate(`(() => { document.body.click(); return true; })()`);
   await sleep(300);
 
-  check('the Open button was pressed', (await clickButton('Open workbook')) === 'ok');
+  check('Open saved workbook was pressed', (await workbookMenuAction('open')) === 'ok');
   await sleep(1200);
   const missingStatus = await statusMessage();
   console.log('  status:', JSON.stringify(missingStatus));
@@ -354,7 +591,7 @@ try {
     missingStatus);
 
   const unchangedTabs = await sheetTabs();
-  check('the current view is left alone', unchangedTabs[0]?.includes('Server Marker'),
+  check('the current view is left alone', unchangedTabs[0]?.includes('Imported One'),
     JSON.stringify(unchangedTabs));
 
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));

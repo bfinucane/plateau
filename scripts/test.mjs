@@ -21,7 +21,8 @@ const SUITES = [
   ['workbook backup (rotation, restore, corruption)', '../src/server/__tests__/workbookBackup.test.ts'],
   ['split into panes (partitioning, ordering, refusals)', '../src/web/__tests__/split.test.ts'],
   ['category axis selection (dimensions beat measures)', '../src/web/__tests__/axisSelection.test.ts'],
-  ['capability-driven menus (aggregations, filter operators)', '../src/web/__tests__/aggregationMenu.test.ts'],  ['attribute joins (schema, gating, capability refusal)', '../src/server/__tests__/join.test.ts'],
+  ['capability-driven menus (aggregations, filter operators)', '../src/web/__tests__/aggregationMenu.test.ts'],
+  ['workbook file format (round trip, hand-authored, refusals)', '../src/web/__tests__/workbookFile.test.ts'],  ['attribute joins (schema, gating, capability refusal)', '../src/server/__tests__/join.test.ts'],
 ];
 
 const failures = [];

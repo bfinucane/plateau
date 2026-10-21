@@ -109,6 +109,23 @@ Chrome launches and returns a function that rewrites the previous one on teardow
 Every shared-server harness calls it and passes the restore function to `teardown`.
 A new harness must do the same.
 
+### A headless download lands in the real Downloads folder unless pinned twice
+
+`verify-workbook.mjs` downloads the exported workbook. Under `--headless=new`,
+`Browser.setDownloadBehavior` was accepted by Chrome and then ignored: the file
+appeared in `%USERPROFILE%\Downloads`, outside the workspace, where a harness must
+never write. Pinning the directory in the profile's `Default/Preferences` before
+launching does work, so the harness does both:
+
+```json
+{ "download": { "default_directory": "<abs path>", "prompt_for_download": false } }
+```
+
+written to `<profile>/Default/Preferences` before Chrome starts. `Page.setDownloadBehavior`
+(the deprecated page-level command) is attempted too, harmlessly failing on newer
+builds. Check the harness output directory, not the user's home, when a download
+test fails.
+
 For a harness that needs to control the data files themselves:
 
 - `PLATEAU_DATA_DIR` overrides the server's data directory (sample, saved workbook,

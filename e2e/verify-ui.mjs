@@ -492,29 +492,52 @@ try {
 
   await screenshot('09-three-dimensions.png');
 
-  // --- restore the previous workbook generation --------------------------
-  console.log('\nRestore backup');
+  // --- workbook menu: save, then restore the previous generation ----------
+  console.log('\nWorkbook menu: save, then restore the previous generation');
 
-  const restoreButton = `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Restore backup')`;
+  const openWorkbookMenu = () => evaluate(`(() => {
+    const trigger = document.querySelector('.workbook-menu-trigger');
+    if (!trigger) return 'no trigger';
+    trigger.click();
+    return 'ok';
+  })()`);
 
-  check('a Restore backup button exists',
-    (await evaluate(`Boolean(${restoreButton})`)) === true);
+  const workbookMenuAction = async (action) => {
+    const opened = await openWorkbookMenu();
+    if (opened !== 'ok') return opened;
+    await sleep(250);
+    return evaluate(`(() => {
+      const item = document.querySelector('[data-workbook-action=${action}]');
+      if (!item) return 'no item';
+      if (item.disabled) return 'disabled';
+      item.click();
+      return 'ok';
+    })()`);
+  };
+
+  check('the Workbook menu is present',
+    (await evaluate(`Boolean(document.querySelector('.workbook-menu-trigger'))`)) === true);
 
   // Saving rotates the current file into the backup position, which is what makes
-  // the button meaningful. The app also autosaves, but a save here makes the state
-  // deterministic rather than dependent on how long the harness has been running.
-  await evaluate(`(() => {
-    const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Save workbook');
-    if (btn) btn.click();
-    return true;
-  })()`);
+  // Restore backup meaningful. The app also autosaves, but a save here makes the
+  // state deterministic rather than dependent on how long the harness has run.
+  check('Save workbook is a menu action', (await workbookMenuAction('save')) === 'ok');
   await sleep(1500);
 
-  const restoreEnabled = await evaluate(`${restoreButton}?.disabled === false`);
-  check('the button enables once a previous generation exists', restoreEnabled === true,
+  await openWorkbookMenu();
+  await sleep(250);
+  const restoreEnabled = await evaluate(
+    `document.querySelector('[data-workbook-action=restore]')?.disabled === false`,
+  );
+  check('Restore backup enables once a previous generation exists', restoreEnabled === true,
     String(restoreEnabled));
 
-  await evaluate(`${restoreButton}?.click()`);
+  check('Restore backup runs from the menu', (await evaluate(`(() => {
+    const item = document.querySelector('[data-workbook-action=restore]');
+    if (!item || item.disabled) return 'unavailable';
+    item.click();
+    return 'ok';
+  })()`)) === 'ok');
   await sleep(2500);
 
   const restoreStatus = await evaluate(

@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, four session commits on top of `0e252ab`, with the app and
+Written on branch `main`, five session commits on top of `0e252ab`, with the app and
 engine both running at the time of writing. Every number below was measured, not
 remembered.
 
@@ -14,12 +14,12 @@ remembered.
 
 | | |
 |---|---|
-| Commits | 26 total; **3 unpushed** (`origin/main` is at `4ea48b7`) |
-| Source | 51 files in `src/`, ~19,500 lines |
-| Unit tests | **477 checks**, 13 suites, all passing |
-| Browser tests | **351 checks**, 14 harnesses, all passing |
-| Screenshots | 47, in `docs/screenshots/` |
-| Bundle | `dist/web/assets/index-B6ftR-p4.js` (built this session) |
+| Commits | 27 total; **4 unpushed** (`origin/main` is at `4ea48b7`) |
+| Source | 53 files in `src/`, ~20,400 lines |
+| Unit tests | **520 checks**, 14 suites, all passing |
+| Browser tests | **370 checks**, 14 harnesses, all passing |
+| Screenshots | 49, in `docs/screenshots/` |
+| Bundle | `dist/web/assets/index-XfagK4KE.js` (built this session) |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | 8080 was up during verification, owned by the OLAP Testing session |
 | Plateau | not left running, by design — start it with `start.cmd` |
@@ -101,8 +101,9 @@ Change one, change the other.
   operator the engine does not implement is not offered, and a pushed-down formula
   is checked against the functions the engine advertises before it is created.
 - **Persistence**: workbook autosave with one previous generation, an explicit
-  **Save workbook** / **Open workbook** pair, a **save-state indicator** that says
-  whether the file is current, **Restore backup** in the command bar, CSV export.
+  **Workbook menu** (Save / Open / Restore backup), a **save-state indicator**, and
+  **JSON import/export** for portable files — see `src/web/workbookFile.ts` and
+  §5.13. CSV export of any result.
 
 ---
 
@@ -173,6 +174,18 @@ Worth knowing before "fixing" any of it:
     instead of silently rewriting it, and autosave skips content identical to the
     last save — otherwise every reload rotated the backup generation with the same
     content, and "Restore backup" looked like a no-op too.
+13. **The workbook file format is forgiving on purpose.** `Download as JSON` writes
+    the workbook pretty-printed with a `formatVersion`; `Open from file` accepts that
+    file, the same object without a version, a `{ workbook: … }` wrapper, or a **bare
+    array of sheets**. A hand-authored sheet can be three lines:
+    `{ "name": "By Region", "shelves": { "columns": [{ "field": "Region" }] } }`.
+    Everything the parser has to fill in or drop (a missing mark, an unknown
+    aggregation, a dangling dashboard panel) is NORMALISED and reported as an
+    adjustment, never silently discarded. Refusals are loud instead: invalid JSON, no
+    sheets, and a file from a newer `formatVersion` all fail with a message and leave
+    the current workbook untouched. Opening a file also writes it to
+    `data/workbook.json`, so the file becomes the saved state rather than only the
+    visible one.
 
 ---
 
@@ -204,7 +217,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Four commits on top of `0e252ab` — three features and a note on verification hygiene.
+Five commits on top of `0e252ab` — four features and a note on verification hygiene.
 The commit messages have the detail; the shape:
 
 | Was | Now |
@@ -219,14 +232,15 @@ The commit messages have the detail; the shape:
 | A pushed-down formula was checked only for its aggregations | Its whole vocabulary is checked; an engine advertising no expression functions refuses pushdown outright |
 | A saved workbook never came back after a reload — the restore was wiped by the initial dataset selection | Restore runs after the dataset is in place; **Open workbook** loads it on demand |
 | The Save button had no visible effect (autosave usually got there first) | A save-state indicator, plus an explicit "already saved" answer and no identical rewrites |
+| The workbook could not leave the server, so it could not be versioned, copied between machines, or hand-authored | **Download as JSON** / **Open from file**, with a validated, versioned, forgiving format |
 | Harnesses assumed a blank start and inherited the previous run's saved workbook once restore worked | `resetWorkbook()` in `e2e/harness.mjs` starts each run blank and puts the previous workbook back on teardown |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts`
-(22 checks) and `capabilityGating.test.ts` (25). `verify-ui` grew from 25 to 41
-checks, `verify-connect` from 26 to 65, and `verify-workbook.mjs` is new (19 checks,
-with its own server and data directory). Screenshots added:
-`51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`55` for the workbook
-flow.
+(22 checks), `capabilityGating.test.ts` (25) and `workbookFile.test.ts` (43).
+`verify-ui` grew from 25 to 43 checks, `verify-connect` from 26 to 65, and
+`verify-workbook.mjs` is new (36 checks, with its own server and data directory).
+Screenshots added: `51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`57`
+for the workbook flow.
 
 The engine-side stub in `verify-connect.mjs` now answers a query by **echoing its
 shape** rather than returning one canned response. A canned response is what made a
@@ -346,6 +360,11 @@ limitations list predates the join work and has not been audited.
   behind by the previous run and lose its chart checks. `resetWorkbook()` in
   `e2e/harness.mjs` now starts each run blank and restores what it found on teardown;
   any new harness must call it before launching Chrome.
+- **A headless download can land in the user's REAL Downloads folder.** In
+  `--headless=new`, `Browser.setDownloadBehavior` was accepted and then ignored: the
+  exported workbook appeared under `%USERPROFILE%\Downloads`, not the harness
+  directory. `verify-workbook.mjs` also pins the directory in Chrome's profile
+  `Preferences` before launch. A harness must never write outside `.tmp/`.
 - **Verified numbers beat recalled ones.** Every figure in this document came from a
   command run at this commit.
 
@@ -355,18 +374,18 @@ limitations list predates the join work and has not been audited.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 477 unit checks
+node scripts/test.mjs                                   # 520 unit checks
 node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 ```
 
 Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset` 38,
 `queryValidation` 17, `capabilityGating` 25, `tableCalcs` 51, `workbookBackup` 14,
-`split` 35, `axisSelection` 34, `aggregationMenu` 22, `join` 28.
+`split` 35, `axisSelection` 34, `aggregationMenu` 22, `workbookFile` 43, `join` 28.
 
-Browser harnesses: `verify-ui` 41, `verify-lod` 14, `verify-marks` 18, `verify-viz`
+Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 18, `verify-viz`
 27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 65,
 `verify-tablecalc` 14, `verify-split` 16, `verify-measuresplit` 26, `verify-retry` 13,
-`verify-workbook` 19, `verify-join` 38 (needs the engine). Each prints
+`verify-workbook` 36, `verify-join` 38 (needs the engine). Each prints
 `N passed, M failed` and exits non-zero on failure. `verify-retry` and
 `verify-workbook` start their own server; the rest need one running and take
 `[appUrl] [chromePath] [outDir]`.
@@ -378,7 +397,7 @@ is worth showing.
 
 ## 11. Provenance
 
-26 commits, `55482d0` … HEAD. The last four are this session; the 14 before them are
+27 commits, `55482d0` … HEAD. The last five are this session; the 14 before them are
 the work of earlier sessions and are described by their commit messages, which record
 what went wrong as well as what was built — including four test mistakes and one place
 where a fix was worse than the bug.

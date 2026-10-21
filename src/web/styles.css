@@ -104,6 +104,72 @@ textarea {
   color: #f0c274;
 }
 
+/* ------------------------------------------------------- workbook menu --- */
+
+.workbook-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* Covers the page so a click anywhere closes the menu, without adding a listener. */
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.workbook-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 41;
+  min-width: 264px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: #2a3547;
+  border: 1px solid #3d4a5f;
+  border-radius: var(--radius);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
+}
+
+.workbook-menu button {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #e8edf5;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workbook-menu button:hover:not(:disabled) {
+  background: #35435a;
+}
+
+.workbook-menu button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.menu-hint {
+  font-size: 10.5px;
+  color: #9fb0c7;
+}
+
+.menu-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: #3d4a5f;
+}
+
 /* -------------------------------------------------------------- command bar */
 
 .command-bar {

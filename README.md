@@ -167,8 +167,8 @@ kept in `data/workbook.json` on the server.
 - **Save workbook** writes immediately, for when you do not want to wait — and says
   "Workbook is already saved" when autosave got there first rather than rewriting
   identical content.
-- **Open workbook** replaces the current view with the last saved file. Loading is
-  also what happens at start-up: the saved workbook is restored *after* the data
+- **Open saved workbook** replaces the current view with the last saved file. Loading
+  is also what happens at start-up: the saved workbook is restored *after* the data
   source is loaded, which is the order that makes it stick.
 - **Restore backup** swaps in the previous generation, so one bad save is
   recoverable. The current file becomes the next backup, so that is undoable too.
@@ -177,7 +177,53 @@ A save is skipped when the workbook is identical to the file, which keeps the
 one-generation backup meaningful instead of rotating it with the same content on
 every reload.
 
-![A saved workbook restored at start-up](docs/screenshots/53-workbook-restored.png)
+Everything above lives behind the **Workbook ▾** menu in the command bar, together
+with the file actions.
+
+![The workbook menu](docs/screenshots/56-workbook-menu.png)
+
+#### Workbook files
+
+**Download as JSON** writes the workbook to a file; **Open from file** loads one.
+That makes a workbook portable — keep it in version control, copy it to another
+machine, or hand it to someone else.
+
+The file is pretty-printed with a `formatVersion`, so it diffs and can be edited by
+hand. The reader is deliberately forgiving: it accepts the exported object, the same
+object without a version, a `{ "workbook": { … } }` wrapper, or a **bare array of
+sheets**. Missing bits are filled in and reported as "adjustments" in the status
+line rather than silently dropped; invalid JSON, an empty file, and a file from a
+newer format are refused with a message and leave the current workbook alone.
+
+A hand-authored test set is therefore just sheets — the smallest useful sheet names
+one field:
+
+```json
+[
+  {
+    "name": "Sales by Region",
+    "mark": "column",
+    "shelves": {
+      "columns": [{ "field": "Region" }],
+      "rows": [{ "field": "Sales", "kind": "measure", "aggregation": "SUM" }]
+    }
+  },
+  {
+    "name": "Profit by Category",
+    "shelves": {
+      "columns": [{ "field": "Category", "kind": "dimension" }],
+      "rows": [{ "field": "Profit", "kind": "measure" }],
+      "color": [{ "field": "Segment", "kind": "dimension" }]
+    }
+  }
+]
+```
+
+Optional per-sheet fields are `mark`, `paneBy`, `splitMeasures`, `palette`,
+`filters`, and the usual shelf encodings (`aggregation`, `datePart`, `sort`,
+`tableCalc`). Dashboard panels, `activeSheetId` and `view` are only needed if the
+file should open on a dashboard. Opening a file also makes it the saved workbook, so
+it survives a reload.
 
 Each Marks-card channel does real work, and every mark type honours it:
 
@@ -273,7 +319,7 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 477 unit checks, 13 suites
+npm test         # 520 unit checks, 14 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
@@ -308,12 +354,12 @@ node e2e/verify-tablecalc.mjs  # 14 checks: table calculations in the real UI
 node e2e/verify-split.mjs      # 16 checks: split panes
 node e2e/verify-measuresplit.mjs # 26 checks: one pane per measure
 node e2e/verify-retry.mjs      # 13 checks: a failed query is recoverable
-node e2e/verify-workbook.mjs   # 19 checks: save, start-up restore, Open, backup safety
+node e2e/verify-workbook.mjs   # 36 checks: save, start-up restore, menu, JSON files, backup safety
 node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips without it
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **828 checks** — 477 unit, 351 browser.
+Total: **890 checks** — 520 unit, 370 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -329,6 +375,7 @@ Total: **828 checks** — 477 unit, 351 browser.
 | split | 35 | partitioning, ordering, refusals |
 | axis selection | 34 | dimensions beat measures; nesting to any depth |
 | capability menus | 22 | aggregations and filter operators, never lying about the current value |
+| workbook file | 43 | round trip, hand-authored files, refusals, repairs |
 | joins | 28 | join schema, gating, capability refusal |
 
 Both browser and transport suites run against the real thing — a loopback HTTP
@@ -340,7 +387,9 @@ themselves; see `e2e/harness.mjs`.
 compares it to the one the renderer drew, so a broken trend line cannot pass.
 `verify-connect.mjs` runs a stub engine that answers a query by echoing its shape,
 so a pushed-down calculated measure arriving as a bare aggregation would fail the
-check rather than hide behind a canned response.
+check rather than hide behind a canned response. `verify-workbook.mjs` downloads a
+real file and opens a hand-written one through the hidden file input, so the JSON
+round trip is exercised as a browser would do it, not in-process.
 
 ---
 
@@ -562,8 +611,9 @@ reason, instead of accepting the field and failing on its first query.
 - Dashboards on a shared grid
 - Native engine protocol: remote datasets, joins, and aggregate calculated fields
   pushed down as ASTs
-- Workbook autosave with a restorable previous generation
-- 828 checks green (477 unit, 351 browser)
+- Workbook autosave with a restorable previous generation, and portable JSON
+  workbook files for keeping, sharing or hand-authoring test sheets
+- 890 checks green (520 unit, 370 browser)
 
 ### Connecting to an engine
 
@@ -743,6 +793,7 @@ Deliberately out of scope for this build, and the honest next steps:
   been removed from the codebase, not merely omitted from the dropdown.
 - **Workbook autosave is single-user** and stored as one JSON file on the server;
   there is no concurrency control or versioning, and only one backup generation.
-- **The workbook is not a portable file yet.** It lives at `data/workbook.json` and
-  is saved and loaded through the server; there is no "download this workbook" or
-  "open a workbook file" — moving it between machines means copying that JSON.
+- **Workbook files carry sheets, not data.** Opening a `.json` workbook assumes the
+  same data source names are present; a sheet referencing a field the active dataset
+  does not have fails its query with the unknown-field error rather than being
+  repaired. Hand-authored sheets are validated for shape, not against a dataset.

@@ -17,6 +17,7 @@ import {
 } from './api';
 import type { DragPayload } from './dnd';
 import { useAppState } from './useAppState';
+import { parseWorkbookFile, serialiseWorkbookFile } from './workbookFile';
 import {
   ENCODING_SHELVES,
   describeQuery,
@@ -72,6 +73,10 @@ export function App() {
   const [viewTab, setViewTab] = useState<'viz' | 'data'>('viz');
   const [status, setStatus] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  /** The workbook actions menu is open. Kept here because it spans several handlers. */
+  const [workbookMenuOpen, setWorkbookMenuOpen] = useState(false);
+  /** The hidden file input behind "Open from file". */
+  const workbookFileInput = useRef<HTMLInputElement | null>(null);
 
   /**
    * Shows a status line, replacing whatever was there.
@@ -299,6 +304,62 @@ export function App() {
       setStatusNow(error instanceof Error ? error.message : 'Could not load the saved workbook');
     }
   }, [applySavedWorkbook, refreshBackup, showStatus, setStatusNow]);
+
+  /**
+   * Downloads the workbook as a JSON file.
+   *
+   * Pretty-printed and versioned by `serialiseWorkbookFile`, so the file can be
+   * committed, diffed, hand-edited and loaded again. It is also the artifact for a
+   * set of test sheets: build the sheets in the app, export once, keep the file.
+   */
+  const exportWorkbookFile = useCallback(() => {
+    const stamped = new Date().toISOString().slice(0, 10);
+    download(
+      `plateau-workbook-${stamped}.json`,
+      serialiseWorkbookFile(state.workbook),
+      'application/json;charset=utf-8',
+    );
+    const sheets = state.workbook.sheets.length;
+    showStatus(`Workbook exported: ${sheets} sheet${sheets === 1 ? '' : 's'}`);
+  }, [state.workbook, showStatus]);
+
+  /**
+   * Opens a workbook file, and makes it the saved state as well as the visible one.
+   *
+   * Opening a file should replace what `data/workbook.json` holds, otherwise the
+   * indicator would say "Saved" while the server still had the previous workbook.
+   */
+  const importWorkbookFile = useCallback(
+    async (file: File) => {
+      try {
+        const { workbook, warnings } = parseWorkbookFile(await file.text());
+        applySavedWorkbook(workbook);
+        await saveWorkbook(workbook);
+        markSaved(workbook);
+        void refreshBackup();
+        const sheets = `${workbook.sheets.length} sheet${workbook.sheets.length === 1 ? '' : 's'}`;
+        const adjustments = warnings.length
+          ? `, ${warnings.length} file adjustment${warnings.length === 1 ? '' : 's'}`
+          : '';
+        showStatus(`Opened ${file.name}: ${sheets}${adjustments}`, 5000);
+      } catch (error) {
+        setStatusNow(
+          error instanceof Error ? error.message : 'Could not open that workbook file',
+        );
+      }
+    },
+    [applySavedWorkbook, markSaved, refreshBackup, showStatus, setStatusNow],
+  );
+
+  const handleWorkbookFileInput = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (file) void importWorkbookFile(file);
+      // Clear it so choosing the same file again still fires a change event.
+      event.target.value = '';
+    },
+    [importWorkbookFile],
+  );
 
   /**
    * Swaps the workbook for the previous generation.
@@ -587,35 +648,119 @@ export function App() {
         >
           {dirty ? 'Unsaved changes' : saveLabel ?? ''}
         </span>
-        <button
-          type="button"
-          className="button-secondary"
-          onClick={saveNow}
-          title="Write the workbook to data/workbook.json now. It also autosaves shortly after each change."
-        >
-          Save workbook
-        </button>
-        <button
-          type="button"
-          className="button-secondary"
-          onClick={() => void openSavedWorkbook()}
-          title="Replace the current view with the last saved workbook from data/workbook.json. Nothing is written."
-        >
-          Open workbook
-        </button>
-        <button
-          type="button"
-          className="button-secondary"
-          onClick={() => void restoreBackupNow()}
-          disabled={!backupAvailable}
-          title={
-            backupAvailable
-              ? 'Replace the workbook with the previous generation. The current one is kept as the next backup.'
-              : 'No previous generation to restore yet. Save the workbook twice and the earlier save becomes restorable.'
-          }
-        >
-          Restore backup
-        </button>
+
+        {/*
+          One menu rather than five buttons: the workbook actions grew from "save"
+          to a small group once files were added, and the command bar has no room
+          for all of them.
+        */}
+        <div className="workbook-actions">
+          <button
+            type="button"
+            className="button-secondary workbook-menu-trigger"
+            onClick={() => setWorkbookMenuOpen((open) => !open)}
+            aria-haspopup="menu"
+            aria-expanded={workbookMenuOpen}
+            title="Save, open, export or import the workbook"
+          >
+            Workbook <span aria-hidden="true">▾</span>
+          </button>
+
+          {workbookMenuOpen && (
+            <>
+              <div
+                className="menu-backdrop"
+                onClick={() => setWorkbookMenuOpen(false)}
+                aria-hidden="true"
+              />
+              <div className="workbook-menu" role="menu" aria-label="Workbook">
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-workbook-action="save"
+                  onClick={() => {
+                    setWorkbookMenuOpen(false);
+                    void saveNow();
+                  }}
+                >
+                  Save workbook
+                  <span className="menu-hint">write data/workbook.json now</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-workbook-action="open"
+                  onClick={() => {
+                    setWorkbookMenuOpen(false);
+                    void openSavedWorkbook();
+                  }}
+                >
+                  Open saved workbook
+                  <span className="menu-hint">reload the file on the server</span>
+                </button>
+
+                <div className="menu-divider" role="separator" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-workbook-action="export"
+                  onClick={() => {
+                    setWorkbookMenuOpen(false);
+                    exportWorkbookFile();
+                  }}
+                >
+                  Download as JSON
+                  <span className="menu-hint">a portable, hand-editable file</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-workbook-action="import"
+                  onClick={() => {
+                    setWorkbookMenuOpen(false);
+                    workbookFileInput.current?.click();
+                  }}
+                >
+                  Open from file
+                  <span className="menu-hint">load a .json workbook</span>
+                </button>
+
+                <div className="menu-divider" role="separator" />
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-workbook-action="restore"
+                  disabled={!backupAvailable}
+                  onClick={() => {
+                    setWorkbookMenuOpen(false);
+                    void restoreBackupNow();
+                  }}
+                  title={
+                    backupAvailable
+                      ? 'Replace the workbook with the previous generation. The current one is kept as the next backup.'
+                      : 'No previous generation to restore yet. Save the workbook twice and the earlier save becomes restorable.'
+                  }
+                >
+                  Restore backup
+                  <span className="menu-hint">the generation before this one</span>
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Hidden: the menu's "Open from file" presses it. */}
+          <input
+            ref={workbookFileInput}
+            type="file"
+            accept=".json,application/json"
+            data-testid="workbook-file-input"
+            onChange={handleWorkbookFileInput}
+            hidden
+          />
+        </div>
+
         <button
           type="button"
           className="button-secondary"
