@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, two session commits on top of `0e252ab`, with the app and
+Written on branch `main`, three session commits on top of `0e252ab`, with the app and
 engine both running at the time of writing. Every number below was measured, not
 remembered.
 
@@ -14,7 +14,7 @@ remembered.
 
 | | |
 |---|---|
-| Commits | 24 total; **1 unpushed** (`origin/main` is at `4ea48b7`) |
+| Commits | 25 total; **2 unpushed** (`origin/main` is at `4ea48b7`) |
 | Source | 51 files in `src/`, ~19,400 lines |
 | Unit tests | **477 checks**, 13 suites, all passing |
 | Browser tests | **332 checks**, 13 harnesses, all passing |
@@ -190,7 +190,8 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Two commits on top of `0e252ab`. The commit messages have the detail; the shape:
+Three commits on top of `0e252ab` — two features and a note on verification hygiene.
+The commit messages have the detail; the shape:
 
 | Was | Now |
 |---|---|
@@ -304,7 +305,12 @@ limitations list predates the join work and has not been audited.
 - **Do not start the server as a session background job.** It dies with the session,
   silently, mid-work. Use a terminal the user controls. (A transient server started
   *and stopped inside one command* is fine, and is how this session's harness runs
-  were done.)
+  were done — but stop it by **port owner** and confirm the port is free. A
+  `Start-Process` handle dying is not proof the port was released, and `/api/health`
+  answering may be a stale process: that happened here, and two harness runs
+  "passed" against a server left over from an earlier one. ENVIRONMENT.md has the
+  recipe, including the fact that a process started under the wider sandbox is
+  invisible to a confined command.)
 - **Headless Chrome needs the wider sandbox.** In the confined sandbox it dies at
   start-up with `FATAL:mojo\...\platform_channel.cc Check failed: ... Zugriff
   verweigert` — a named-pipe restriction, not a Chrome bug. The same applies to the
@@ -345,7 +351,7 @@ is worth showing.
 
 ## 11. Provenance
 
-24 commits, `55482d0` … HEAD. The last two are this session; the 14 before them are
+25 commits, `55482d0` … HEAD. The last three are this session; the 14 before them are
 the work of earlier sessions and are described by their commit messages, which record
 what went wrong as well as what was built — including four test mistakes and one place
 where a fix was worse than the bug.

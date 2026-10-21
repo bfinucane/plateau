@@ -110,6 +110,31 @@ try { <wait for /api/health, run the harnesses> } finally { Stop-Process -Id $se
 `node src/server/index.ts` defaults to **5177**; passing no `PORT` is how a
 "wrong port" mystery starts.
 
+### Stop it by port, not by handle, and verify the port is free
+
+Killing the `Start-Process` handle is not proof that the port was released, and a
+command that fails to bind still leaves `/api/health` answering from whatever
+process already holds 5180 — so a harness run can silently use a stale server. This
+happened for real: a leaked process kept serving while two later "successful" runs
+reported `SERVER UP`. Tear down by looking up the port's owner, then confirm:
+
+```powershell
+$owner = (netstat -ano | Select-String ':5180 .*ABH' | ForEach-Object { ($_.Line -split '\s+')[-1] } | Select-Object -First 1)
+if ($owner) { Stop-Process -Id $owner -Force }
+```
+
+**A process started under the wider sandbox is invisible to a confined command.**
+`netstat` still shows it, but `tasklist` and `Stop-Process` in the default confined
+tool mode report access denied / "no such process". Cleanup therefore has to run
+with the same wider sandbox the server was started under, or from the user's own
+terminal.
+
+### A leaked server's state tells you where it came from
+
+Datasets live in memory, so `/api/datasets` identifies the owner: a sample with
+harness-shaped calculated fields and a `Remote Sales` entry means a harness run left
+it behind; a bare sample is a fresh `start.cmd`.
+
 ## Bundled toolchain paths
 
 The bundled runtime is not on `PATH`; invoke Node by absolute path:
