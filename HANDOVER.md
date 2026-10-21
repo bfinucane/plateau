@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, seven session commits on top of `0e252ab`, with the app and
+Written on branch `main`, eight session commits on top of `0e252ab`, with the app and
 engine both running at the time of writing. Every number below was measured, not
 remembered.
 
@@ -14,7 +14,7 @@ remembered.
 
 | | |
 |---|---|
-| Commits | 29 total; **1 unpushed** (`origin/main` is at `770681b`) |
+| Commits | 30 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 53 files in `src/`, ~20,500 lines |
 | Unit tests | **520 checks**, 14 suites, all passing |
 | Browser tests | **398 checks**, 15 harnesses, all passing |
@@ -230,8 +230,8 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Seven commits on top of `0e252ab` — six features and a note on verification hygiene.
-The commit messages have the detail; the shape:
+Eight commits on top of `0e252ab` — six features, a note on verification hygiene, and
+a record of the push. The commit messages have the detail; the shape:
 
 | Was | Now |
 |---|---|
@@ -277,9 +277,13 @@ registering a field whose first query would fail.
 
 Ordered by what I would do next.
 
-### 8.1 Nothing is pushed
-One commit sits on `main` ahead of `origin/main` (which is at `4ea48b7`). The remote
-is configured and pushing works; the previous session's 15 commits were pushed.
+### 8.1 Nothing is unpushed
+`origin/main` matches `HEAD`; the push was done at the end of the session (29 commits,
+then this note). `origin` is https://github.com/bfinucane/plateau.git.
+
+Pushing from an agent command needs the **wider sandbox**: the confined one fails with
+`schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`, because the
+credential store is not reachable there. The same applies to `git fetch`.
 
 ### 8.2 Row-level calculated fields on a remote engine
 The refused path is honest but still a gap. What it needs is either an engine
@@ -420,7 +424,7 @@ is worth showing.
 
 ## 11. Provenance
 
-29 commits, `55482d0` … HEAD. The last seven are this session; the 14 before them are
+30 commits, `55482d0` … HEAD. The last eight are this session; the 14 before them are
 the work of earlier sessions and are described by their commit messages, which record
 what went wrong as well as what was built — including four test mistakes and one place
 where a fix was worse than the bug.
