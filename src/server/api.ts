@@ -37,7 +37,16 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(HERE, '..', '..');
-const DATA_DIR = resolve(PROJECT_ROOT, 'data');
+/**
+ * Where the sample, saved workbooks and uploaded datasets live.
+ *
+ * Overridable so a test harness can run its own isolated server without touching
+ * the workbook a real user's session has saved in `data/` — a harness that
+ * overwrote it would be destroying exactly the state it is meant to verify.
+ */
+const DATA_DIR = process.env.PLATEAU_DATA_DIR
+  ? resolve(process.env.PLATEAU_DATA_DIR)
+  : resolve(PROJECT_ROOT, 'data');
 const WORKBOOK_PATH = resolve(DATA_DIR, 'workbook.json');
 /** Previous generation, kept so a bad save is recoverable. */
 const WORKBOOK_BACKUP_PATH = resolve(DATA_DIR, 'workbook.json.bak');

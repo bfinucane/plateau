@@ -94,6 +94,27 @@ no other changes.
 
 `verify-retry.mjs` is the one harness that starts and stops its own app server
 (port 5190), so it takes `[chromePath] [outDir]` rather than `[appUrl] ...`.
+`verify-workbook.mjs` also owns its server (port 5194) and its data directory.
+
+## The saved workbook is restored at start-up, so harnesses must reset it
+
+Plateau loads `data/workbook.json` on start-up — that is the feature. The
+consequence for tests is that a harness which assumes a fresh app inherits whatever
+the previous run (or the developer) last autosaved. This broke `verify-ui` as soon as
+the restore started working: it began on a dashboard view left behind by
+`verify-dashboard` and failed its chart checks.
+
+`resetWorkbook(appUrl)` in `e2e/harness.mjs` puts a blank workbook in place before
+Chrome launches and returns a function that rewrites the previous one on teardown.
+Every shared-server harness calls it and passes the restore function to `teardown`.
+A new harness must do the same.
+
+For a harness that needs to control the data files themselves:
+
+- `PLATEAU_DATA_DIR` overrides the server's data directory (sample, saved workbook,
+  uploads). `verify-workbook.mjs` points it at `.tmp/workbook-data`, copyies
+  `data/superstore.csv` there, and deletes it afterwards — so it can write marker
+  workbooks without touching a real session's file.
 
 ## Verifying against a server without leaving one behind
 

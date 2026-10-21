@@ -11,7 +11,7 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { teardown } from './harness.mjs';
+import { resetWorkbook, teardown } from './harness.mjs';
 
 const APP_URL = process.argv[2] ?? 'http://127.0.0.1:5180/';
 const CHROME = process.argv[3] ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
@@ -29,6 +29,10 @@ function check(name, ok, detail = '') {
   results.push({ name, ok });
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` -- ${detail}` : ''}`);
 }
+
+// Start from a blank workbook: start-up restores what was last saved, so without
+// this a run inherits whatever the previous run left behind.
+const restoreSavedWorkbook = await resetWorkbook(APP_URL);
 
 const chrome = spawn(
   CHROME,
@@ -268,5 +272,5 @@ try {
   console.error('\nHarness error:', error.message);
   process.exitCode = 2;
 } finally {
-  await teardown({ chrome, ws, profile: PROFILE });
+  await teardown({ chrome, ws, profile: PROFILE, restoreWorkbook: restoreSavedWorkbook });
 }

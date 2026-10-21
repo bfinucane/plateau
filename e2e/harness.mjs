@@ -87,6 +87,90 @@ async function removeWithRetry(dir, timeoutMs = 10000) {
 }
 
 /**
+ * A known, empty workbook for a harness to start from.
+ *
+ * Deliberately one empty worksheet with no shelves: every harness builds what it
+ * needs from there.
+ */
+export function blankWorkbook() {
+  return {
+    sheets: [
+      {
+        id: 'sheet-harness',
+        name: 'Sheet 1',
+        mark: 'automatic',
+        shelves: {
+          columns: [],
+          rows: [],
+          color: [],
+          size: [],
+          detail: [],
+          label: [],
+          tooltip: [],
+          filters: [],
+        },
+        filters: [],
+      },
+    ],
+    activeSheetId: 'sheet-harness',
+    dashboards: [],
+    view: 'sheet',
+    activeDashboardId: null,
+  };
+}
+
+/**
+ * Puts the app on a blank workbook before the browser opens, and returns a
+ * function that puts the previous one back.
+ *
+ * Why this exists: Plateau now restores the saved workbook at start-up, which is
+ * its job — so a harness that quietly assumed a fresh app instead inherits whatever
+ * the previous run (or the developer) last autosaved. That is not hypothetical:
+ * `verify-ui` began on a DASHBOARD view left behind by `verify-dashboard`, and its
+ * chart checks failed because the workspace was not a worksheet at all.
+ *
+ * The previous workbook is read first and rewritten on teardown, so running a
+ * harness does not destroy the workbook a real session had saved.
+ *
+ * @param {string} appUrl Base URL of the running app, e.g. `http://127.0.0.1:5180/`.
+ * @returns {Promise<() => Promise<void>>} Restores the previous workbook.
+ */
+export async function resetWorkbook(appUrl) {
+  const endpoint = `${appUrl.replace(/\/+$/, '')}/api/workbook`;
+  let previous = null;
+  try {
+    const response = await fetch(endpoint);
+    previous = (await response.json()).workbook;
+  } catch {
+    // App not up yet: the harness will report that itself.
+  }
+
+  try {
+    await fetch(endpoint, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workbook: blankWorkbook() }),
+    });
+  } catch {
+    // Same: the harness cannot run anyway.
+  }
+
+  return async () => {
+    try {
+      await fetch(endpoint, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        // Null is a valid "no workbook": the server writes it and the client reads
+        // it back as absent, so a harness that started with nothing leaves nothing.
+        body: JSON.stringify({ workbook: previous }),
+      });
+    } catch {
+      // Best effort: the app may already be down.
+    }
+  };
+}
+
+/**
  * Tears down a harness run: closes the socket, kills the browser tree, and
  * removes the profile directory.
  *
@@ -97,8 +181,10 @@ async function removeWithRetry(dir, timeoutMs = 10000) {
  * @param {WebSocket} [options.ws]
  * @param {string} [options.profile] Directory to delete.
  * @param {boolean} [options.quiet] Suppress the cleanup line.
+ * @param {() => Promise<void>} [options.restoreWorkbook] Restores the workbook
+ *        captured by `resetWorkbook`, so a run leaves the saved state as it found it.
  */
-export async function teardown({ chrome, ws, profile, quiet = false } = {}) {
+export async function teardown({ chrome, ws, profile, quiet = false, restoreWorkbook } = {}) {
   try {
     ws?.close();
   } catch {
@@ -113,6 +199,10 @@ export async function teardown({ chrome, ws, profile, quiet = false } = {}) {
   let removed = true;
   if (profile) {
     removed = await removeWithRetry(profile);
+  }
+
+  if (restoreWorkbook) {
+    await restoreWorkbook();
   }
 
   if (!quiet) {

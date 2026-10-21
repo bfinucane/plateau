@@ -20,7 +20,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { teardown } from './harness.mjs';
+import { resetWorkbook, teardown } from './harness.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT = resolve(HERE, '..');
@@ -83,6 +83,10 @@ async function killServer(child) {
 
 let server = await startServer();
 console.log(`App server up on ${APP_URL}`);
+
+// Start from a blank workbook: start-up restores what was last saved, so without
+// this a run inherits whatever the previous run left behind.
+const restoreSavedWorkbook = await resetWorkbook(APP_URL);
 
 const chrome = spawn(
   CHROME,
@@ -258,7 +262,7 @@ try {
   console.error('\nHarness error:', error.message);
   process.exitCode = 2;
 } finally {
-  await teardown({ chrome, ws, profile: PROFILE, quiet: true });
+  await teardown({ chrome, ws, profile: PROFILE, quiet: true, restoreWorkbook: restoreSavedWorkbook });
   if (server?.pid) {
     try {
       execFileSync('taskkill', ['/PID', String(server.pid), '/T', '/F'], { stdio: 'ignore' });

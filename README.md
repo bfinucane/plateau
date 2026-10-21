@@ -144,9 +144,11 @@ descending already reads correctly.
 - View / Data tabs, and an inspector showing field statistics or the exact engine
   request that produced the view
 - **Dashboards** composing several worksheets on a shared grid (see below)
-- Multi-sheet workbook with debounced autosave to `data/workbook.json`, plus
-  **Restore backup**, which swaps the current file for the previous generation (the
-  server rotates the current one aside first, so a restore is itself undoable)
+- Multi-sheet workbook with debounced autosave to `data/workbook.json`, plus an
+  explicit **Save workbook** / **Open workbook** pair, a save-state indicator that
+  says `Unsaved changes` or `Saved 14:32`, and **Restore backup**, which swaps the
+  current file for the previous generation (the server rotates the current one
+  aside first, so a restore is itself undoable)
 - **Nested category axes**: every placed dimension gets its own indented line in the
   axis label — ECharts has no nested category axis, so the hierarchy lives in the
   label — which is what makes a third dimension visible instead of silently
@@ -154,6 +156,28 @@ descending already reads correctly.
 - CSV export of any result
 
 ![Three dimensions nested into the category axis](docs/screenshots/51-three-dimensions.png)
+
+### Saving and loading
+
+The workbook — every worksheet, its shelves and filters, and the dashboards — is
+kept in `data/workbook.json` on the server.
+
+- **Autosave** writes it about a second after each change, so a session survives a
+  reload without being asked.
+- **Save workbook** writes immediately, for when you do not want to wait — and says
+  "Workbook is already saved" when autosave got there first rather than rewriting
+  identical content.
+- **Open workbook** replaces the current view with the last saved file. Loading is
+  also what happens at start-up: the saved workbook is restored *after* the data
+  source is loaded, which is the order that makes it stick.
+- **Restore backup** swaps in the previous generation, so one bad save is
+  recoverable. The current file becomes the next backup, so that is undoable too.
+
+A save is skipped when the workbook is identical to the file, which keeps the
+one-generation backup meaningful instead of rotating it with the same content on
+every reload.
+
+![A saved workbook restored at start-up](docs/screenshots/53-workbook-restored.png)
 
 Each Marks-card channel does real work, and every mark type honours it:
 
@@ -284,11 +308,12 @@ node e2e/verify-tablecalc.mjs  # 14 checks: table calculations in the real UI
 node e2e/verify-split.mjs      # 16 checks: split panes
 node e2e/verify-measuresplit.mjs # 26 checks: one pane per measure
 node e2e/verify-retry.mjs      # 13 checks: a failed query is recoverable
+node e2e/verify-workbook.mjs   # 19 checks: save, start-up restore, Open, backup safety
 node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips without it
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **809 checks** — 477 unit, 332 browser.
+Total: **828 checks** — 477 unit, 351 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -427,6 +452,16 @@ workarounds are load-bearing:
 If you clone this outside DSH, `npm install && npm run dev` works with none of this;
 you can also swap the `scripts/run.mjs` invocations for `tsx` if you prefer.
 
+Two environment knobs are useful when running the browser harnesses:
+
+- **`PLATEAU_DATA_DIR`** points the server at a different data directory (sample,
+  saved workbooks, uploads), so a harness can own an isolated one instead of
+  scribbling over `data/workbook.json`. `verify-workbook.mjs` does exactly that.
+- **The app restores its saved workbook at start-up**, which is the point of it —
+  so a harness that assumes a blank app will inherit whatever was last saved.
+  `resetWorkbook()` in `e2e/harness.mjs` starts a run blank and puts the previous
+  workbook back on teardown; every shared-server harness calls it.
+
 ---
 
 ## Native engine protocol
@@ -528,7 +563,7 @@ reason, instead of accepting the field and failing on its first query.
 - Native engine protocol: remote datasets, joins, and aggregate calculated fields
   pushed down as ASTs
 - Workbook autosave with a restorable previous generation
-- 809 checks green (477 unit, 332 browser)
+- 828 checks green (477 unit, 351 browser)
 
 ### Connecting to an engine
 
@@ -706,5 +741,8 @@ Deliberately out of scope for this build, and the honest next steps:
   cover the comparison work more directly.
 - **Maps are absent rather than hidden.** The `map` mark and its GeoJSON loader have
   been removed from the codebase, not merely omitted from the dropdown.
-- **Workbook autosave is single-user** and stored as one JSON file; there is no
-  concurrency control or versioning.
+- **Workbook autosave is single-user** and stored as one JSON file on the server;
+  there is no concurrency control or versioning, and only one backup generation.
+- **The workbook is not a portable file yet.** It lives at `data/workbook.json` and
+  is saved and loaded through the server; there is no "download this workbook" or
+  "open a workbook file" — moving it between machines means copying that JSON.

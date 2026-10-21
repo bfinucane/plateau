@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, three session commits on top of `0e252ab`, with the app and
+Written on branch `main`, four session commits on top of `0e252ab`, with the app and
 engine both running at the time of writing. Every number below was measured, not
 remembered.
 
@@ -14,12 +14,12 @@ remembered.
 
 | | |
 |---|---|
-| Commits | 25 total; **2 unpushed** (`origin/main` is at `4ea48b7`) |
-| Source | 51 files in `src/`, ~19,400 lines |
+| Commits | 26 total; **3 unpushed** (`origin/main` is at `4ea48b7`) |
+| Source | 51 files in `src/`, ~19,500 lines |
 | Unit tests | **477 checks**, 13 suites, all passing |
-| Browser tests | **332 checks**, 13 harnesses, all passing |
-| Screenshots | 44, in `docs/screenshots/` |
-| Bundle | `dist/web/assets/index-DKdXjfEY.js` (built this session) |
+| Browser tests | **351 checks**, 14 harnesses, all passing |
+| Screenshots | 47, in `docs/screenshots/` |
+| Bundle | `dist/web/assets/index-B6ftR-p4.js` (built this session) |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | 8080 was up during verification, owned by the OLAP Testing session |
 | Plateau | not left running, by design — start it with `start.cmd` |
@@ -100,8 +100,9 @@ Change one, change the other.
   **menus driven by the engine's own capability list** — an aggregation or a filter
   operator the engine does not implement is not offered, and a pushed-down formula
   is checked against the functions the engine advertises before it is created.
-- **Persistence**: workbook autosave with one previous generation, **Restore
-  backup** in the command bar, CSV export.
+- **Persistence**: workbook autosave with one previous generation, an explicit
+  **Save workbook** / **Open workbook** pair, a **save-state indicator** that says
+  whether the file is current, **Restore backup** in the command bar, CSV export.
 
 ---
 
@@ -159,6 +160,19 @@ Worth knowing before "fixing" any of it:
 10. **The status line owns one clear timer.** Setting a message cancels the previous
     message's timer; otherwise an earlier save's cleanup blanks a later "Restored the
     previous workbook generation". A harness caught this, not a user.
+11. **The saved workbook is restored AFTER the initial dataset is selected, not in
+    parallel with it.** Both used to run on mount, and the workbook lost the race:
+    `workbook/loaded` arrived first, then `dataset/selected` — which resets the view —
+    arrived and wiped it. Saving worked and nothing ever came back, which was
+    reported as "the save button does nothing". The order is now explicit
+    (`state.loading` gates the restore), and there is an **Open workbook** button so
+    loading is a thing a user can ask for rather than a side effect of reloading.
+12. **The Save button tells the truth, and writing is skipped when nothing changed.**
+    A persistent indicator says `Unsaved changes` or `Saved HH:MM` next to the
+    buttons. Save on an already-saved workbook says "Workbook is already saved"
+    instead of silently rewriting it, and autosave skips content identical to the
+    last save — otherwise every reload rotated the backup generation with the same
+    content, and "Restore backup" looked like a no-op too.
 
 ---
 
@@ -190,7 +204,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Three commits on top of `0e252ab` — two features and a note on verification hygiene.
+Four commits on top of `0e252ab` — three features and a note on verification hygiene.
 The commit messages have the detail; the shape:
 
 | Was | Now |
@@ -203,11 +217,16 @@ The commit messages have the detail; the shape:
 | An earlier status timer could blank a later message | One owner per status line |
 | The filter dialogs offered all 16 operators to every engine | Gated by `filterOperators`; the API refuses an unsupported one as `unsupported_filter` |
 | A pushed-down formula was checked only for its aggregations | Its whole vocabulary is checked; an engine advertising no expression functions refuses pushdown outright |
+| A saved workbook never came back after a reload — the restore was wiped by the initial dataset selection | Restore runs after the dataset is in place; **Open workbook** loads it on demand |
+| The Save button had no visible effect (autosave usually got there first) | A save-state indicator, plus an explicit "already saved" answer and no identical rewrites |
+| Harnesses assumed a blank start and inherited the previous run's saved workbook once restore worked | `resetWorkbook()` in `e2e/harness.mjs` starts each run blank and puts the previous workbook back on teardown |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts`
 (22 checks) and `capabilityGating.test.ts` (25). `verify-ui` grew from 25 to 41
-checks, `verify-connect` from 26 to 65. Screenshots added:
-`51-three-dimensions.png`, `52-connect-calculated.png`.
+checks, `verify-connect` from 26 to 65, and `verify-workbook.mjs` is new (19 checks,
+with its own server and data directory). Screenshots added:
+`51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`55` for the workbook
+flow.
 
 The engine-side stub in `verify-connect.mjs` now answers a query by **echoing its
 shape** rather than returning one canned response. A canned response is what made a
@@ -321,6 +340,12 @@ limitations list predates the join work and has not been audited.
 - **Assert what renders, not just what is computed.** Two browser checks passed while
   axis labels were silently missing — the assertions read the data, not the screen.
   A harness also caught a status message being blanked by an older timer.
+- **A working feature can break the harnesses that lived off its bug.** For a long
+  time start-up restore never took effect, so every harness began on a blank
+  workbook by accident. Fixing the restore made `verify-ui` start on a dashboard left
+  behind by the previous run and lose its chart checks. `resetWorkbook()` in
+  `e2e/harness.mjs` now starts each run blank and restores what it found on teardown;
+  any new harness must call it before launching Chrome.
 - **Verified numbers beat recalled ones.** Every figure in this document came from a
   command run at this commit.
 
@@ -341,8 +366,10 @@ Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset
 Browser harnesses: `verify-ui` 41, `verify-lod` 14, `verify-marks` 18, `verify-viz`
 27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 65,
 `verify-tablecalc` 14, `verify-split` 16, `verify-measuresplit` 26, `verify-retry` 13,
-`verify-join` 38 (needs the engine). Each prints `N passed, M failed` and exits
-non-zero on failure.
+`verify-workbook` 19, `verify-join` 38 (needs the engine). Each prints
+`N passed, M failed` and exits non-zero on failure. `verify-retry` and
+`verify-workbook` start their own server; the rest need one running and take
+`[appUrl] [chromePath] [outDir]`.
 
 Screenshots are written to `.tmp/` and promoted to `docs/screenshots/` when a change
 is worth showing.
@@ -351,7 +378,7 @@ is worth showing.
 
 ## 11. Provenance
 
-25 commits, `55482d0` … HEAD. The last three are this session; the 14 before them are
+26 commits, `55482d0` … HEAD. The last four are this session; the 14 before them are
 the work of earlier sessions and are described by their commit messages, which record
 what went wrong as well as what was built — including four test mistakes and one place
 where a fix was worse than the bug.

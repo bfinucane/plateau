@@ -136,16 +136,34 @@ export function App() {
   const [backupAvailable, setBackupAvailable] = useState(false);
 
   /**
-   * Loads a workbook read from the server.
+   * Whether the workbook has changes the saved file does not have.
+   *
+   * Autosave means the file is usually already current, which is exactly why the
+   * Save button looked like it did nothing: the only feedback was a footer line
+   * for three seconds. A persistent indicator answers "did that work?" and "is my
+   * work safe?" without the user having to guess.
+   */
+  const [dirty, setDirty] = useState(false);
+  /** `Saved`, `Saved 14:32`, or null before anything has been read. */
+  const [saveLabel, setSaveLabel] = useState<string | null>(null);
+
+  /** The workbook as last saved or loaded; null until the first read completes. */
+  const savedSnapshot = useRef<string | null>(null);
+  /** Set when a load just dispatched, so the next render adopts it as the baseline. */
+  const rebaselineNextRender = useRef(false);
+
+  /**
+   * Loads a workbook read from the server, and treats it as the saved state.
    *
    * Workbooks saved before dashboards existed lack these fields; filling in
    * defaults rather than rendering an undefined dashboard list is why this is a
-   * function and not three lines in the mount effect — a restore has to apply the
-   * same normalisation as a start-up load.
+   * function — a restore has to apply the same normalisation as a start-up load.
+   *
+   * @returns true when there was a workbook to load.
    */
   const applySavedWorkbook = useCallback(
-    (saved: Partial<WorkbookState> | null) => {
-      if (!saved?.sheets?.length) return;
+    (saved: Partial<WorkbookState> | null): boolean => {
+      if (!saved?.sheets?.length) return false;
       dispatch({
         type: 'workbook/loaded',
         workbook: {
@@ -156,9 +174,42 @@ export function App() {
           activeDashboardId: saved.activeDashboardId ?? saved.dashboards?.[0]?.id ?? null,
         },
       });
+      // The resulting state is only known after the reducer runs, so the effect
+      // below re-baselines from it rather than guessing at the normalisation here.
+      rebaselineNextRender.current = true;
+      setDirty(false);
+      setSaveLabel('Saved');
+      return true;
     },
     [dispatch],
   );
+
+  /**
+   * Re-baselines after a load, then tracks changes against the last saved state.
+   *
+   * The first change after a load adopts the loaded state as the baseline: the
+   * reducer fills in defaults, so the raw file is not byte-comparable with the
+   * state it produces. Every later change is compared against that snapshot.
+   */
+  useEffect(() => {
+    if (rebaselineNextRender.current) {
+      rebaselineNextRender.current = false;
+      savedSnapshot.current = JSON.stringify(state.workbook);
+      setDirty(false);
+      return;
+    }
+    if (savedSnapshot.current === null) return;
+    setDirty(JSON.stringify(state.workbook) !== savedSnapshot.current);
+  }, [state.workbook]);
+
+  /** Records a successful save: the workbook that was written becomes the baseline. */
+  const markSaved = useCallback((workbook: WorkbookState) => {
+    savedSnapshot.current = JSON.stringify(workbook);
+    setDirty(false);
+    setSaveLabel(
+      `Saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+    );
+  }, []);
 
   /**
    * Re-reads whether a previous generation exists.
@@ -179,11 +230,24 @@ export function App() {
     void refreshBackup();
   }, [refreshBackup]);
 
+  /**
+   * Restores the saved workbook once the initial dataset is in place.
+   *
+   * This used to run on mount alongside the dataset load, and LOST THE RACE: the
+   * saved workbook arrived first, then `dataset/selected` — which resets the view —
+   * arrived and wiped it. Saving worked, and nothing ever came back: the exact
+   * "the save button does nothing" report. Waiting for the initial load to finish
+   * makes the order explicit: dataset first, then workbook.
+   *
+   * The ref guard keeps it to one attempt; StrictMode re-runs effects in dev, and
+   * the flag makes that harmless.
+   */
+  const restoreStarted = useRef(false);
   useEffect(() => {
-    let cancelled = false;
+    if (state.loading || restoreStarted.current) return;
+    restoreStarted.current = true;
     fetchWorkbook<Partial<WorkbookState>>()
       .then((saved) => {
-        if (cancelled) return;
         // The read succeeded. Whether a workbook existed or not, saving over it is
         // now safe: there is nothing unseen to lose.
         setRestoreOk(true);
@@ -193,23 +257,48 @@ export function App() {
         // A failed read leaves autosave DISARMED: a server that is down must not
         // be able to replace the workbook with this session's empty default.
       });
-    return () => {
-      cancelled = true;
-    };
-    // Intentionally runs once on mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [state.loading, applySavedWorkbook]);
 
+  /** Writes the workbook immediately, and records that it is saved. */
   const saveNow = useCallback(async () => {
+    const workbook = state.workbook;
+    // Autosave usually got there first. Rewriting identical content would rotate
+    // the backup for nothing, so say the honest thing instead of pretending to work.
+    if (JSON.stringify(workbook) === savedSnapshot.current) {
+      showStatus('Workbook is already saved');
+      return;
+    }
     try {
-      await saveWorkbook(state.workbook);
+      await saveWorkbook(workbook);
+      markSaved(workbook);
       showStatus('Workbook saved to data/workbook.json');
       // The save just rotated the previous generation into place.
       void refreshBackup();
     } catch (error) {
       setStatusNow(error instanceof Error ? error.message : 'Save failed');
     }
-  }, [state.workbook, refreshBackup, showStatus, setStatusNow]);
+  }, [state.workbook, markSaved, refreshBackup, showStatus, setStatusNow]);
+
+  /**
+   * Loads the saved workbook on demand.
+   *
+   * Saving was always paired with an implicit load at start-up and nothing that
+   * said so; this is the control the user was looking for. It deliberately does
+   * not write anything: the saved file is the source, the current view is replaced.
+   */
+  const openSavedWorkbook = useCallback(async () => {
+    try {
+      const saved = await fetchWorkbook<Partial<WorkbookState>>();
+      if (!applySavedWorkbook(saved)) {
+        setStatusNow('No saved workbook on the server yet. Use Save workbook first.');
+        return;
+      }
+      showStatus('Loaded the saved workbook', 4000);
+      void refreshBackup();
+    } catch (error) {
+      setStatusNow(error instanceof Error ? error.message : 'Could not load the saved workbook');
+    }
+  }, [applySavedWorkbook, refreshBackup, showStatus, setStatusNow]);
 
   /**
    * Swaps the workbook for the previous generation.
@@ -233,12 +322,20 @@ export function App() {
     // Never autosave before the restore attempt has succeeded: see `restoreOk`.
     if (!restoreOk) return;
     const handle = setTimeout(() => {
-      saveWorkbook(state.workbook).catch(() => {
-        // Autosave is best effort.
-      });
+      const workbook = state.workbook;
+      // A restore, an Open or a previous save leaves the file already current.
+      // Writing it again would rotate the backup generation with identical content,
+      // making "Restore backup" look like a no-op.
+      if (JSON.stringify(workbook) === savedSnapshot.current) return;
+      saveWorkbook(workbook)
+        .then(() => markSaved(workbook))
+        .catch(() => {
+          // Autosave is best effort; the indicator stays "unsaved" so the user can
+          // still see that the file is behind and press Save.
+        });
     }, 1200);
     return () => clearTimeout(handle);
-  }, [state.workbook, restoreOk]);
+  }, [state.workbook, restoreOk, markSaved]);
 
   // --- inspector ---------------------------------------------------------
   useEffect(() => {
@@ -475,8 +572,36 @@ export function App() {
 
         <div className="command-spacer" />
 
-        <button type="button" className="button-secondary" onClick={saveNow}>
+        {/*
+          What the save state is, not just what a button does.
+          The workbook autosaves, so "did the button work?" and "is my work safe?"
+          were both unanswerable: feedback was three seconds in the footer.
+        */}
+        <span
+          className={`workbook-state${dirty ? ' is-dirty' : ''}`}
+          title={
+            dirty
+              ? 'The workbook has changes that are not in data/workbook.json yet. It autosaves shortly after a change; Save workbook writes it now.'
+              : 'The workbook is saved in data/workbook.json. It autosaves shortly after each change; Save workbook writes it immediately.'
+          }
+        >
+          {dirty ? 'Unsaved changes' : saveLabel ?? ''}
+        </span>
+        <button
+          type="button"
+          className="button-secondary"
+          onClick={saveNow}
+          title="Write the workbook to data/workbook.json now. It also autosaves shortly after each change."
+        >
           Save workbook
+        </button>
+        <button
+          type="button"
+          className="button-secondary"
+          onClick={() => void openSavedWorkbook()}
+          title="Replace the current view with the last saved workbook from data/workbook.json. Nothing is written."
+        >
+          Open workbook
         </button>
         <button
           type="button"

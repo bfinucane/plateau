@@ -84,6 +84,26 @@ textarea {
   flex: 1;
 }
 
+/*
+ * Save state, next to the buttons that change it.
+ *
+ * Autosave makes the workbook's state invisible unless it is said out loud: the
+ * Save button looked inert because the file was often already current, and the only
+ * feedback was three seconds in the footer.
+ */
+.workbook-state {
+  font-size: 11.5px;
+  color: #9fb0c7;
+  white-space: nowrap;
+  /* Keep the bar from jumping as the label changes: "Unsaved changes" is the widest. */
+  min-width: 92px;
+  text-align: right;
+}
+
+.workbook-state.is-dirty {
+  color: #f0c274;
+}
+
 /* -------------------------------------------------------------- command bar */
 
 .command-bar {
