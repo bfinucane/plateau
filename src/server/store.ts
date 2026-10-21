@@ -30,12 +30,12 @@ import { buildTableFromRows, classifyKind, findColumn } from '../core/table.js';
 import { parseCsv } from '../core/csv.js';
 import {
   AGGREGATE_FUNCTIONS,
+  collectAggregateCalls,
   collectFunctionNames,
   containsAggregate,
   containsLod,
   evaluateExpression,
   formulaAst,
-  normalizeAggregate,
   parseFormula,
   type AstNode,
 } from '../core/expression.js';
@@ -539,11 +539,11 @@ async function addPushedDownCalculatedField(
  * Two capability lists matter, and they answer different questions:
  *
  *  - `aggregations` is the aggregation machinery: a formula's SUM/AVG/… has to be
- *    one the engine can actually compute. Aggregate names are judged by this list
- *    rather than by `expressionFunctions`, because it is the specific one — the
- *    protocol reports the same names in both.
- *  - `expressionFunctions` is the expression vocabulary: everything else the
- *    formula calls, plus `IF` when it branches.
+ *    one the engine can actually compute.
+ *  - `expressionFunctions` is the list of plain function CALLS. It does not
+ *    include aggregates (those are `aggregations`) and it does not include `IF`:
+ *    conditionals are an AST *node*, available once expressions run at all. The
+ *    reference engine advertises only `ZN` and `IFNULL` here.
  *
  * An EMPTY `expressionFunctions` list is a real answer, not an omission: the engine
  * is saying it has no expression evaluator ("no evaluator yet, so no functions" is
@@ -552,7 +552,33 @@ async function addPushedDownCalculatedField(
  */
 function assertFormulaEvaluable(name: string, ast: AstNode, capabilities: Capabilities): void {
   const functions = collectFunctionNames(ast);
-  const aggregates = new Set([...functions].filter((fn) => AGGREGATE_FUNCTIONS.has(fn)).map(normalizeAggregate));
+  const aggregateCalls = collectAggregateCalls(ast);
+  const aggregates = new Set(aggregateCalls.map((call) => call.aggregation));
+
+  /*
+   * One aggregation per field per expression.
+   *
+   * `SUM([x]) / AVG([x])` is a reasonable-looking formula that the engine refuses
+   * by name, because it computes one aggregate per field. Catching it here means
+   * the user is told while they are still looking at the formula, rather than
+   * creating a field that breaks every sheet it is placed on.
+   */
+  const aggregationsByField = new Map<string, string[]>();
+  for (const call of aggregateCalls) {
+    const list = aggregationsByField.get(call.field) ?? [];
+    list.push(call.aggregation);
+    aggregationsByField.set(call.field, list);
+  }
+  const repeated = [...aggregationsByField.entries()].filter(([, list]) => list.length > 1);
+  if (repeated.length > 0) {
+    const detail = repeated
+      .map(([field, list]) => `[${field}] is aggregated ${list.length} times (${list.join(', ')})`)
+      .join('; ');
+    throw new CalculatedFieldError(
+      `This engine allows one aggregation per field in an expression: ${detail}. ` +
+        'Create a separate calculated field for the second aggregate.',
+    );
+  }
 
   const implementedAggregations = new Set(capabilities.aggregations.map((a) => a.toUpperCase()));
   const unsupportedAggregations = [...aggregates].filter((a) => !implementedAggregations.has(a));
@@ -574,12 +600,23 @@ function assertFormulaEvaluable(name: string, ast: AstNode, capabilities: Capabi
     );
   }
 
+  /** Functions the formula calls that are not aggregates and not AST constructs. */
+  const calledFunctions = [...functions].filter(
+    (fn) =>
+      !AGGREGATE_FUNCTIONS.has(fn) &&
+      // `IF` is an AST node, not a call; LOD names appear only on nodes that are
+      // refused before this runs.
+      fn !== 'IF' &&
+      fn !== 'LOD' &&
+      fn !== 'FIXED' &&
+      fn !== 'INCLUDE' &&
+      fn !== 'EXCLUDE',
+  );
+
   const implementedFunctions = new Set(
     capabilities.expressionFunctions.map((fn) => fn.toUpperCase()),
   );
-  const unsupportedFunctions = [...functions].filter(
-    (fn) => !AGGREGATE_FUNCTIONS.has(fn) && !implementedFunctions.has(fn),
-  );
+  const unsupportedFunctions = calledFunctions.filter((fn) => !implementedFunctions.has(fn));
   if (unsupportedFunctions.length > 0) {
     throw new CalculatedFieldError(
       `This engine does not implement ${unsupportedFunctions.join(', ')} in expressions, so ` +

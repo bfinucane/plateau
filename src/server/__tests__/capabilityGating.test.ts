@@ -73,7 +73,9 @@ function capabilities(overrides: Partial<Capabilities> = {}): Record<string, unk
     countDistinctExact: false,
     filterOperators: ['in'],
     supportsLod: false,
-    expressionFunctions: ['ABS'],
+    // The reference engine advertises only its function CALLS. Aggregates are in
+    // `aggregations`, and `IF` is an AST node that needs no entry at all.
+    expressionFunctions: ['ZN', 'IFNULL'],
     supportsInlineDomain: true,
     maxRows: 100_000,
     ...overrides,
@@ -289,8 +291,8 @@ async function main(): Promise<void> {
     check('aggregate names are judged by capabilities.aggregations, not by expressionFunctions',
       (await dataset.backend.schema()).some((column) => column.name === 'Margin'));
 
-    const abs = await addCalculatedField(dataset, 'Abs Sales', 'ABS(SUM([Sales]))');
-    check('an advertised function is accepted', abs.name === 'Abs Sales', abs.name);
+    const zipped = await addCalculatedField(dataset, 'Zipped Sales', 'ZN(SUM([Sales]))');
+    check('an advertised function call is accepted', zipped.name === 'Zipped Sales', zipped.name);
 
     const unsupported = await rejected(() =>
       addCalculatedField(dataset, 'Rounded', 'ROUND(SUM([Sales]), 0)'),
@@ -300,13 +302,26 @@ async function main(): Promise<void> {
     check('the refusal names the function', /ROUND/.test(unsupported?.message ?? ''),
       unsupported?.message);
     check('and lists what the engine does implement',
-      /implements: ABS/.test(unsupported?.message ?? ''), unsupported?.message);
+      /implements: ZN, IFNULL/.test(unsupported?.message ?? ''), unsupported?.message);
 
-    const conditional = await rejected(() =>
-      addCalculatedField(dataset, 'Positive', 'IF SUM([Sales]) > 0 THEN 1 ELSE 0 END'),
+    // `IF` is an AST node, not a function: the contract says it needs no entry in
+    // expressionFunctions, so requiring one would refuse a formula the engine runs.
+    const conditional = await addCalculatedField(
+      dataset,
+      'Positive',
+      'IF SUM([Sales]) > 0 THEN 1 ELSE 0 END',
     );
-    check('a conditional is refused when IF is not advertised',
-      /IF/.test(conditional?.message ?? ''), conditional?.message);
+    check('a conditional needs no advertised IF', conditional.name === 'Positive', conditional.name);
+
+    const repeated = await rejected(() =>
+      addCalculatedField(dataset, 'Mixed', 'SUM([Sales]) / AVG([Sales])'),
+    );
+    check('two aggregations of one field are refused before they reach the engine',
+      repeated instanceof CalculatedFieldError, String(repeated));
+    check('the refusal names the field and says one aggregation is allowed',
+      /one aggregation per field/i.test(repeated?.message ?? '') &&
+        /Sales/.test(repeated?.message ?? ''),
+      repeated?.message);
 
     const median = await rejected(() =>
       addCalculatedField(dataset, 'Median Sales', 'MEDIAN([Sales])'),
@@ -315,7 +330,7 @@ async function main(): Promise<void> {
       /MEDIAN/.test(median?.message ?? ''), median?.message);
 
     check('no refused formula was registered',
-      !dataset.calculated.has('Rounded') && !dataset.calculated.has('Positive'),
+      !dataset.calculated.has('Rounded') && !dataset.calculated.has('Mixed'),
       JSON.stringify([...dataset.calculated.keys()]));
 
     server.close();

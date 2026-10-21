@@ -96,6 +96,30 @@ no other changes.
 (port 5190), so it takes `[chromePath] [outDir]` rather than `[appUrl] ...`.
 `verify-workbook.mjs` also owns its server (port 5194) and its data directory.
 
+## Verifying against the real engine
+
+The engine is a separate project with its own session. Three mistakes are easy here:
+
+1. **A running server can be older than the tree.** `/v1/capabilities` is the
+   truthful report: if it advertises `expressionFunctions: []` while the source has
+   an evaluator, the 8080 process predates the change. Check capabilities, or start
+   a fresh binary — a stale server makes new wire features look unimplemented.
+2. **`serve.exe` ignores unknown flags.** Passing `--help` does not print help: it
+   starts a server on **8080** against **`database.bin`**, the seeded reference. Use
+   explicit arguments and a copy of the seed instead:
+   ```powershell
+   Copy-Item Patricia\olap_engine\database.bin .tmp\verify-engine-db.bin
+   & Patricia\olap_engine\target\debug\serve.exe --bind 127.0.0.1:8091 --db .tmp\verify-engine-db.bin
+   ```
+   Then point Plateau at `http://127.0.0.1:8091`. Never bind 8080 for a verification
+   run, and never point a server at `database.bin`.
+3. **Port 8080 may be the user's engine.** If it is busy, run on a spare port
+   (8091) rather than restarting or killing what is there.
+
+The seeded cubes happen to be dense, so an empty measure cell is hard to produce
+from them. A pushed-down `SUM([value]) / 0` is the short route: the contract makes
+division by zero **`null`**, so the response carries real absent values to test with.
+
 ## The saved workbook is restored at start-up, so harnesses must reset it
 
 Plateau loads `data/workbook.json` on start-up — that is the feature. The

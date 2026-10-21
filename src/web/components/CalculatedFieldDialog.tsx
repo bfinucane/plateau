@@ -8,6 +8,7 @@
 
 import { useMemo, useState } from 'react';
 import type { ColumnInfo } from '../api';
+import type { EngineCapabilities } from '../api';
 
 interface CalculatedFieldDialogProps {
   columns: ColumnInfo[];
@@ -15,9 +16,26 @@ interface CalculatedFieldDialogProps {
   initialName?: string;
   initialFormula?: string;
   editing?: boolean;
+  /**
+   * What the active data source reports it can evaluate.
+   *
+   * Undefined for a local dataset (everything is available). For a remote engine
+   * the function palette is filtered to what it advertises: offering a function the
+   * engine refuses turns a formula box into a trap where the failure arrives at the
+   * first query.
+   */
+  capabilities?: EngineCapabilities | null;
   onSubmit: (name: string, formula: string, kind?: 'dimension' | 'measure') => Promise<void>;
   onClose: () => void;
 }
+
+/**
+ * Constructs that are AST nodes rather than function calls.
+ *
+ * `IF`/`CASE` need no entry in `capabilities.expressionFunctions` — they are part of
+ * the expression tree itself — so they stay available whenever expressions are.
+ */
+const AST_CONSTRUCTS = new Set(['IF', 'CASE']);
 
 /** Function reference grouped the way Tableau's calculation help lists them. */
 const FUNCTIONS: {
@@ -170,6 +188,7 @@ export function CalculatedFieldDialog({
   initialName = '',
   initialFormula = '',
   editing = false,
+  capabilities,
   onSubmit,
   onClose,
 }: CalculatedFieldDialogProps) {
@@ -180,6 +199,30 @@ export function CalculatedFieldDialog({
   const [saving, setSaving] = useState(false);
   const [functionSearch, setFunctionSearch] = useState('');
 
+  /**
+   * The palette the engine supports, when it reported capabilities.
+   *
+   * `null` means "no report": a local dataset, or an engine without the endpoint —
+   * and then every function is offered, because a guess that removes a working
+   * feature is as wrong as one that offers a broken one.
+   */
+  const engineAggregations = useMemo(
+    () =>
+      capabilities
+        ? new Set(capabilities.aggregations.map((aggregation) => aggregation.toUpperCase()))
+        : null,
+    [capabilities],
+  );
+  const engineFunctions = useMemo(
+    () =>
+      capabilities
+        ? new Set(capabilities.expressionFunctions.map((fn) => fn.toUpperCase()))
+        : null,
+    [capabilities],
+  );
+  /** A remote engine cannot evaluate row-level or LOD formulas at all. */
+  const remoteEvaluator = Boolean(capabilities) && !(capabilities?.supportsLod ?? false);
+
   const validationError = useMemo(
     () => validateFormula(formula, columns),
     [formula, columns],
@@ -187,15 +230,43 @@ export function CalculatedFieldDialog({
 
   const filteredFunctions = useMemo(() => {
     const needle = functionSearch.trim().toLowerCase();
-    if (!needle) return FUNCTIONS;
-    return FUNCTIONS.map((group) => ({
-      ...group,
-      items: group.items.filter(
-        (item) =>
-          item.name.toLowerCase().includes(needle) || item.doc.toLowerCase().includes(needle),
-      ),
-    })).filter((group) => group.items.length > 0);
-  }, [functionSearch]);
+    const groups = FUNCTIONS
+      // An LOD is a second query, not an expression, so it is not on offer for a
+      // remote engine even when that engine could evaluate plain formulas.
+      .filter((group) => !(remoteEvaluator && group.group === 'Level of Detail'))
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => {
+          if (engineAggregations && group.group === 'Aggregate') {
+            return engineAggregations.has(item.name.toUpperCase());
+          }
+          if (engineFunctions && !AST_CONSTRUCTS.has(item.name.toUpperCase())) {
+            return engineFunctions.has(item.name.toUpperCase());
+          }
+          return true;
+        }),
+      }))
+      .filter((group) => group.items.length > 0);
+
+    if (!needle) return groups;
+    return groups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter(
+          (item) =>
+            item.name.toLowerCase().includes(needle) || item.doc.toLowerCase().includes(needle),
+        ),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [functionSearch, engineAggregations, engineFunctions, remoteEvaluator]);
+
+  /** Names the engine does offer, for the hint under the formula box. */
+  const engineSummary = useMemo(() => {
+    if (!capabilities) return null;
+    const aggregations = capabilities.aggregations.join(', ') || 'none';
+    const functions = capabilities.expressionFunctions.join(', ') || 'none';
+    return `This engine evaluates aggregates ${aggregations} and functions ${functions}.`;
+  }, [capabilities]);
 
   const insert = (text: string, caretOffset = text.length) => {
     const textarea = document.getElementById('calc-formula') as HTMLTextAreaElement | null;
@@ -275,7 +346,8 @@ export function CalculatedFieldDialog({
                 <select value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}>
                   <option value="auto">Detect automatically</option>
                   <option value="measure">Measure (numeric, aggregatable)</option>
-                  <option value="dimension">Dimension (slice by this)</option>
+                  {/* A remote engine returns one value per group, never per row. */}
+                  {!capabilities && <option value="dimension">Dimension (slice by this)</option>}
                 </select>
               </label>
             )}
@@ -283,11 +355,28 @@ export function CalculatedFieldDialog({
             {validationError && <p className="calc-error">{validationError}</p>}
             {serverError && <p className="calc-error">{serverError}</p>}
 
+            {engineSummary && <p className="calc-hint calc-hint-engine">{engineSummary}</p>}
+            {capabilities && capabilities.expressionFunctions.length === 0 && (
+              <p className="calc-hint calc-hint-warning">
+                This engine advertises no expression functions, so it cannot evaluate
+                calculated fields yet and nothing will be created.
+              </p>
+            )}
+
             <div className="calc-hint">
               Reference fields in [brackets]. Aggregates such as SUM([Profit]) / SUM([Sales]) are
-              evaluated at the level of detail of the view. Use a level-of-detail expression to
-              break out of it — for example{' '}
-              <code>{'{ FIXED [Region] : SUM([Sales]) }'}</code>.
+              evaluated at the level of detail of the view.{' '}
+              {capabilities ? (
+                <>
+                  On this data source a formula is evaluated by the engine, aggregate
+                  formulas only; one aggregation per field.
+                </>
+              ) : (
+                <>
+                  Use a level-of-detail expression to break out of it — for example{' '}
+                  <code>{'{ FIXED [Region] : SUM([Sales]) }'}</code>.
+                </>
+              )}
             </div>
           </div>
 
@@ -357,7 +446,21 @@ export function CalculatedFieldDialog({
             type="button"
             className="button-primary"
             onClick={submit}
-            disabled={Boolean(validationError) || !name.trim() || saving}
+            disabled={
+              Boolean(validationError) ||
+              !name.trim() ||
+              saving ||
+              // An engine with no advertised expression functions cannot evaluate
+              // anything: disabling the control is more honest than a guaranteed 400.
+              (capabilities !== null &&
+                capabilities !== undefined &&
+                capabilities.expressionFunctions.length === 0)
+            }
+            title={
+              capabilities && capabilities.expressionFunctions.length === 0
+                ? 'This engine advertises no expression evaluator, so calculated fields cannot be created on this data source.'
+                : undefined
+            }
           >
             {saving ? 'Saving' : editing ? 'Save changes' : 'Create field'}
           </button>

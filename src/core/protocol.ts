@@ -122,7 +122,18 @@ export interface Capabilities {
    * because the view looks right.
    */
   supportsJoin?: boolean;
-  /** Expression functions the engine implements, by uppercase name. */
+  /**
+   * Plain function names a calculated field may `call`, uppercased.
+   *
+   * This list is NOT the whole expression vocabulary: aggregates are reported by
+   * `aggregations` instead, and `if` is an AST *node* that needs no entry at all.
+   * An engine that lists `IF` here is not wrong, but a client must not require it
+   * — the reference engine advertises only its callable functions (`ZN`, `IFNULL`).
+   *
+   * An EMPTY list is a meaningful answer: the engine has no expression evaluator,
+   * so a client must not push a calculated field down. An ABSENT list means "not
+   * reported", and a client may try.
+   */
   expressionFunctions: string[];
   /** Whether the engine can return filter value lists in the query round trip. */
   supportsInlineDomain: boolean;
@@ -148,6 +159,13 @@ export interface DimensionRef {
  *
  * Either a plain aggregation over a column, or an expression AST evaluated at
  * the aggregate level (which is how `SUM([Profit]) / SUM([Sales])` arrives).
+ *
+ * Contract notes for the expression form:
+ *  - the engine evaluates it; the client must not also compute it, or the two
+ *    will disagree;
+ *  - division by zero is `null`, an absent input makes the result `null`, and an
+ *    absent `IF` condition is `null` rather than the `ELSE` branch;
+ *  - one aggregation per field per expression (`SUM([x]) / AVG([x])` is refused).
  */
 export interface MeasureRef {
   name: string;

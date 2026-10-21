@@ -22,7 +22,9 @@ const SUITES = [
   ['split into panes (partitioning, ordering, refusals)', '../src/web/__tests__/split.test.ts'],
   ['category axis selection (dimensions beat measures)', '../src/web/__tests__/axisSelection.test.ts'],
   ['capability-driven menus (aggregations, filter operators)', '../src/web/__tests__/aggregationMenu.test.ts'],
-  ['workbook file format (round trip, hand-authored, refusals)', '../src/web/__tests__/workbookFile.test.ts'],  ['attribute joins (schema, gating, capability refusal)', '../src/server/__tests__/join.test.ts'],
+  ['workbook file format (round trip, hand-authored, refusals)', '../src/web/__tests__/workbookFile.test.ts'],
+  ['null cells (absence is not zero, in every mark)', '../src/web/__tests__/nullCells.test.ts'],
+  ['mark inference (a scatter needs a measure on each axis)', '../src/web/__tests__/markInference.test.ts'],  ['attribute joins (schema, gating, capability refusal)', '../src/server/__tests__/join.test.ts'],
 ];
 
 const failures = [];

@@ -4,9 +4,8 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, eight session commits on top of `0e252ab`, with the app and
-engine both running at the time of writing. Every number below was measured, not
-remembered.
+Written on branch `main`, nine session commits on top of `0e252ab`. Every number
+below was measured, not remembered.
 
 ---
 
@@ -14,15 +13,15 @@ remembered.
 
 | | |
 |---|---|
-| Commits | 30 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
-| Source | 53 files in `src/`, ~20,500 lines |
-| Unit tests | **520 checks**, 14 suites, all passing |
-| Browser tests | **398 checks**, 15 harnesses, all passing |
-| Screenshots | 52, in `docs/screenshots/` |
-| Bundle | `dist/web/assets/index-kgxHNtrp.js` (built this session) |
+| Commits | 31 total; **1 unpushed** (`origin/main` is at `47f5566`) |
+| Source | 55 files in `src/`, ~21,300 lines |
+| Unit tests | **551 checks**, 16 suites, all passing |
+| Browser tests | **411 checks**, 15 harnesses, all passing |
+| Screenshots | 53, in `docs/screenshots/` |
+| Bundle | `dist/web/assets/index-Cd-Izv4y.js` (built this session) |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
-| Engine | 8080 was up during verification, owned by the OLAP Testing session |
+| Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
 | Plateau | not left running, by design — start it with `start.cmd` |
 
 Nothing is broken as far as the test suites can see. §8 lists what is open.
@@ -87,7 +86,7 @@ Change one, change the other.
 
 - **Data**: bundled Superstore sample (5,560 rows × 22 cols), CSV upload, paste,
   connect to a remote engine (with joins — §6), **calculated fields on a remote
-  engine** (aggregate formulas only — §5.8).
+  engine** (aggregate formulas, **evaluated by the engine** — §5.8).
 - **Shelves**: Columns, Rows, Color, Size, Label, Detail, Tooltip; drag between them.
 - **Marks**: column, row (horizontal bar), line, area, pie, scatter, circle, square,
   treemap, text. Automatic inference from the shelf contents.
@@ -99,8 +98,12 @@ Change one, change the other.
   any depth** (a label line per placed dimension).
 - **Remote engines**: probe-then-connect dialog, capability reporting, and the
   **menus driven by the engine's own capability list** — an aggregation or a filter
-  operator the engine does not implement is not offered, and a pushed-down formula
-  is checked against the functions the engine advertises before it is created.
+  operator the engine does not implement is not offered, the formula palette shows
+  only the functions it advertises, and a pushed-down formula is validated against
+  that report before it is created.
+- **Absent values**: a measure cell with no data arrives as `null` and stays absent —
+  a chart gap, an em dash in a tooltip, an empty table cell, excluded from table
+  calculations and trend fits. Never coerced to zero (§5.15).
 - **Persistence**: workbook autosave with one previous generation, an explicit
   **Workbook menu** (Save / Open / Restore backup), a **save-state indicator**, and
   **JSON import/export** for portable files — see `src/web/workbookFile.ts` and
@@ -199,6 +202,23 @@ Worth knowing before "fixing" any of it:
     tab below its text, which then wrapped onto three lines and overlapped the
     neighbouring tab. The active tab is scrolled into view, so selecting a sheet from
     a dashboard panel cannot leave the tab strip looking unchanged.
+15. **Absence is `null`, never `0`, and every consumer treats it that way.** The
+    engine reports a group with no cells as `null`. Charts draw a gap (no bar, a line
+    break, an empty heat-map cell); tooltips show `—`; tables show an empty cell; CSV
+    writes an empty field; pie slices and treemap tiles are omitted, because those
+    encodings cannot draw absence; a view where every group is absent says so instead
+    of drawing empty axes. Table calculations and trend lines **skip** nulls — a
+    least-squares fit through `(0, 0)` would look plausible and be wrong. 22 unit
+    checks (`nullCells`) and 13 browser checks in `verify-connect` pin it.
+16. **A scatter needs a measure on each axis; `IF` is not a gated function.** Two
+    measures on the SAME shelf are a clustered bar, not a scatter: automatic
+    inference used to call that layout a scatter, the builder fell back to a dimension
+    for the missing axis (`Number('East')` is not a coordinate), and every point
+    landed at zero with no error. Separately, `IF` is an AST *node*, so
+    `capabilities.expressionFunctions` gates only plain function calls (`ZN`,
+    `IFNULL` on the reference engine) and must not be required to list `IF`. One
+    aggregation per field per expression (`SUM([x]) / AVG([x])`) is refused client-side
+    with an explanation, because the engine rejects it by name.
 
 ---
 
@@ -230,46 +250,65 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Eight commits on top of `0e252ab` — six features, a note on verification hygiene, and
-a record of the push. The commit messages have the detail; the shape:
+Nine commits on top of `0e252ab` — six features, a wire follow-up, two notes on
+verification hygiene. The commit messages have the detail; the shape:
 
 | Was | Now |
 |---|---|
 | A query naming an unknown column returned a column of nulls | `400` naming the field, on local and remote datasets |
-| `RemoteBackend.defineFormula` never called; remote calculated fields refused entirely | Aggregate formulas are pushed down; row-level and LOD formulas refused with a specific reason |
+| `RemoteBackend.defineFormula` never called; remote calculated fields refused entirely | Aggregate formulas are pushed down **and evaluated by the engine**; row-level and LOD formulas refused with a specific reason |
 | Aggregations an engine lacks were still offered once the connect dialog closed | Capabilities travel in dataset metadata; the pill menu is driven by them |
 | Backup routes existed and were tested but unreachable by a user | **Restore backup** button, enabled only when a previous generation exists |
 | Two dimensions nested in the axis label; a third was dropped | Any number of placed dimensions nests, one line per level |
 | An earlier status timer could blank a later message | One owner per status line |
 | The filter dialogs offered all 16 operators to every engine | Gated by `filterOperators`; the API refuses an unsupported one as `unsupported_filter` |
-| A pushed-down formula was checked only for its aggregations | Its whole vocabulary is checked; an engine advertising no expression functions refuses pushdown outright |
+| A pushed-down formula was checked only for its aggregations | Its aggregations, its function calls and the one-aggregation-per-field rule are checked; `IF` is correctly treated as an AST node |
 | A saved workbook never came back after a reload — the restore was wiped by the initial dataset selection | Restore runs after the dataset is in place; **Open workbook** loads it on demand |
 | The Save button had no visible effect (autosave usually got there first) | A save-state indicator, plus an explicit "already saved" answer and no identical rewrites |
 | The workbook could not leave the server, so it could not be versioned, copied between machines, or hand-authored | **Download as JSON** / **Open from file**, with a validated, versioned, forgiving format |
 | Every UI check was hand-written; there was no way to describe a set of sheets and have them all verified | `workbooks/test-set.json` (14 sheets + dashboard) and `verify-test-set.mjs`, which opens the file and renders every sheet |
 | 14 sheets made the footer tabs shrink and wrap into three-line labels | The tab strip scrolls, truncates long names with a title tooltip, and scrolls the active tab into view |
+| `null` measure cells were coerced to zero by pie, scatter, heat map, treemap and waterfall builders | Absence stays absent in every mark; charts gap, tooltips show `—`, tables empty, trend lines skip nulls |
+| Two measures on one shelf inferred a scatter, which plotted a dimension on an axis and collapsed every point to zero | A scatter needs a measure on each axis; two measures on one shelf are a clustered bar |
 | Harnesses assumed a blank start and inherited the previous run's saved workbook once restore worked | `resetWorkbook()` in `e2e/harness.mjs` starts each run blank and puts the previous workbook back on teardown |
 
-New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts`
-(22 checks), `capabilityGating.test.ts` (25) and `workbookFile.test.ts` (43).
-`verify-ui` grew from 25 to 43 checks, `verify-connect` from 26 to 65,
-`verify-workbook.mjs` is new (36 checks, with its own server and data directory) and
-`verify-test-set.mjs` is new (28 checks, data-driven from the workbook file).
-Screenshots added: `51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`60`
-for the workbook, test-set and tab-strip work.
+New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (22),
+`capabilityGating.test.ts` (27 now), `workbookFile.test.ts` (43),
+`nullCells.test.ts` (22) and `markInference.test.ts` (7). `verify-ui` grew from 25 to
+43 checks and `verify-connect` from 26 to 78; `verify-workbook.mjs` (36 checks, own
+server and data directory) and `verify-test-set.mjs` (28 checks, data-driven from the
+workbook file) are new. Screenshots added: `51-three-dimensions.png`,
+`52-connect-calculated.png`, `53`–`60` for the workbook, test-set and tab-strip work,
+and `61-null-cells.png`.
 
-The engine-side stub in `verify-connect.mjs` now answers a query by **echoing its
-shape** rather than returning one canned response. A canned response is what made a
-naming bug in either direction invisible; echo is what proves the pushed-down
-measure arrives as `expr` and not as a bare aggregation.
+The engine-side stub in `verify-connect.mjs` answers a query by **echoing its shape**
+rather than returning one canned response, and returns one `null` measure cell. A
+canned response is what made a naming bug in either direction invisible; echo is what
+proves the pushed-down measure arrives as `expr`, and the null is what proves absence
+survives the wire into the renderer.
 
-The capability gating was verified against the **real Rust engine**, not only the
-stub: it reports `aggregations: [SUM, AVG, COUNT, MIN, MAX]`, `expressionFunctions: []`
-and `filterOperators: [in, equals, notEquals]`. A pushed-down formula is therefore
-refused at creation, `between` is refused as `unsupported_filter`, `in` passes and
-returns rows, and a plain aggregate query still works. That is the intended outcome:
-the engine has no expression evaluator yet, and the client now says so instead of
-registering a field whose first query would fail.
+### The wire follow-up (§7.1)
+
+`Patricia/olap_engine/WIRE-CHANGES.md` is the engine session's changelog and index;
+its paste-ready blocks were merged into `docs/ENGINE-PROTOCOL.md` (§1 describe
+fields, §3 calculated-field measures and semantics, §3 response absent values, §4
+capabilities). The important corrections it forced on this client:
+
+- `expressionFunctions` lists **function calls only** — `IF` is an AST node and must
+  not be required there (it was);
+- **one aggregation per field per expression** is refused, so the client refuses
+  `SUM([x]) / AVG([x])` at creation instead of letting the first query fail;
+- **division by zero is `null`**, an absent input yields `null`, and an absent `IF`
+  condition is `null` rather than the `ELSE` branch;
+- a measure cell with no data arrives as **`null`**, not a dash.
+
+Verified against a **fresh engine build** (not the stale server): engine HEAD
+`a8b1342` reports `expressionFunctions: [ZN, IFNULL]`, `aggregations: [SUM, AVG,
+COUNT, MIN, MAX]`, `supportsJoin: true`, `supportsLod: false`. On ports 5181/8091,
+with a copy of the seeded database: the app carries those capabilities; a `ZN(...)`
+formula is accepted and the engine evaluates it; `ROUND(...)` and
+`SUM([value]) / AVG([value])` are refused with names; `SUM([value]) / 0` is accepted
+and returns **`null` in every group**; the join harness passes 38/38 against it.
 
 ---
 
@@ -277,23 +316,29 @@ registering a field whose first query would fail.
 
 Ordered by what I would do next.
 
-### 8.1 Nothing is unpushed
-`origin/main` matches `HEAD`; the push was done at the end of the session (29 commits,
-then this note). `origin` is https://github.com/bfinucane/plateau.git.
+### 8.1 One commit unpushed
+`origin/main` is at `47f5566`; the wire follow-up commit is one ahead. `origin` is
+https://github.com/bfinucane/plateau.git.
 
 Pushing from an agent command needs the **wider sandbox**: the confined one fails with
 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`, because the
 credential store is not reachable there. The same applies to `git fetch`.
 
 ### 8.2 Row-level calculated fields on a remote engine
-The refused path is honest but still a gap. What it needs is either an engine
-endpoint that evaluates a row expression, or `sample()` plus client-side
-materialisation with the formula appended as a real column (the local engine already
-does the second half). Then LOD pushdown for the same reason.
+The engine now evaluates aggregate expressions, so that path works. Still refused,
+with an explanation: **row-level** formulas (a remote engine has no rows) and **LOD**
+expressions (a second query, not an expression). Row-level needs either an
+engine-side row-expression endpoint or `sample()` plus client-side materialisation
+with the formula appended as a real column (the local engine already does the second
+half). LOD needs the same, at its own grouping.
 
-Related, and upstream of it: **the Rust engine has no expression evaluator at all**
-(`expressionFunctions: []`), so aggregate formulas cannot be pushed to it either.
-Plateau refuses them correctly; making them work is engine work.
+Also open on this boundary: the engine allows **one aggregation per field per
+expression**, so a ratio of two aggregates of the same column needs two calculated
+fields. The client refuses the second one honestly; lifting the limit is engine work.
+
+**The engine is a separate, moving tree.** Re-read its `WIRE-CHANGES.md` at each pull
+and check `GET /v1/capabilities` at runtime before trusting a feature; a running
+server can predate the source.
 
 ### 8.3 Remaining capability gaps
 `capabilities()` reports more than the three lists now in use. Still unused:
@@ -332,19 +377,20 @@ request removed them.
 
 ### 8.7 Test gaps
 - **No CI.** `e2e/*.mjs` need a Chrome path and the wider sandbox passed in.
-- `chartSpec.ts` is covered by unit tests for axis selection and label nesting only;
-  everything else about the renderer is covered by browser harnesses. The renderer
-  builders (heat map, treemap, line) have no unit-level tests of their option shape.
+- `chartSpec.ts` is now unit-covered for axis selection, nesting, mark inference and
+  null handling in every mark; the rest of the renderer (tooltip layout, colour
+  ramps) is still covered only by browser harnesses.
 - `verify-test-set.mjs` asserts that each sheet RENDERS without error, not that its
   numbers are right. Expected values for the test set would need either a golden
   screenshot per sheet or a data assertion per mark.
 - No test runs the app against the *real* Rust engine automatically:
-  `verify-join.mjs` skips without it.
+  `verify-join.mjs` skips without it, and the wire verification in §7.1 was manual
+  (fresh build on port 8091, with a copy of the database).
 
-### 8.8 README is behind the code
-It still says "No joins or data blends" and quotes old check counts. Numbers in
-`README.md` were refreshed for this session's suites and harnesses, but the
-limitations list predates the join work and has not been audited.
+### 8.8 README reflects the code
+It was refreshed for this session's suites and harnesses, including the null-cell
+semantics and the remote-calculated-field rules. The limitations list has been
+audited once more but still predates some of the join work.
 
 ---
 
@@ -392,6 +438,15 @@ limitations list predates the join work and has not been audited.
   exported workbook appeared under `%USERPROFILE%\Downloads`, not the harness
   directory. `verify-workbook.mjs` also pins the directory in Chrome's profile
   `Preferences` before launch. A harness must never write outside `.tmp/`.
+- **`serve.exe` ignores unknown flags and starts the engine on 8080 against
+  `database.bin`.** `serve.exe --help` does not print help; it started a server on
+  the real port against the seeded reference. Use explicit `--bind 127.0.0.1:8091
+  --db <a copy>`, never bind 8080 for verification, and never point a server at
+  `database.bin`. ENVIRONMENT.md has the recipe.
+- **The engine tree moves independently of this one.** Check its `WIRE-CHANGES.md`
+  at each pull and `GET /v1/capabilities` at runtime before trusting a feature; a
+  running 8080 process can predate the source, and a stale server makes a new wire
+  feature look unimplemented.
 - **Verified numbers beat recalled ones.** Every figure in this document came from a
   command run at this commit.
 
@@ -401,16 +456,17 @@ limitations list predates the join work and has not been audited.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 520 unit checks
+node scripts/test.mjs                                   # 551 unit checks
 node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 ```
 
 Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset` 38,
-`queryValidation` 17, `capabilityGating` 25, `tableCalcs` 51, `workbookBackup` 14,
-`split` 35, `axisSelection` 34, `aggregationMenu` 22, `workbookFile` 43, `join` 28.
+`queryValidation` 17, `capabilityGating` 27, `tableCalcs` 51, `workbookBackup` 14,
+`split` 35, `axisSelection` 34, `aggregationMenu` 22, `workbookFile` 43, `nullCells` 22,
+`markInference` 7, `join` 28.
 
 Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 18, `verify-viz`
-27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 65,
+27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 78,
 `verify-tablecalc` 14, `verify-split` 16, `verify-measuresplit` 26, `verify-retry` 13,
 `verify-workbook` 36, `verify-test-set` 28, `verify-join` 38 (needs the engine). Each
 prints `N passed, M failed` and exits non-zero on failure. `verify-retry` and
@@ -424,7 +480,7 @@ is worth showing.
 
 ## 11. Provenance
 
-30 commits, `55482d0` … HEAD. The last eight are this session; the 14 before them are
+31 commits, `55482d0` … HEAD. The last nine are this session; the 14 before them are
 the work of earlier sessions and are described by their commit messages, which record
 what went wrong as well as what was built — including four test mistakes and one place
 where a fix was worse than the bug.

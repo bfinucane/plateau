@@ -9,6 +9,9 @@ The contract between Plateau and a native analytics engine. The client sends a
 - **Reference implementation:** `FakeEngine` in
   `src/server/__tests__/protocol.test.ts` shows every request and response
   populated with real values. Read it if any shape below is ambiguous.
+- **Engine changelog:** `Patricia/olap_engine/WIRE-CHANGES.md` announces wire
+  changes from the engine side, with paste-ready blocks. Those blocks are merged
+  here; this document is normative, and a disagreement between the two is a bug.
 
 ## Transport
 
@@ -23,6 +26,11 @@ Transport is deliberately unspecified. The reference client speaks HTTP/JSON:
 
 Any binding is acceptable — HTTP, a Unix socket, an in-process FFI call. Only the
 JSON shapes below are normative.
+
+The reference engine also exposes a **read-only SQL console** (`GET /sql` and
+`POST /v1/sql`) for debugging the engine by hand. It is explicitly **not part of
+this contract** and Plateau does not use it: SQL is not the client's language, and a
+SQL surface belongs wherever the parser lives.
 
 ### Errors
 
@@ -53,6 +61,8 @@ the client cannot tell a bug from a fault.
   "dataset": "sales",
   "rowCount": 5560,
   "primaryKey": "Row ID",
+  "measureDimension": null,
+  "isAttributeTable": false,
   "columns": [
     {
       "name": "Region",
@@ -78,6 +88,12 @@ the client cannot tell a bug from a fault.
 | `unique`, `notNull` | no | Purity facts, when known cheaply |
 | `min`, `max` | no | Numeric or date bounds |
 | `suggestedKind` | no | `dimension` \| `measure` — **a hint only** |
+| `measureDimension` | no | The cube's measure dimension. For an attribute cube this names the column whose **members** are the attachable attribute names |
+| `isAttributeTable` | no | This cube is an attribute source, not a measure cube |
+
+The last two exist for **join discovery**: they are how a client can tell that a cube
+holds attribute values meant to be attached to another cube, rather than measures to
+be queried directly. See `capabilities.supportsJoin` and the `join` block in §3.
 
 **`suggestedKind` is a hint, never authoritative.** Plateau decides what is a
 dimension and what is a measure, because that is presentation policy, not a
@@ -138,20 +154,33 @@ one row.
 
 ### `measures`
 
-Either `{ name, aggregation }` for a bare aggregation, or `{ name, expr }` for a
-calculated field. `aggregation` is one of:
+A measure is **either** `{ "name", "aggregation" }` for a bare aggregation **or**
+`{ "name", "expr" }` for a calculated field, where `expr` is an AST (see
+[`expressions`](#expressions)) or a key into the request's `expressions` map.
+`aggregation` is one of:
 
 ```
 SUM | AVG | MEDIAN | MIN | MAX | COUNT | COUNTD | STDEV | VAR | ATTR
 ```
 
-Two of these need a decision:
+Only the names the engine advertises in `capabilities.aggregations` may be used;
+anything else is `unsupported_aggregation`. Two need a decision:
 
 - **`ATTR`** returns the value when the group is constant for that field, and
   `*` when it is not. It is rarely what a caller wants but it is what Tableau
   does, and silently returning something else is worse than returning `*`.
 - **`COUNTD`** — set `countDistinctExact` in `capabilities` and say honestly
   whether yours is exact. An approximation is useful, but the UI labels it.
+
+**A calculated measure is the engine's job.** If the engine advertises an
+expression evaluator, the client sends the AST and must *not* also compute the
+formula itself — two evaluators will disagree, and the disagreement is silent.
+
+**Absent values.** A measure with no cells in a group is **`null`**, never `0` and
+never a textual dash. Null is the engine's word for "no data here"; a zero is a
+measurement. The client must keep them distinct: `0` is drawn, summed and
+formatted; `null` is a gap, an em dash, or an empty cell. See
+[Response — absent values](#response--absent-values).
 
 ### `filters` — the part most likely to be got wrong
 
@@ -206,7 +235,7 @@ set is small and closed:
 ```ts
 { type: 'number' | 'string' | 'boolean', value }
 { type: 'null' }
-{ type: 'field', name: string }
+{ type: 'field', name: string }        // inside an aggregate only
 { type: 'unary', op: '-' | 'NOT', operand: AstNode }
 { type: 'binary', op: string, left: AstNode, right: AstNode }
 { type: 'call', name: string, args: AstNode[] }
@@ -214,8 +243,29 @@ set is small and closed:
 { type: 'lod', spec: 'FIXED' | 'INCLUDE' | 'EXCLUDE', dimensions: string[], expression: AstNode }
 ```
 
-Advertise implemented function names in `capabilities.expressionFunctions`.
-Unknown function names should be `unsupported_expression`, not a silent null.
+A `call` is either an aggregating function (`SUM/AVG/COUNT/MIN/MAX`, exactly one
+field argument) or a name from `capabilities.expressionFunctions`. Anything else is
+`unsupported_expression` naming it and listing what is supported — **never a silent
+zero**.
+
+**`expressionFunctions` lists plain function calls only.** `IF` is an AST *node*,
+always available once the engine evaluates expressions; it is not an entry in that
+list. Do not put `IF` there, and do not require it there.
+
+Rules the engine may enforce, so a client should validate before sending:
+
+- **One aggregation per field per expression.** `SUM([x]) / AVG([x])` is refused by
+  name; use a separate calculated field for the second aggregate.
+- **LOD is not an expression.** `{ FIXED … }` is a second query at its own
+  grouping, not a row function; `supportsLod` stays `false` until that exists and
+  the client computes it instead.
+
+Semantics, which a client must surface rather than paper over:
+
+- **Division by zero is `null`**, not `0` and not infinity.
+- **An absent input makes the result `null`.** That is what `ZN`/`IFNULL` are for:
+  converting absence to a value is an explicit choice, never a default.
+- **An absent `IF` condition yields `null`**, not the `ELSE` branch.
 
 `binary.op` carries the usual arithmetic and comparison operators plus `AND`,
 `OR`.
@@ -260,16 +310,39 @@ fine. Pin it with a test that has at least one dimension and two measures.
 `dimensionNames` and `measureNames` use output names, in output order.
 `truncated` is `true` when `limit` cut the result.
 
+### Response — absent values
+
+**A measure cell with no data in the group is `null`.** Not `0`, and not a textual
+marker such as `"-"`; those are the engine's internal states, and sending either
+one changes the meaning of the number. The engine's internal `"-"` marker is never
+sent to a client.
+
+This is the one wire change that can corrupt a display **without an error**, so
+every consumer must be explicit about it:
+
+- A chart treats `null` as a **gap** — no bar, a break in a line, an empty heat-map
+  cell. It is never drawn as a zero, because zero is a measurement.
+- A tooltip or label renders `null` as an em dash (`—`): present but absent.
+- A table cell renders `null` as an empty cell.
+- CSV export renders `null` as an empty field.
+- Any client-side arithmetic — table calculations, LOD fallbacks, trend lines —
+  must skip or propagate `null` rather than coercing it to `0`.
+
+The same applies to a calculated-field result: `SUM([x]) / 0` is `null`, and
+converting it to zero is a decision only the formula author may make
+(`ZN`, `IFNULL`).
+
 ## 4. `capabilities` → `Capabilities`
 
 ```json
 {
   "protocolVersion": 1,
-  "aggregations": ["SUM", "AVG", "MIN", "MAX", "COUNT", "COUNTD"],
-  "countDistinctExact": true,
-  "filterOperators": ["in", "notIn", "between", "equals", "top", "bottom"],
+  "aggregations": ["SUM", "AVG", "COUNT", "MIN", "MAX"],
+  "countDistinctExact": false,
+  "filterOperators": ["in", "equals", "notEquals"],
   "supportsLod": false,
-  "expressionFunctions": ["ABS", "IF", "ROUND", "SUM", "AVG"],
+  "supportsJoin": true,
+  "expressionFunctions": ["ZN", "IFNULL"],
   "supportsInlineDomain": true,
   "maxRows": 100000
 }
@@ -278,8 +351,7 @@ fine. Pin it with a test that has at least one dimension and two measures.
 This drives the UI: aggregations absent from `aggregations` are disabled rather
 than failing at query time.
 
-The three list fields are what make the client honest, so say exactly what you
-implement:
+The list fields are what make the client honest, so say exactly what you implement:
 
 - **`aggregations`** — the aggregation machinery. Plateau's pill menu offers only
   these, and a pushed-down formula's aggregates are checked here first.
@@ -287,15 +359,20 @@ implement:
   dialogs, and refuses a query naming any other as `unsupported_filter` **before
   sending it**. Report the operators you actually evaluate; reporting a superset
   produces failures at query time instead of at the control.
-- **`expressionFunctions`** — the vocabulary available to the `expressions` map,
-  uppercased, including aggregate names and `IF` (see the example above). Plateau
-  checks a pushed-down calculated field against it at creation time.
+- **`expressionFunctions`** — the plain function names a calculated field may
+  `call`, uppercased. It does **not** include aggregates (those are
+  `aggregations`) and it does **not** include `IF` (an AST node, not a function).
+  Plateau checks a pushed-down formula against this list at creation time.
+- **`supportsJoin`** — whether the `join` block is honoured. An engine without it
+  ignores a `join` block **silently**, so a client must check before offering the
+  feature; un-joined data looks correct.
+- **`countDistinctExact`** — `false` while `COUNTD` is unimplemented or
+  approximate. Do not claim exactness you do not have.
 
 An **empty** `expressionFunctions` list is a meaningful answer: "this engine has no
-expression evaluator". Every expression uses at least one function, so Plateau then
-refuses to push a calculated field down at all, rather than creating one whose first
-query would fail. An **absent** list is a different statement — "not reported" — and
-a client may then try.
+expression evaluator". Plateau then refuses to push a calculated field down at all,
+rather than creating one whose first query would fail. An **absent** list is a
+different statement — "not reported" — and a client may then try.
 
 ### `supportsLod` — do not overclaim
 

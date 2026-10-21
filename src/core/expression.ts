@@ -1466,6 +1466,57 @@ export function collectFunctionNames(node: AstNode, out: Set<string> = new Set()
   return out;
 }
 
+/** One aggregate CALL in a formula, kept even when another repeats it. */
+export interface AggregateCall {
+  aggregation: Aggregation;
+  field: string;
+}
+
+/**
+ * Collects every aggregate call in a formula, in order, WITHOUT de-duplicating.
+ *
+ * `collectAggregateSlots` answers "which aggregates must the planner compute" and
+ * therefore collapses `SUM([x])` twice into one slot. This answers "is the formula
+ * valid for the target engine", where a repeated aggregation of the same field is
+ * a refusal — so the duplicates are the point.
+ */
+export function collectAggregateCalls(node: AstNode, out: AggregateCall[] = []): AggregateCall[] {
+  switch (node.type) {
+    case 'call': {
+      const upper = node.name.toUpperCase();
+      if (AGGREGATE_FUNCTIONS.has(upper)) {
+        const arg = node.args[0];
+        if (arg && arg.type === 'field') {
+          out.push({
+            aggregation: normalizeAggregate(upper) as Aggregation,
+            field: arg.name,
+          });
+        }
+        return out;
+      }
+      node.args.forEach((arg) => collectAggregateCalls(arg, out));
+      return out;
+    }
+    case 'unary':
+      return collectAggregateCalls(node.operand, out);
+    case 'binary':
+      collectAggregateCalls(node.left, out);
+      collectAggregateCalls(node.right, out);
+      return out;
+    case 'if':
+      node.branches.forEach((branch) => {
+        collectAggregateCalls(branch.condition, out);
+        collectAggregateCalls(branch.result, out);
+      });
+      if (node.otherwise) collectAggregateCalls(node.otherwise, out);
+      return out;
+    case 'lod':
+      return out;
+    default:
+      return out;
+  }
+}
+
 /**
  * Collects field references that are NOT part of an aggregate. When a formula
  * contains aggregates, these bare fields must become grouping dimensions for

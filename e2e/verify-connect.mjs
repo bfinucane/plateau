@@ -61,7 +61,9 @@ function capabilities() {
     countDistinctExact: false,
     filterOperators: ['in', 'between'],
     supportsLod: stubSupportsLod,
-    expressionFunctions: ['ABS'],
+    // Function CALLS only, exactly as the reference engine reports them. Aggregates
+    // live in `aggregations` and `IF` is an AST node, not an entry here.
+    expressionFunctions: ['ZN', 'IFNULL'],
     supportsInlineDomain: true,
     maxRows: 100000,
   };
@@ -106,9 +108,16 @@ function queryResponse(body) {
     measure.expr ? measure.name : `${measure.aggregation ?? 'SUM'}(${measure.name})`,
   );
 
+  /*
+   * One measure cell is absent — the engine reports a group with no cells as null.
+   * It must arrive in the browser as a gap, not as zero. `null` for the first
+   * measure of row 1 gives every chart and table check below something to bite on.
+   */
   const rows = combos.map((combo, rowIndex) => [
     ...combo,
-    ...measures.map((_, measureIndex) => 1000 + rowIndex * 10 + measureIndex),
+    ...measures.map((_, measureIndex) =>
+      rowIndex === 1 && measureIndex === 0 ? null : 1000 + rowIndex * 10 + measureIndex,
+    ),
   ]);
 
   return {
@@ -580,14 +589,44 @@ try {
 
   // ---------------------- a formula the engine cannot evaluate is refused early
   //
-  // The stub advertises expressionFunctions: ["ABS"]. ROUND is therefore not
-  // available in a pushed-down formula, and the refusal must arrive while the
-  // dialog is open rather than on the first query — which is what the engine would
-  // otherwise do, after every sheet using the field had already failed.
-  console.log('\nA formula function the engine lacks is refused at creation');
+  // The stub advertises expressionFunctions: ["ZN","IFNULL"] — function CALLS only,
+  // as the reference engine reports them. ROUND is therefore not available in a
+  // pushed-down formula, and the refusal must arrive while the dialog is open rather
+  // than on the first query — which is what the engine would otherwise do, after
+  // every sheet using the field had already failed.
+  console.log('\nThe formula editor offers only what the engine advertises');
 
   await clickButton('New calculated field');
   await sleep(700);
+
+  const palette = await evaluate(`(() => {
+    const groups = [...document.querySelectorAll('.calc-sidebar h3')].map((h) => h.textContent.trim());
+    const chips = [...document.querySelectorAll('.calc-sidebar .calc-chip-fn')].map((b) => b.textContent.trim());
+    const hint = document.querySelector('.calc-hint-engine')?.textContent ?? '';
+    const treatAs = [...document.querySelectorAll('.calc-kind option')].map((o) => o.value);
+    return { groups, chips, hint, treatAs };
+  })()`);
+  console.log('  palette groups:', JSON.stringify(palette.groups));
+  console.log('  palette chips:', JSON.stringify(palette.chips));
+  console.log('  engine hint:', JSON.stringify(palette.hint));
+
+  check('the palette says what the engine evaluates',
+    /functions ZN, IFNULL/.test(palette.hint), palette.hint);
+  check('unsupported aggregates are not offered',
+    !palette.chips.includes('MEDIAN') && !palette.chips.includes('STDEV'),
+    JSON.stringify(palette.chips));
+  check('unsupported functions are not offered', !palette.chips.includes('ROUND'),
+    JSON.stringify(palette.chips));
+  check('advertised functions are offered',
+    palette.chips.includes('ZN') && palette.chips.includes('IFNULL'),
+    JSON.stringify(palette.chips));
+  check('IF stays available: it is an AST node, not a gated function',
+    palette.chips.includes('IF'), JSON.stringify(palette.chips));
+  check('the LOD group is not offered on a remote data source',
+    !palette.groups.includes('Level of Detail'), JSON.stringify(palette.groups));
+  check('row-level "dimension" formulas are not offered on a remote data source',
+    !palette.treatAs.includes('dimension'), JSON.stringify(palette.treatAs));
+
   await setDialogName('Rounded');
   await setDialogFormula('ROUND(SUM([Sales]), 0)');
   await sleep(300);
@@ -600,11 +639,90 @@ try {
   console.log('  function refusal:', JSON.stringify(functionError));
   check('the dialog reports the missing function', /ROUND/.test(functionError), functionError);
   check('it lists the functions the engine does implement',
-    /implements: ABS/.test(functionError), functionError);
+    /implements: ZN, IFNULL/.test(functionError), functionError);
   check('the dialog stays open so the formula can be fixed', await calcDialogOpen());
 
   await clickButton('Cancel');
   await sleep(500);
+
+  // An advertised function is accepted and becomes a real field.
+  console.log('\nAn advertised function is accepted');
+
+  await clickButton('New calculated field');
+  await sleep(700);
+  await setDialogName('Zipped Sales');
+  await setDialogFormula('ZN(SUM([Sales]))');
+  await sleep(300);
+  await clickButton('Create field');
+  await sleep(2200);
+  check('the engine accepts a formula using an advertised function', !(await calcDialogOpen()));
+  const fieldsAfterZn = await evaluate(
+    `[...document.querySelectorAll('.field-row .field-name')].map(e => e.textContent)`,
+  );
+  check('the ZN field appears in the data pane', fieldsAfterZn.includes('Zipped Sales'),
+    JSON.stringify(fieldsAfterZn));
+
+  // ------------------------------ absent measure cells arrive as null, not zero
+  //
+  // The stub returns null for the first measure of the second group, which is the
+  // engine's representation of "no cells in this group". Nothing may coerce it to
+  // zero: a zero bar is a measurement, absence is not.
+  console.log('\nAbsent values render as gaps, not zeros');
+
+  const nullChart = await evaluate(`(() => {
+    const chart = window.__ECHARTS__?.getInstanceByDom(document.querySelector('.chart-canvas'));
+    if (!chart) return null;
+    const option = chart.getOption();
+    const data = option.series?.[0]?.data ?? [];
+    return {
+      hasNull: data.some((value) => value === null),
+      hasZero: data.some((value) => value === 0),
+      data: data.slice(0, 8),
+    };
+  })()`);
+  console.log('  chart series data:', JSON.stringify(nullChart));
+  check('the absent cell reaches the chart as null', nullChart?.hasNull === true,
+    JSON.stringify(nullChart?.data));
+  check('and is not plotted as a zero bar', nullChart?.hasZero !== true,
+    JSON.stringify(nullChart?.data));
+
+  const nullTooltip = await evaluate(`(() => {
+    const chart = window.__ECHARTS__?.getInstanceByDom(document.querySelector('.chart-canvas'));
+    if (!chart) return '';
+    const option = chart.getOption();
+    const tooltip = Array.isArray(option.tooltip) ? option.tooltip[0] : option.tooltip;
+    const formatter = tooltip?.formatter;
+    if (typeof formatter !== 'function') return '';
+    return formatter([{ name: 'West', seriesName: 'Sum of Sales', value: null, marker: '' }]);
+  })()`);
+  console.log('  null tooltip:', JSON.stringify(nullTooltip));
+  check('a tooltip shows an em dash for the absent value', nullTooltip.includes('—'),
+    JSON.stringify(nullTooltip));
+
+  await evaluate(`(() => {
+    const tab = [...document.querySelectorAll('.view-tabs button')].find((b) => b.textContent.trim() === 'Data');
+    if (tab) tab.click();
+    return true;
+  })()`);
+  await sleep(700);
+  const westRow = await evaluate(`(() => {
+    const row = [...document.querySelectorAll('.data-grid tbody tr')]
+      .find((tr) => tr.querySelector('td')?.textContent === 'West');
+    return row ? [...row.querySelectorAll('td')].map((td) => td.textContent) : null;
+  })()`);
+  console.log('  data grid row for the absent group:', JSON.stringify(westRow));
+  check('the Data tab renders an absent measure as an empty cell',
+    Array.isArray(westRow) && westRow.includes('') && !westRow.includes('null'),
+    JSON.stringify(westRow));
+
+  await screenshot('61-null-cells.png');
+
+  await evaluate(`(() => {
+    const tab = [...document.querySelectorAll('.view-tabs button')].find((b) => b.textContent.trim() === 'View');
+    if (tab) tab.click();
+    return true;
+  })()`);
+  await sleep(700);
 
   // ------------------------------------- filter controls follow the engine
   //

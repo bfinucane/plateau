@@ -125,6 +125,20 @@ export function App() {
 
   const columns = state.dataset?.columns ?? [];
 
+  /**
+   * What the active data source says it can evaluate.
+   *
+   * `null` for a local dataset. For a remote engine this is what the formula editor
+   * and the calculated-field button are gated on: an engine that advertises no
+   * expression functions cannot evaluate a formula, so offering the control would
+   * only produce a guaranteed error.
+   */
+  const engineCapabilities = state.dataset?.capabilities ?? null;
+  const calculatedFieldsAvailable =
+    !engineCapabilities ||
+    !Array.isArray(engineCapabilities.expressionFunctions) ||
+    engineCapabilities.expressionFunctions.length > 0;
+
   // --- restore / persist the workbook -----------------------------------
   /**
    * Whether it is safe to autosave.
@@ -643,7 +657,12 @@ export function App() {
           type="button"
           className="button-secondary"
           onClick={() => setCalcDialog({})}
-          disabled={!state.activeDatasetId}
+          disabled={!state.activeDatasetId || !calculatedFieldsAvailable}
+          title={
+            calculatedFieldsAvailable
+              ? undefined
+              : 'This engine advertises no expression evaluator, so calculated fields cannot be created on it.'
+          }
         >
           New calculated field
         </button>
@@ -1186,6 +1205,7 @@ export function App() {
           initialName={calcDialog.name}
           initialFormula={calcDialog.formula}
           editing={calcDialog.editing}
+          capabilities={engineCapabilities}
           onClose={() => setCalcDialog(null)}
           onSubmit={async (name, formula, kind) => {
             await app.createCalculated(name, formula, kind);

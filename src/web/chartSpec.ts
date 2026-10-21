@@ -68,7 +68,12 @@ function toText(value: CellValue): string {
   return String(value);
 }
 
-/** Compact number formatting that keeps axes readable. */
+/**
+ * Compact number formatting that keeps axes readable.
+ *
+ * An absent value is `null`, and `''` on an axis is right: a tick with no label
+ * reads as absence. Use `formatFull` where a visible "not zero" mark is needed.
+ */
 export function formatNumber(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return '';
   const abs = Math.abs(value);
@@ -79,8 +84,15 @@ export function formatNumber(value: number | null): string {
   return value.toFixed(2);
 }
 
+/**
+ * Full-precision formatting for labels and tooltips.
+ *
+ * `null` means the engine reports no value for that group, which is NOT the same
+ * as zero. Rendering it as `0` (or as a blank that a reader fills in with zero)
+ * turns absence into a measurement, so it gets an em dash: present but absent.
+ */
 export function formatFull(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return '';
+  if (value === null || !Number.isFinite(value)) return '—';
   return value.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
@@ -493,8 +505,11 @@ function tooltipFormatter(measureNames: string[]) {
       const value = item.value;
       let text: string;
       if (Array.isArray(value)) {
-        // Scatter points arrive as [x, y, extra...].
-        text = value.map((v) => (typeof v === 'number' ? formatFull(v) : toText(v as CellValue))).join(', ');
+        // Scatter points arrive as [x, y, extra...]; an absent coordinate is shown
+        // as an em dash rather than disappearing from the readout.
+        text = value.map((v) => (v === null || v === undefined ? '—' : typeof v === 'number' ? formatFull(v) : toText(v as CellValue))).join(', ');
+      } else if (value === null || value === undefined) {
+        text = '—';
       } else if (typeof value === 'number') {
         text = formatFull(value);
       } else {
@@ -531,6 +546,27 @@ export function buildChart(
       option: baseOption(),
       notice: 'Place at least one measure on Columns, Rows, or Size to draw a chart.',
     };
+  }
+
+  /*
+   * A measure cell with no data in its group arrives as `null` — never as `0` and
+   * never as a dash. A chart cannot draw an absent value, and silently plotting it
+   * at zero would invent a measurement. When EVERY group is absent there is
+   * nothing to draw at all, so say so once instead of rendering empty axes.
+   */
+  if (mark !== 'text' && plan.measureIndices.length > 0) {
+    const everyMeasureAbsent = result.rows.every((row) =>
+      plan.measureIndices.every((index) => row[index] === null || row[index] === undefined),
+    );
+    if (everyMeasureAbsent) {
+      return {
+        option: baseOption(),
+        notice:
+          'Every group has an absent value for the measure: the engine reports empty ' +
+          'cells as null, and absent is not zero. Change the filters, or wrap the ' +
+          'formula in ZN() to turn absence into a value.',
+      };
+    }
   }
 
   switch (mark) {
@@ -587,6 +623,8 @@ function buildBarLike(
         grid: { left: 72, right: 40, top: 28, bottom: 40, containLabel: true },
         xAxis: { type: 'category', data: [planMeasureName], axisLabel: AXIS_LABEL_STYLE, axisLine: AXIS_LINE_STYLE },
         yAxis: { type: 'value', splitLine: GRID_SPLIT_STYLE, axisLabel: AXIS_LABEL_STYLE },
+        // `value` may be null: ECharts draws no bar, which is the honest picture of
+        // an absent total, and the label reads as an em dash rather than "0".
         series: [{ type: 'bar', data: [value], barMaxWidth: 120, label: { show: true, position: 'top', formatter: () => formatFull(value) } }],
         legend: { show: false },
       },
@@ -963,10 +1001,27 @@ function buildPie(
   }
 
   const isDate = plan.isTemporal[plan.dimensionIndices.indexOf(dimensionIndex)];
-  const data = result.rows.map((row) => ({
-    name: formatCategory(row[dimensionIndex], isDate),
-    value: toNumber(row[measureIndex]) ?? 0,
-  }));
+
+  /*
+   * A slice with an absent value is not a slice. Plotting it as zero would add a
+   * 0% category named after a group that has no data, which reads as "this group
+   * measured zero" — the exact confusion null exists to avoid.
+   */
+  const slices = result.rows
+    .map((row) => ({
+      name: formatCategory(row[dimensionIndex], isDate),
+      value: toNumber(row[measureIndex]),
+    }))
+    .filter((slice): slice is { name: string; value: number } => slice.value !== null);
+
+  if (slices.length === 0) {
+    return {
+      option: baseOption(),
+      notice:
+        'The measure is absent for every slice: the engine reports empty cells as ' +
+        'null, and absent categories cannot be drawn as zero.',
+    };
+  }
 
   // Colour is implied by the slices themselves; note it so the caller knows the
   // channel was consumed rather than silently ignored.
@@ -993,7 +1048,7 @@ function buildPie(
           itemStyle: { borderColor: '#fff', borderWidth: 2 },
           label: { formatter: '{b}\n{d}%', fontSize: 11, color: '#3c4552' },
           emphasis: { label: { fontSize: 13, fontWeight: 'bold' } },
-          data,
+          data: slices,
         },
       ],
     },
@@ -1017,14 +1072,15 @@ function buildScatter(
   sheet: Sheet,
   columns: EncodingColumns,
 ): ChartBuildResult {
-  // A scatter's axes are MEASURES, so prefer a measure on each shelf. Falling
-  // back to the first field of any kind (as a bar chart would) lets a dimension
-  // sitting on Detail hijack an axis and collapse the plot.
   const columnShelf = sheet.shelves.columns;
   const rowShelf = sheet.shelves.rows;
 
+  // A scatter's axes are MEASURES, so prefer a measure on each shelf. There is NO
+  // fallback to a field of another kind: falling back to a dimension put the
+  // category on an axis, where `Number('East')` is not a coordinate — every point
+  // collapsed onto a single line at zero, silently.
   const pickMeasure = (shelf: Encoding[]): Encoding | undefined =>
-    shelf.find((e) => e.kind === 'measure') ?? shelf[0];
+    shelf.find((e) => e.kind === 'measure');
 
   const xEncoding = pickMeasure(columnShelf);
   const yEncoding = pickMeasure(rowShelf);
@@ -1037,6 +1093,13 @@ function buildScatter(
   }
   const resolvedY = yIndex === undefined || yIndex === -1 ? xIndex : yIndex;
 
+  if (plan.measureIndices.length < 2 && resolvedY === xIndex) {
+    return {
+      option: baseOption(),
+      notice: 'A scatter plot needs two measures: one for each axis.',
+    };
+  }
+
   const xName = columns.labelOf(xIndex) || 'X';
   const yName = columns.labelOf(resolvedY) || 'Y';
 
@@ -1048,14 +1111,40 @@ function buildScatter(
   const sizeIndex = sizeEncoding ? columns.indexOf(sizeEncoding) : -1;
   const labelIndex = labelEncoding ? columns.indexOf(labelEncoding) : -1;
 
+  /*
+   * A point needs BOTH coordinates. A group with an absent measure cannot be
+   * placed at the origin, and it must not be fed to the trend line either —
+   * `(0, 0)` is a measurement, absence is not. Such rows are simply not plotted.
+   */
+  const plottableRows = result.rows.filter(
+    (row) => toNumber(row[xIndex]) !== null && toNumber(row[resolvedY]) !== null,
+  );
+  if (plottableRows.length === 0) {
+    return {
+      option: baseOption(),
+      notice:
+        'No point has both measures: the engine reports empty cells as null, and ' +
+        'absent coordinates are not plotted as zero.',
+    };
+  }
+
   // --- size scaling -------------------------------------------------------
   const sizeValues =
-    sizeIndex >= 0 ? result.rows.map((row) => Math.abs(toNumber(row[sizeIndex]) ?? 0)) : [];
+    sizeIndex >= 0
+      ? plottableRows
+          .map((row) => toNumber(row[sizeIndex]))
+          .filter((value): value is number => value !== null)
+          .map((value) => Math.abs(value))
+      : [];
   const maxSize = sizeValues.length ? Math.max(...sizeValues) : 1;
 
   const symbolFor = (row: CellValue[]): number => {
     if (sizeIndex < 0) return 14;
-    const raw = Math.abs(toNumber(row[sizeIndex]) ?? 0);
+    const sizeValue = toNumber(row[sizeIndex]);
+    // A missing size does not hide the point: the point exists, its size is
+    // simply unknown, so it gets the default.
+    if (sizeValue === null) return 14;
+    const raw = Math.abs(sizeValue);
     // Area-scaled so the visual weight matches the value; a floor keeps tiny
     // values visible.
     return 8 + 40 * Math.sqrt(maxSize > 0 ? raw / maxSize : 0);
@@ -1065,7 +1154,7 @@ function buildScatter(
     if (labelIndex < 0) return '';
     const meta = result.columnMeta[labelIndex];
     const value = row[labelIndex];
-    return meta?.kind === 'measure' ? formatNumber(toNumber(value)) : toText(value);
+    return meta?.kind === 'measure' ? formatFull(toNumber(value)) : toText(value);
   };
   const nameFor = (row: CellValue[], isDate: boolean): string => {
     if (colorIndex < 0) return '';
@@ -1102,14 +1191,14 @@ function buildScatter(
   const groups = new Map<string, CellValue[][]>();
 
   if (useSeriesColor) {
-    for (const row of result.rows) {
+    for (const row of plottableRows) {
       const key = nameFor(row, isDate) || '(none)';
       const bucket = groups.get(key);
       if (bucket) bucket.push(row);
       else groups.set(key, [row]);
     }
   } else {
-    groups.set('', result.rows);
+    groups.set('', plottableRows);
   }
 
   const series = [...groups.entries()].map(([name, rows]) => ({
@@ -1120,7 +1209,8 @@ function buildScatter(
       return point.symbolSize ?? 14;
     },
     data: rows.map((row) => ({
-      value: [toNumber(row[xIndex]) ?? 0, toNumber(row[resolvedY]) ?? 0],
+      // Non-null by construction: `plottableRows` filtered both coordinates.
+      value: [toNumber(row[xIndex]), toNumber(row[resolvedY])],
       symbolSize: symbolFor(row),
       // ECharts prints `name` on the mark when label.show is on.
       name: labelFor(row),
@@ -1143,9 +1233,11 @@ function buildScatter(
   // two measures, so a least-squares fit over all points is drawn as a dashed
   // line. R² is reported in the legend so the strength of the fit is visible
   // rather than implied.
-  const allPoints: [number, number][] = result.rows.map((row) => [
-    toNumber(row[xIndex]) ?? 0,
-    toNumber(row[resolvedY]) ?? 0,
+  // The fit uses only plotted points, so an absent value cannot drag the trend
+  // line toward the origin.
+  const allPoints: [number, number][] = plottableRows.map((row) => [
+    toNumber(row[xIndex]) as number,
+    toNumber(row[resolvedY]) as number,
   ]);
   const fit = leastSquares(allPoints);
 
@@ -1319,13 +1411,30 @@ function buildHeatmap(
   const rowNames = [...new Set(result.rows.map((row) => formatCategory(row[rowDim], rowIsDate)))];
   const colNames = [...new Set(result.rows.map((row) => formatCategory(row[colDim], colIsDate)))];
 
-  const data: [number, number, number][] = result.rows.map((row) => [
+  /*
+   * A cell with an absent measure is drawn EMPTY, not as the colour scale's
+   * minimum. Mapping null to 0 would paint it as a real low value, and the colour
+   * scale would then be computed including a value the group does not have.
+   */
+  const data: [number, number, number | null][] = result.rows.map((row) => [
     colNames.indexOf(formatCategory(row[colDim], colIsDate)),
     rowNames.indexOf(formatCategory(row[rowDim], rowIsDate)),
-    toNumber(row[measureIndex]) ?? 0,
+    toNumber(row[measureIndex]),
   ]);
 
-  const values = data.map((d) => d[2]);
+  const presentValues = data
+    .map((cell) => cell[2])
+    .filter((value): value is number => value !== null);
+  if (presentValues.length === 0) {
+    return {
+      option: baseOption(),
+      notice:
+        'The measure is absent in every cell: the engine reports empty cells as null, ' +
+        'and an absent value is not the bottom of the colour scale.',
+    };
+  }
+
+  const values = presentValues;
   const cellCount = rowNames.length * colNames.length;
   const xName = result.columnMeta[colDim]?.name ?? '';
   const yName = result.columnMeta[rowDim]?.name ?? '';
@@ -1337,9 +1446,10 @@ function buildHeatmap(
       tooltip: {
         ...(baseOption().tooltip as object),
         formatter: (params: unknown) => {
-          const item = params as { value: [number, number, number] };
+          const item = params as { value: [number, number, number | null] };
           const [c, r, v] = item.value;
           // Name the full group and the measure, matching every other mark type.
+          // An absent cell says so rather than reading as zero.
           return [
             `<div style="font-weight:600;margin-bottom:3px">${rowNames[r]} / ${colNames[c]}</div>`,
             `${yName}: ${rowNames[r]}`,
@@ -1391,11 +1501,12 @@ function buildHeatmap(
         {
           type: 'heatmap',
           data,
-          // Values in cells are only legible while the grid stays modest.
+          // Values in cells are only legible while the grid stays modest; an absent
+          // value prints nothing at all.
           label: {
             show: cellCount <= 80,
             fontSize: 10,
-            formatter: (p: { value: [number, number, number] }) => formatNumber(p.value[2]),
+            formatter: (p: { value: [number, number, number | null] }) => formatNumber(p.value[2]),
           },
           emphasis: {
             itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.28)', borderColor: '#2b3440', borderWidth: 1 },
@@ -1462,7 +1573,15 @@ function buildTreemap(
   for (const row of result.rows) {
     const primary = formatCategory(row[dimensionIndex], isDate) || '(none)';
     const secondary = colorIndex >= 0 ? formatCategory(row[colorIndex], colorIsDate) || '(none)' : null;
-    const value = Math.abs(toNumber(row[measureIndex]) ?? 0);
+
+    /*
+     * An absent value has no area, and a tile with area 0 would be a lie about the
+     * smallest tiles. The group simply does not appear, which is what "no data"
+     * should look like in a size encoding.
+     */
+    const measureValue = toNumber(row[measureIndex]);
+    if (measureValue === null) continue;
+    const value = Math.abs(measureValue);
 
     const path = secondary ? [primary, secondary] : [primary];
 
@@ -1486,6 +1605,15 @@ function buildTreemap(
         path,
       });
     }
+  }
+
+  if (rootTiles.size === 0) {
+    return {
+      option: baseOption(),
+      notice:
+        'The measure is absent for every tile: the engine reports empty cells as null, ' +
+        'and an absent value has no area to draw.',
+    };
   }
 
   const data = [...rootTiles.values()];
@@ -1605,19 +1733,37 @@ function buildWaterfall(result: QueryResponse, plan: ColumnPlan): ChartBuildResu
 
   const isDate = plan.isTemporal[0];
   const categories = result.rows.map((row) => formatCategory(row[dimensionIndex], isDate));
-  const values = result.rows.map((row) => toNumber(row[measureIndex]) ?? 0);
+  const values = result.rows.map((row) => toNumber(row[measureIndex]));
+
+  if (values.every((value) => value === null)) {
+    return {
+      option: baseOption(),
+      notice:
+        'The measure is absent for every step: the engine reports empty cells as null, ' +
+        'and an absent contribution is not a zero step.',
+    };
+  }
 
   // ECharts renders a waterfall as a transparent "placeholder" series plus the
-  // visible floating bars.
-  const placeholders: number[] = [];
-  const bars: number[] = [];
+  // visible floating bars. A step with an absent value has no bar and does not
+  // move the running total; null is passed through so ECharts draws a gap.
+  const placeholders: (number | null)[] = [];
+  const bars: (number | null)[] = [];
+  const runningAfter: number[] = [];
   let running = 0;
 
   values.forEach((value) => {
+    if (value === null) {
+      placeholders.push(null);
+      bars.push(null);
+      runningAfter.push(running);
+      return;
+    }
     const base = value >= 0 ? running : running + value;
     placeholders.push(base);
     bars.push(Math.abs(value));
     running += value;
+    runningAfter.push(running);
   });
 
   categories.push('Total');
@@ -1636,7 +1782,11 @@ function buildWaterfall(result: QueryResponse, plan: ColumnPlan): ChartBuildResu
           const index = list[0]?.dataIndex ?? 0;
           const label = categories[index];
           if (label === 'Total') return `<div style="font-weight:600">Total</div><b>${formatFull(running)}</b>`;
-          return `<div style="font-weight:600">${label}</div><b>${formatFull(values[index])}</b><br/>Running: ${formatFull(placeholders[index] + values[index])}`;
+          const value = values[index];
+          if (value === null || value === undefined) {
+            return `<div style="font-weight:600">${label}</div><b>${formatFull(null)}</b><br/>Running: ${formatFull(runningAfter[index])}`;
+          }
+          return `<div style="font-weight:600">${label}</div><b>${formatFull(value)}</b><br/>Running: ${formatFull(runningAfter[index])}`;
         },
       },
       xAxis: {
@@ -1670,11 +1820,14 @@ function buildWaterfall(result: QueryResponse, plan: ColumnPlan): ChartBuildResu
           data: bars.map((value, index) => ({
             value,
             itemStyle: {
-              color: categories[index] === 'Total'
-                ? '#2b3440'
-                : values[index] >= 0
-                  ? TABLEAU10[4]
-                  : TABLEAU10[2],
+              color:
+                categories[index] === 'Total'
+                  ? '#2b3440'
+                  : values[index] === null || values[index] === undefined
+                    ? '#c3ccd8'
+                    : (values[index] as number) >= 0
+                      ? TABLEAU10[4]
+                      : TABLEAU10[2],
               borderRadius: 3,
             },
           })),
@@ -1683,7 +1836,7 @@ function buildWaterfall(result: QueryResponse, plan: ColumnPlan): ChartBuildResu
             position: 'top',
             fontSize: 10,
             formatter: (p: { dataIndex: number }) =>
-              formatNumber(categories[p.dataIndex] === 'Total' ? running : values[p.dataIndex]),
+              formatNumber(categories[p.dataIndex] === 'Total' ? running : values[p.dataIndex] ?? null),
           },
         },
       ],

@@ -443,8 +443,15 @@ export function inferMark(sheet: Sheet): Exclude<MarkType, 'automatic'> {
 
   if (all.length === 0) return 'text';
 
-  // Two measures and at least one dimension on colour reads as a scatter plot.
-  if (measures.length >= 2 && columns.length >= 1 && rows.length >= 1) return 'scatter';
+  /*
+   * Two measures read as a scatter ONLY when one sits on each axis: that is what
+   * the renderer can plot as x and y. Two measures on the SAME shelf are a clustered
+   * bar (or a crosstab), and the scatter builder must never fall back to using a
+   * dimension as an axis — it did, and the points all landed on one line at zero.
+   */
+  const columnMeasures = columns.filter((e) => e.kind === 'measure').length;
+  const rowMeasures = rows.filter((e) => e.kind === 'measure').length;
+  if (measures.length >= 2 && columnMeasures >= 1 && rowMeasures >= 1) return 'scatter';
 
   // A date dimension implies a trend.
   if (hasDate && measures.length >= 1) return 'line';
