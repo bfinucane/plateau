@@ -29,11 +29,13 @@ import { defaultAggregation } from '../core/types.js';
 import { buildTableFromRows, classifyKind, findColumn } from '../core/table.js';
 import { parseCsv } from '../core/csv.js';
 import {
-  collectAggregateSlots,
+  AGGREGATE_FUNCTIONS,
+  collectFunctionNames,
   containsAggregate,
   containsLod,
   evaluateExpression,
   formulaAst,
+  normalizeAggregate,
   parseFormula,
   type AstNode,
 } from '../core/expression.js';
@@ -504,11 +506,13 @@ async function addPushedDownCalculatedField(
   }
 
   /*
-   * Refuse an aggregation this engine does not implement.
+   * Refuse anything this engine cannot evaluate, while the user is still looking at
+   * the formula.
    *
-   * The engine only rejects one when the first query runs — at which point every
-   * sheet using the field fails, long after the field was created. The capability
-   * list is already fetched and cached, so the check is free.
+   * The engine only rejects an unsupported aggregation or function when the first
+   * query runs — at which point every sheet using the field fails, long after the
+   * field was created. The capability list is already fetched and cached, so the
+   * checks are free.
    */
   let capabilities: Capabilities | null = null;
   try {
@@ -518,21 +522,7 @@ async function addPushedDownCalculatedField(
     // engine answer for itself.
   }
   if (capabilities) {
-    const supported = new Set(capabilities.aggregations.map((aggregation) => aggregation.toUpperCase()));
-    const slots = collectAggregateSlots(ast);
-    const unsupported = [
-      ...new Set(
-        slots
-          .map((slot) => String(slot.aggregation).toUpperCase())
-          .filter((aggregation) => !supported.has(aggregation)),
-      ),
-    ];
-    if (unsupported.length > 0) {
-      throw new CalculatedFieldError(
-        `This engine does not implement ${unsupported.join(', ')}, so "${name}" ` +
-          'cannot be evaluated there.',
-      );
-    }
+    assertFormulaEvaluable(name, ast, capabilities);
   }
 
   const columnSchema = makeAggregateMeasureSchema(name, formula);
@@ -541,6 +531,62 @@ async function addPushedDownCalculatedField(
   await refreshMeta(dataset);
 
   return describeColumns(await backend.schema()).find((c) => c.name === name)!;
+}
+
+/**
+ * Refuses a pushed-down formula whose vocabulary the engine does not implement.
+ *
+ * Two capability lists matter, and they answer different questions:
+ *
+ *  - `aggregations` is the aggregation machinery: a formula's SUM/AVG/… has to be
+ *    one the engine can actually compute. Aggregate names are judged by this list
+ *    rather than by `expressionFunctions`, because it is the specific one — the
+ *    protocol reports the same names in both.
+ *  - `expressionFunctions` is the expression vocabulary: everything else the
+ *    formula calls, plus `IF` when it branches.
+ *
+ * An EMPTY `expressionFunctions` list is a real answer, not an omission: the engine
+ * is saying it has no expression evaluator ("no evaluator yet, so no functions" is
+ * the Rust engine's own comment). Every pushed-down formula contains at least one
+ * function, so it would fail on the first query — refuse it now and say why.
+ */
+function assertFormulaEvaluable(name: string, ast: AstNode, capabilities: Capabilities): void {
+  const functions = collectFunctionNames(ast);
+  const aggregates = new Set([...functions].filter((fn) => AGGREGATE_FUNCTIONS.has(fn)).map(normalizeAggregate));
+
+  const implementedAggregations = new Set(capabilities.aggregations.map((a) => a.toUpperCase()));
+  const unsupportedAggregations = [...aggregates].filter((a) => !implementedAggregations.has(a));
+  if (unsupportedAggregations.length > 0) {
+    throw new CalculatedFieldError(
+      `This engine does not implement ${unsupportedAggregations.join(', ')}, so "${name}" ` +
+        'cannot be evaluated there.',
+    );
+  }
+
+  // Absent means "not reported": offer everything, as everywhere else. Only a
+  // reported list can gate.
+  if (!Array.isArray(capabilities.expressionFunctions)) return;
+
+  if (capabilities.expressionFunctions.length === 0) {
+    throw new CalculatedFieldError(
+      `This engine cannot evaluate calculated-field expressions yet: it advertises no ` +
+        `expression functions. "${name}" would fail on its first query, so it is not created.`,
+    );
+  }
+
+  const implementedFunctions = new Set(
+    capabilities.expressionFunctions.map((fn) => fn.toUpperCase()),
+  );
+  const unsupportedFunctions = [...functions].filter(
+    (fn) => !AGGREGATE_FUNCTIONS.has(fn) && !implementedFunctions.has(fn),
+  );
+  if (unsupportedFunctions.length > 0) {
+    throw new CalculatedFieldError(
+      `This engine does not implement ${unsupportedFunctions.join(', ')} in expressions, so ` +
+        `"${name}" cannot be evaluated there. It implements: ` +
+        `${capabilities.expressionFunctions.join(', ')}.`,
+    );
+  }
 }
 
 function makeAggregateMeasureSchema(name: string, formula: string): ColumnSchema {

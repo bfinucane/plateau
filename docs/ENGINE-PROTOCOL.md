@@ -278,6 +278,25 @@ fine. Pin it with a test that has at least one dimension and two measures.
 This drives the UI: aggregations absent from `aggregations` are disabled rather
 than failing at query time.
 
+The three list fields are what make the client honest, so say exactly what you
+implement:
+
+- **`aggregations`** — the aggregation machinery. Plateau's pill menu offers only
+  these, and a pushed-down formula's aggregates are checked here first.
+- **`filterOperators`** — the filter verbs. Plateau offers only these in its filter
+  dialogs, and refuses a query naming any other as `unsupported_filter` **before
+  sending it**. Report the operators you actually evaluate; reporting a superset
+  produces failures at query time instead of at the control.
+- **`expressionFunctions`** — the vocabulary available to the `expressions` map,
+  uppercased, including aggregate names and `IF` (see the example above). Plateau
+  checks a pushed-down calculated field against it at creation time.
+
+An **empty** `expressionFunctions` list is a meaningful answer: "this engine has no
+expression evaluator". Every expression uses at least one function, so Plateau then
+refuses to push a calculated field down at all, rather than creating one whose first
+query would fail. An **absent** list is a different statement — "not reported" — and
+a client may then try.
+
 ### `supportsLod` — do not overclaim
 
 Set `supportsLod: true` **only** if all three specs are correct, including the

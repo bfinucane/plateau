@@ -686,6 +686,7 @@ export function App() {
               filters={activeSheet.filters}
               columns={columns}
               datasetId={state.activeDatasetId ?? ''}
+              supportedOperators={app.allowedFilterOperators ?? undefined}
               onAdd={addFilter}
               onRemove={removeFilter}
             />

@@ -16,12 +16,12 @@ const SUITES = [
   ['http transport (request shapes, error mapping, timeouts)', '../src/server/__tests__/httpTransport.test.ts'],
   ['remote dataset (registration, failure modes)', '../src/server/__tests__/remoteDataset.test.ts'],
   ['query validation (unknown fields are refused, not nulled)', '../src/server/__tests__/queryValidation.test.ts'],
+  ['capability gating (filter operators, formula vocabulary)', '../src/server/__tests__/capabilityGating.test.ts'],
   ['table calculations (partitions, addressing, null handling)', '../src/web/__tests__/tableCalcs.test.ts'],
   ['workbook backup (rotation, restore, corruption)', '../src/server/__tests__/workbookBackup.test.ts'],
   ['split into panes (partitioning, ordering, refusals)', '../src/web/__tests__/split.test.ts'],
   ['category axis selection (dimensions beat measures)', '../src/web/__tests__/axisSelection.test.ts'],
-  ['aggregation menus (capability-driven, never lying)', '../src/web/__tests__/aggregationMenu.test.ts'],
-  ['attribute joins (schema, gating, capability refusal)', '../src/server/__tests__/join.test.ts'],
+  ['capability-driven menus (aggregations, filter operators)', '../src/web/__tests__/aggregationMenu.test.ts'],  ['attribute joins (schema, gating, capability refusal)', '../src/server/__tests__/join.test.ts'],
 ];
 
 const failures = [];

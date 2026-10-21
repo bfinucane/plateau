@@ -331,14 +331,37 @@ try {
   check('filter listed distinct values', filterDialog.valueCount > 0, `${filterDialog.valueCount} values`);
   await screenshot('07-filter-dialog.png');
 
-  // Apply the filter and confirm the view changes.
+  /*
+   * A local dataset has no capability report, so nothing may be gated. This is the
+   * other half of the remote check in verify-connect.mjs: that harness proves an
+   * engine's short list is honoured, this one proves an absent list is not treated
+   * as an empty one.
+   */
+  await evaluate(`(() => {
+    const first = document.querySelector('.value-list input[type=checkbox]');
+    if (first) first.click();
+    return true;
+  })()`);
+  await sleep(300);
+
+  const localFilterControls = await evaluate(`(() => {
+    const buttons = [...document.querySelectorAll('.dialog-footer button')];
+    const byText = (text) => buttons.find((b) => b.textContent.trim() === text);
+    return {
+      include: byText('Include only')?.disabled ?? null,
+      exclude: byText('Exclude')?.disabled ?? null,
+    };
+  })()`);
+  check('local dataset: Include is available', localFilterControls.include === false,
+    String(localFilterControls.include));
+  check('local dataset: Exclude is available too', localFilterControls.exclude === false,
+    String(localFilterControls.exclude));
+
+  // Apply the filter and confirm the view changes. The value is already selected.
   const applied = await evaluate(`(() => {
-    const list = document.querySelector('.value-list');
-    const first = list?.querySelector('input[type=checkbox]');
-    if (!first) return false;
-    first.click();
     const apply = [...document.querySelectorAll('.dialog-footer button')].find(b => b.textContent.includes('Include'));
-    if (apply) apply.click();
+    if (!apply || apply.disabled) return false;
+    apply.click();
     return true;
   })()`);
   check('filter applied', applied);
@@ -352,6 +375,38 @@ try {
   check('filter chip shown on shelf', filtered.chips.includes('Category'), filtered.chips.join(', '));
   check('filter description rendered', filtered.desc.length > 0, filtered.desc);
   await screenshot('08-filtered.png');
+
+  // A numeric field on a local dataset keeps every filter mode: range, ranking and
+  // null handling. On the Rust engine none of them is available, and the dialog
+  // says so instead.
+  console.log('\nView 6b: numeric filter modes on a local dataset');
+  await evaluate(`(() => {
+    const select = document.querySelector('.filter-add');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    setter.call(select, 'Profit');
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await sleep(1200);
+
+  const localRangeModes = await evaluate(`(() => ({
+    labels: [...document.querySelectorAll('.field-group .radio span')].map((span) => span.textContent.trim()),
+    applyDisabled: [...document.querySelectorAll('.dialog-footer button')]
+      .find((b) => b.textContent.trim() === 'Apply')?.disabled ?? null,
+  }))()`);
+  check('local dataset: Range is offered', localRangeModes.labels.includes('Range'),
+    JSON.stringify(localRangeModes.labels));
+  check('local dataset: Top and Bottom N are offered',
+    localRangeModes.labels.includes('Top N by this measure') &&
+      localRangeModes.labels.includes('Bottom N by this measure'),
+    JSON.stringify(localRangeModes.labels));
+  check('local dataset: Exclude null values is offered',
+    localRangeModes.labels.includes('Exclude null values'), JSON.stringify(localRangeModes.labels));
+  check('local dataset: Apply is enabled', localRangeModes.applyDisabled === false,
+    String(localRangeModes.applyDisabled));
+
+  await evaluate(`document.querySelector('.dialog-backdrop')?.click()`);
+  await sleep(500);
 
   // --- view 7: a third dimension nests as a third level -------------------
   console.log('\nView 7: three dimensions on the category axis');

@@ -192,6 +192,46 @@ export function availableAggregations(
   return supported;
 }
 
+/**
+ * Whether a data source implements a filter operator.
+ *
+ * `supported` is the engine's reported `capabilities.filterOperators`. Undefined or
+ * empty means "nothing was reported" — a local dataset, or an engine without a
+ * capabilities endpoint — and everything is offered, the same policy as
+ * `availableAggregations`.
+ */
+export function supportsFilterOperator(
+  supported: Filter['operator'][] | undefined,
+  operator: Filter['operator'],
+): boolean {
+  if (!supported || supported.length === 0) return true;
+  return supported.includes(operator);
+}
+
+/** A mode of the numeric/date filter dialog, and the operator it applies. */
+export type FilterMode = 'range' | 'top' | 'bottom' | 'notNull';
+
+/** The filter modes the range dialog offers, in display order. */
+export const FILTER_MODES: { mode: FilterMode; operator: Filter['operator']; label: string }[] = [
+  { mode: 'range', operator: 'between', label: 'Range' },
+  { mode: 'top', operator: 'top', label: 'Top N by this measure' },
+  { mode: 'bottom', operator: 'bottom', label: 'Bottom N by this measure' },
+  { mode: 'notNull', operator: 'notNull', label: 'Exclude null values' },
+];
+
+/**
+ * The filter modes a data source can honour.
+ *
+ * Empty means the engine implements none of them — the Rust engine today supports
+ * only `in`/`equals`/`notEquals`, so a numeric filter cannot be built against it at
+ * all. The dialog says so rather than offering controls whose query would fail.
+ */
+export function availableFilterModes(
+  supported: Filter['operator'][] | undefined,
+): { mode: FilterMode; operator: Filter['operator']; label: string }[] {
+  return FILTER_MODES.filter((entry) => supportsFilterOperator(supported, entry.operator));
+}
+
 let encodingCounter = 0;
 
 /** Creates a unique encoding for a field. */

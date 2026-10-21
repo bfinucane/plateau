@@ -450,6 +450,35 @@ export class RemoteBackend implements DatasetBackend {
       return executeQuery(table, spec);
     }
 
+    /*
+     * Refuse a filter operator this engine does not implement, before it goes on
+     * the wire.
+     *
+     * The UI hides unsupported operators, but that is presentation, not the
+     * contract: a workbook can be saved against one engine and opened against
+     * another, and `/api/query` is reachable directly. `unsupported_filter` is the
+     * caller's mistake, so it must stay distinguishable from an engine fault.
+     *
+     * The LOD fallback above deliberately runs BEFORE this check: that path
+     * evaluates the filters with the local engine, whose capability list is not
+     * the remote one.
+     */
+    if (capabilities && Array.isArray(capabilities.filterOperators)) {
+      const implemented = new Set(capabilities.filterOperators);
+      const unsupported = request.filters.filter((filter) => !implemented.has(filter.operator));
+      if (unsupported.length > 0) {
+        const named = unsupported
+          .map((filter) => `"${filter.operator}" on "${filter.field}"`)
+          .join(', ');
+        throw new ProtocolError(
+          'unsupported_filter',
+          `This engine does not implement ${named}. It implements: ` +
+            `${[...implemented].join(', ') || 'no filter operators'}.`,
+          'capabilities.filterOperators',
+        );
+      }
+    }
+
     validateQueryRequest(request);
     const response = await this.transport.query(request);
     const { toQueryResult } = await import('../core/protocol.js');

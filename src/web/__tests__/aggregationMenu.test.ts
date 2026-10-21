@@ -1,18 +1,24 @@
 /**
- * Capability-driven aggregation menu tests.
+ * Capability-driven menu tests.
  *
- * A remote engine reports which aggregations it implements. The pill menu used to
- * ignore that report, so it offered MEDIAN, STDEV, VAR and ATTR against an engine
- * that implements none of them — the user picked one and the query failed. The
- * capability list is now what drives the menu.
+ * A remote engine reports which aggregations and which filter operators it
+ * implements. Both reports used to be ignored by the menus, so it offered MEDIAN
+ * against an engine without it and a range filter against an engine that only
+ * understands "in" — the user picked one and the query failed. The capability lists
+ * are now what drive the menus.
  *
- * The rule that needs care: a value the engine does NOT implement is still kept
- * when it is the one already in use. Hiding it would make the select show "Sum"
- * for a view that was never summed, which is worse than showing a feature the
- * backend cannot currently compute.
+ * The rules that need care: a value the engine does NOT implement is still kept
+ * when it is the one already in use, and "not reported" must never be read as
+ * "nothing works".
  */
 
-import { AGGREGATIONS, availableAggregations } from '../viewModel.js';
+import {
+  AGGREGATIONS,
+  FILTER_MODES,
+  availableAggregations,
+  availableFilterModes,
+  supportsFilterOperator,
+} from '../viewModel.js';
 
 let passed = 0;
 let failed = 0;
@@ -75,6 +81,50 @@ section('A current value the engine lacks stays visible, and says so');
   check('a supported current value is not duplicated',
     choices.filter((aggregation) => aggregation === 'AVG').length === 1,
     choices.join(','));
+}
+
+// ------------------------------------------------------ filter operators ---
+
+section('Nothing reported means every filter operator is offered');
+
+{
+  check('an unreported engine offers "in"', supportsFilterOperator(undefined, 'in'));
+  check('an unreported engine offers "top"', supportsFilterOperator(undefined, 'top'));
+  check('an empty report is treated as "unknown", not "nothing works"',
+    supportsFilterOperator([], 'between'));
+  check('every dialog mode is available', availableFilterModes(undefined).length === FILTER_MODES.length,
+    String(availableFilterModes(undefined).length));
+}
+
+section('A reported engine offers only the filter operators it implements');
+
+{
+  // The Rust engine's actual report: in / equals / notEquals, nothing else.
+  const rust = ['in', 'equals', 'notEquals'] as const;
+  check('"in" is offered', supportsFilterOperator([...rust], 'in'));
+  check('"notIn" is NOT offered', !supportsFilterOperator([...rust], 'notIn'));
+  check('"between" is NOT offered', !supportsFilterOperator([...rust], 'between'));
+
+  const modes = availableFilterModes([...rust]);
+  check('none of the numeric/date dialog modes survives', modes.length === 0,
+    JSON.stringify(modes.map((entry) => entry.mode)));
+
+  const mixed = availableFilterModes(['in', 'between', 'top']);
+  check('only the reported modes survive',
+    mixed.map((entry) => entry.mode).join(',') === 'range,top',
+    JSON.stringify(mixed.map((entry) => entry.mode)));
+  check('and each keeps the operator it will send',
+    mixed[0].operator === 'between' && mixed[1].operator === 'top',
+    JSON.stringify(mixed.map((entry) => entry.operator)));
+}
+
+{
+  // A partial report is the interesting middle case: the dialog shows what works
+  // and says nothing about the rest rather than offering a control that fails.
+  const partial = availableFilterModes(['notNull']);
+  check('a single supported mode is offered',
+    partial.length === 1 && partial[0].mode === 'notNull',
+    JSON.stringify(partial.map((entry) => entry.mode)));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

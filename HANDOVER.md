@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, one session commit on top of `0e252ab`, with the app and
+Written on branch `main`, two session commits on top of `0e252ab`, with the app and
 engine both running at the time of writing. Every number below was measured, not
 remembered.
 
@@ -14,12 +14,12 @@ remembered.
 
 | | |
 |---|---|
-| Commits | 23 total; **15 unpushed** (`origin/main` is at `9818fb7`) |
-| Source | 50 files in `src/`, ~18,800 lines |
-| Unit tests | **441 checks**, 12 suites, all passing |
-| Browser tests | **310 checks**, 13 harnesses, all passing |
+| Commits | 24 total; **1 unpushed** (`origin/main` is at `4ea48b7`) |
+| Source | 51 files in `src/`, ~19,400 lines |
+| Unit tests | **477 checks**, 13 suites, all passing |
+| Browser tests | **332 checks**, 13 harnesses, all passing |
 | Screenshots | 44, in `docs/screenshots/` |
-| Bundle | `dist/web/assets/index-qgsiFjNf.js` (built this session) |
+| Bundle | `dist/web/assets/index-DKdXjfEY.js` (built this session) |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | 8080 was up during verification, owned by the OLAP Testing session |
 | Plateau | not left running, by design — start it with `start.cmd` |
@@ -97,8 +97,9 @@ Change one, change the other.
   measure, any mark), dashboards with multiple worksheets, **category axes nested to
   any depth** (a label line per placed dimension).
 - **Remote engines**: probe-then-connect dialog, capability reporting, and the
-  **pill menu driven by the engine's own capability list** — an aggregation the
-  engine does not implement is not offered.
+  **menus driven by the engine's own capability list** — an aggregation or a filter
+  operator the engine does not implement is not offered, and a pushed-down formula
+  is checked against the functions the engine advertises before it is created.
 - **Persistence**: workbook autosave with one previous generation, **Restore
   backup** in the command bar, CSV export.
 
@@ -137,16 +138,24 @@ Worth knowing before "fixing" any of it:
 8. **Remote calculated fields are aggregate-only and travel as ASTs.** A formula such
    as `SUM([Profit]) / SUM([Sales])` is registered on the backend, appears in the data
    pane, and is sent as `{ name, expr }` plus an entry in the request's `expressions`
-   map. Two things are deliberately refused with an explanation, because both would
-   otherwise evaluate to null: **row-level** formulas (the engine does not expose its
-   rows) and **LOD** formulas (the local fallback would evaluate them against a table
-   that does not contain the pushed-down field). An aggregation the engine does not
-   implement is refused at creation, not at the first query.
-9. **The aggregation menu follows the reported capabilities.** `undefined` capabilities
-   (a local dataset, or an engine with no capabilities endpoint) means "offer
-   everything". A value already in the workbook that the engine lacks stays visible at
-   the top of the menu and is labelled `(unsupported)` — hiding it would make the
-   select read "Sum" for a view that was never summed.
+   map. Three things are deliberately refused with an explanation, because each would
+   otherwise register a field that fails later: **row-level** formulas (the engine
+   does not expose its rows), **LOD** formulas (the local fallback would evaluate them
+   against a table that does not contain the pushed-down field), and formulas whose
+   **vocabulary the engine does not implement** — an aggregation missing from
+   `capabilities.aggregations`, a function missing from `expressionFunctions`, or
+   *any* formula on an engine that advertises an empty `expressionFunctions`, which
+   means "no expression evaluator" (the Rust engine on 8080 says exactly that).
+9. **Menus follow the reported capabilities, and only a report gates.** `undefined`
+   capabilities (a local dataset, or an engine with no capabilities endpoint) means
+   "offer everything": a guess that disables a working feature is as wrong as one
+   that offers a broken one. Three lists drive three controls — `aggregations` the
+   pill editor, `filterOperators` the filter dialogs, `expressionFunctions` the
+   formula checker. A value already in the workbook that the engine lacks stays
+   visible and is labelled: an aggregation reads `(unsupported)`, a filter chip says
+   `not supported by this data source`. For filters the engine's list is also
+   enforced server-side, as `unsupported_filter`, because a workbook can be saved
+   against one engine and opened against another.
 10. **The status line owns one clear timer.** Setting a message cancels the previous
     message's timer; otherwise an earlier save's cleanup blanks a later "Restored the
     previous workbook generation". A harness caught this, not a user.
@@ -181,7 +190,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-One commit on top of `0e252ab`. Commit message has the detail; the shape:
+Two commits on top of `0e252ab`. The commit messages have the detail; the shape:
 
 | Was | Now |
 |---|---|
@@ -191,15 +200,26 @@ One commit on top of `0e252ab`. Commit message has the detail; the shape:
 | Backup routes existed and were tested but unreachable by a user | **Restore backup** button, enabled only when a previous generation exists |
 | Two dimensions nested in the axis label; a third was dropped | Any number of placed dimensions nests, one line per level |
 | An earlier status timer could blank a later message | One owner per status line |
+| The filter dialogs offered all 16 operators to every engine | Gated by `filterOperators`; the API refuses an unsupported one as `unsupported_filter` |
+| A pushed-down formula was checked only for its aggregations | Its whole vocabulary is checked; an engine advertising no expression functions refuses pushdown outright |
 
-New suites: `queryValidation.test.ts` (17 checks) and `aggregationMenu.test.ts`
-(11). `verify-ui` grew from 25 to 35 checks, `verify-connect` from 26 to 49.
-Screenshots added: `51-three-dimensions.png`, `52-connect-calculated.png`.
+New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts`
+(22 checks) and `capabilityGating.test.ts` (25). `verify-ui` grew from 25 to 41
+checks, `verify-connect` from 26 to 65. Screenshots added:
+`51-three-dimensions.png`, `52-connect-calculated.png`.
 
 The engine-side stub in `verify-connect.mjs` now answers a query by **echoing its
 shape** rather than returning one canned response. A canned response is what made a
 naming bug in either direction invisible; echo is what proves the pushed-down
 measure arrives as `expr` and not as a bare aggregation.
+
+The capability gating was verified against the **real Rust engine**, not only the
+stub: it reports `aggregations: [SUM, AVG, COUNT, MIN, MAX]`, `expressionFunctions: []`
+and `filterOperators: [in, equals, notEquals]`. A pushed-down formula is therefore
+refused at creation, `between` is refused as `unsupported_filter`, `in` passes and
+returns rows, and a plain aggregate query still works. That is the intended outcome:
+the engine has no expression evaluator yet, and the client now says so instead of
+registering a field whose first query would fail.
 
 ---
 
@@ -208,8 +228,8 @@ measure arrives as `expr` and not as a bare aggregation.
 Ordered by what I would do next.
 
 ### 8.1 Nothing is pushed
-15 commits sit on `main` ahead of `origin/main`. The remote is configured; push has
-not been attempted this session.
+One commit sits on `main` ahead of `origin/main` (which is at `4ea48b7`). The remote
+is configured and pushing works; the previous session's 15 commits were pushed.
 
 ### 8.2 Row-level calculated fields on a remote engine
 The refused path is honest but still a gap. What it needs is either an engine
@@ -217,14 +237,24 @@ endpoint that evaluates a row expression, or `sample()` plus client-side
 materialisation with the formula appended as a real column (the local engine already
 does the second half). Then LOD pushdown for the same reason.
 
-### 8.3 Remaining capability gaps
-`capabilities()` reports more than aggregations. Still unused:
+Related, and upstream of it: **the Rust engine has no expression evaluator at all**
+(`expressionFunctions: []`), so aggregate formulas cannot be pushed to it either.
+Plateau refuses them correctly; making them work is engine work.
 
-- `filterOperators` — `FiltersPanel` offers all 16, so a filter the engine does not
-  implement fails at query time.
-- `expressionFunctions` — a remote calculated field is checked for aggregations but
-  not for the functions it calls (`ABS`, `ROUND`, …).
-- `maxRows` / `supportsInlineDomain` — read nowhere.
+### 8.3 Remaining capability gaps
+`capabilities()` reports more than the three lists now in use. Still unused:
+
+- `maxRows` — a query or sample can ask for more rows than the engine will return.
+  `RemoteBackend.materializeTable` has its own 500k bound but does not read the
+  engine's.
+- `countDistinctExact` — the connect dialog labels a `COUNTD` estimate, but nothing
+  else does; there is no other count-distinct surface to label.
+- `supportsInlineDomain` — `domainFor` is sent unconditionally; an engine that says
+  `false` gets a request it may ignore.
+- Filter **scope** is not negotiable: the Rust engine honours dimension-scope
+  operators only, and the protocol has no way to say so. Today no reachable filter
+  uses a supported operator on a measure scope, so it does not bite — but a capable
+  engine could expose the mismatch.
 
 ### 8.4 Nesting stops at the category axis
 Bar-like marks nest every placed dimension. The other marks still show at most two:
@@ -294,16 +324,16 @@ limitations list predates the join work and has not been audited.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 441 unit checks
+node scripts/test.mjs                                   # 477 unit checks
 node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 ```
 
 Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset` 38,
-`queryValidation` 17, `tableCalcs` 51, `workbookBackup` 14, `split` 35,
-`axisSelection` 34, `aggregationMenu` 11, `join` 28.
+`queryValidation` 17, `capabilityGating` 25, `tableCalcs` 51, `workbookBackup` 14,
+`split` 35, `axisSelection` 34, `aggregationMenu` 22, `join` 28.
 
-Browser harnesses: `verify-ui` 35, `verify-lod` 14, `verify-marks` 18, `verify-viz`
-27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 49,
+Browser harnesses: `verify-ui` 41, `verify-lod` 14, `verify-marks` 18, `verify-viz`
+27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 65,
 `verify-tablecalc` 14, `verify-split` 16, `verify-measuresplit` 26, `verify-retry` 13,
 `verify-join` 38 (needs the engine). Each prints `N passed, M failed` and exits
 non-zero on failure.
@@ -315,7 +345,7 @@ is worth showing.
 
 ## 11. Provenance
 
-23 commits, `55482d0` … HEAD. §7 is this session; the 14 before it are the work of
-earlier sessions and are described by their commit messages, which record what went
-wrong as well as what was built — including four test mistakes and one place where a
-fix was worse than the bug.
+24 commits, `55482d0` … HEAD. The last two are this session; the 14 before them are
+the work of earlier sessions and are described by their commit messages, which record
+what went wrong as well as what was built — including four test mistakes and one place
+where a fix was worse than the bug.

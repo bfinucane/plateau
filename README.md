@@ -249,15 +249,16 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 441 unit checks, 12 suites
+npm test         # 477 unit checks, 13 suites
 npm run typecheck
-npm run test:ui  # drives the real UI in headless Chrome; 35 end-to-end checks
+npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
 
-`npm test` runs twelve suites: `engine.test.ts` (expressions, CSV, inference, query
+`npm test` runs thirteen suites: `engine.test.ts` (expressions, CSV, inference, query
 execution, calculated fields), `lod.test.ts` (parsing, dimension resolution, filter
 ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport`,
-`remoteDataset`, `queryValidation` (unknown field names are refused), `workbookBackup`,
+`remoteDataset`, `queryValidation` (unknown field names are refused),
+`capabilityGating` (filter operators and formula vocabulary), `workbookBackup`,
 `tableCalcs`, `split`, `axisSelection`, `aggregationMenu` and `join`. LOD and engine
 tests use a small hand-computable fixture so every expected number can be checked by
 arithmetic rather than by trusting the implementation.
@@ -278,7 +279,7 @@ node e2e/verify-viz.mjs        # 27 checks: scatter axes, trend-line fit, heat m
 node e2e/verify-sort.mjs       # 15 checks: Sort control reaches the engine; axis orientation
 node e2e/verify-treemap.mjs    # 16 checks: treemap hierarchy, tooltip paths, Detail guard
 node e2e/verify-dashboard.mjs  # 29 checks: panels, independent queries, resize, swap, persistence
-node e2e/verify-connect.mjs    # 49 checks: connect dialog, capability menus, pushed-down fields
+node e2e/verify-connect.mjs    # 65 checks: connect dialog, capability gating, pushed-down fields
 node e2e/verify-tablecalc.mjs  # 14 checks: table calculations in the real UI
 node e2e/verify-split.mjs      # 16 checks: split panes
 node e2e/verify-measuresplit.mjs # 26 checks: one pane per measure
@@ -287,7 +288,7 @@ node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **751 checks** — 441 unit, 310 browser.
+Total: **809 checks** — 477 unit, 332 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -297,11 +298,12 @@ Total: **751 checks** — 441 unit, 310 browser.
 | http transport | 35 | request encoding, error mapping, timeouts, doc/code consistency |
 | remote dataset | 38 | registration, failure modes, queries, pushed-down calculated fields |
 | query validation | 17 | unknown field names are refused, local and remote |
+| capability gating | 25 | filter operators and formula vocabulary are enforced |
 | table calculations | 51 | partitions, addressing, null handling |
 | workbook backup | 14 | rotation, restore, corruption |
 | split | 35 | partitioning, ordering, refusals |
 | axis selection | 34 | dimensions beat measures; nesting to any depth |
-| aggregation menus | 11 | capability-driven, never lying about the current value |
+| capability menus | 22 | aggregations and filter operators, never lying about the current value |
 | joins | 28 | join schema, gating, capability refusal |
 
 Both browser and transport suites run against the real thing — a loopback HTTP
@@ -470,14 +472,29 @@ than can be materialised:
 
 An engine that cannot compute LOD semantics must not be trusted with them —
 `RemoteBackend` detects this from `capabilities()` and computes those formulas
-locally instead of silently returning wrong numbers. Aggregations the engine does
-not implement are carried in the dataset metadata to the browser, so the pill menu
-offers only what the engine implements instead of failing at query time; a value
-already saved in a workbook that the engine lacks stays visible, labelled
-`(unsupported)`, so the menu never lies about the current view. Calculated fields
-pushed to a remote engine are checked against the same list at creation time — an
-aggregation the engine lacks is refused while the user is still looking at the
-formula, not on the first query.
+locally instead of silently returning wrong numbers.
+
+The rest of the report drives the UI, list by list, carried to the browser in the
+dataset metadata:
+
+| Report | Governs |
+| --- | --- |
+| `aggregations` | The pill editor's aggregation menu |
+| `filterOperators` | Which filter dialogs and modes the filter shelf offers |
+| `expressionFunctions` | Whether a pushed-down calculated field may be created |
+
+A value already saved in a workbook that the engine lacks stays visible and
+labelled — an aggregation reads `(unsupported)`, a filter chip says "not supported by
+this data source" — so a menu never lies about the current view. A filter using an
+operator the engine does not implement is also refused server-side as
+`unsupported_filter`, because a workbook can be saved against one engine and opened
+against another.
+
+**"Not reported" is not "nothing works".** An absent list means the engine did not
+say, and everything is offered; only a report gates. One exception is deliberate:
+an EMPTY `expressionFunctions` list means "no expression evaluator" — the Rust
+engine's own report — and refuses pushed-down formulas outright, because every
+expression uses at least one function.
 
 **What this deliberately does not do:** there is no SQL anywhere in this path, and
 no dialect handling. `specToRequest` is the only place the two vocabularies meet.
@@ -492,10 +509,13 @@ SUM([Sales])` has no per-row value, so it travels as a parsed AST:
 "expressions": { "Margin": { "type": "binary", "op": "/", … } }
 ```
 
-Row-level formulas and LOD expressions are refused with an explanation rather than
-registered as columns that would evaluate to null. That is the honest half of the
-feature: the engine does not expose its rows, so `[Profit] / [Sales]` has nowhere
-to run.
+The formula's whole vocabulary is checked against the engine before the field is
+created: its aggregations against `aggregations`, its other functions (and `IF`)
+against `expressionFunctions`. Row-level formulas and LOD expressions are refused
+with an explanation rather than registered as columns that would evaluate to null.
+An engine with no expression evaluator — the bundled Rust engine today, which
+advertises `expressionFunctions: []` — refuses all of them at creation with that
+reason, instead of accepting the field and failing on its first query.
 
 ---
 
@@ -508,7 +528,7 @@ to run.
 - Native engine protocol: remote datasets, joins, and aggregate calculated fields
   pushed down as ASTs
 - Workbook autosave with a restorable previous generation
-- 751 checks green (441 unit, 310 browser)
+- 809 checks green (477 unit, 332 browser)
 
 ### Connecting to an engine
 
@@ -557,8 +577,12 @@ the engine is up and what it can actually do *before* committing:
 - **Unsupported aggregations are named up front**, so a missing feature reads as
   "this engine does not do that" rather than "this is broken" — and once connected
   the pill editor offers only what the engine implements.
+- **The filter shelf follows the same rule**: a categorical filter offers Include but
+  not Exclude when the engine lacks `notIn`, and a numeric filter offers only the
+  modes the engine implements — or says plainly that it implements none.
 - **Calculated fields work on the remote dataset** when the formula aggregates
-  (`SUM([Profit]) / SUM([Sales])`); row-level and LOD formulas are refused in the
+  (`SUM([Profit]) / SUM([Sales])`) and the engine can evaluate its functions;
+  row-level formulas, LOD formulas and unimplemented functions are refused in the
   dialog with the reason.
 - **Connect** registers the dataset, which then behaves like any other data
   source — fields in the pane, drag onto shelves, charts render.
@@ -599,6 +623,9 @@ executes it, and the client renders what comes back.
   `expressions`. Row-level and LOD formulas are refused with the reason.
 - **Unknown field names refused** — `POST /api/query` names the offending field and
   answers 400 instead of returning a column of nulls.
+- **Capability gating for filters and formulas** — `filterOperators` drives the filter
+  dialogs and is enforced server-side as `unsupported_filter`; `expressionFunctions`
+  is checked against a pushed-down formula's whole vocabulary, including `IF`.
 - 122 new checks across the protocol, transport, registration and dialog paths.
   The load bearing one is **local/remote parity**: the same query through both
   backends is compared value for value, so the protocol cannot silently lose
@@ -612,10 +639,14 @@ executes it, and the client renders what comes back.
    `sample()` plus client-side materialisation with the formula appended as a real
    column (the local path already does the second half). Until then both are refused
    with a typed error rather than registered as columns that evaluate to null.
-2. **The rest of `capabilities()`.** `filterOperators` and `expressionFunctions` are
-   reported but not yet used to gate the filter menu or to validate a pushed-down
-   formula, so an unsupported filter or function still fails at query time.
-3. **Then** the higher-value analytics gaps: sets and groups, bins, reference lines,
+2. **An expression evaluator in the Rust engine.** The protocol carries the AST and
+   Plateau checks it, but the engine advertises `expressionFunctions: []` and has no
+   evaluator, so no calculated field can be pushed to it yet. That is engine work,
+   not client work; the client side is ready.
+3. **The rest of `capabilities()`.** `maxRows` is not consulted before asking for a
+   large sample, `supportsInlineDomain` is not used to skip `domainFor`, and filter
+   *scope* support (dimension vs measure) has no wire representation at all.
+4. **Then** the higher-value analytics gaps: sets and groups, bins, reference lines,
    forecasting. Ranked in *Known limitations*.
 
 ### A note on calculated fields
@@ -644,9 +675,12 @@ Deliberately out of scope for this build, and the honest next steps:
 - **Joins are structural, not arbitrary.** One join per dataset, LEFT only, keyed on a
   conformed dimension; no arbitrary predicates, no data blending across sources, no
   cross-source calculation.
-- **Calculated fields on a remote engine are aggregate-only.** Row-level and LOD
-  formulas are refused with an explanation; the engine exposes no rows for them to
-  run against.
+- **Calculated fields on a remote engine are aggregate-only**, and only when the
+  engine advertises an expression evaluator. Row-level and LOD formulas are refused
+  with an explanation; the engine exposes no rows for them to run against.
+- **Filter capability is reported by operator, not by scope.** An engine that honours
+  `in` on a dimension but not on a measure cannot say so, so Plateau treats the list
+  as global. No reachable filter hits that mismatch today.
 - **Nesting beyond the category axis stops at two levels.** Bar-like marks nest every
   placed dimension into the axis label; line/area, heat map, treemap and text still
   show at most two, and the extra field only groups the query.

@@ -574,6 +574,143 @@ try {
   check('the error names the unknown field',
     /NoSuchField/.test(unknownField.body?.error ?? ''), JSON.stringify(unknownField.body));
 
+  // ---------------------- a formula the engine cannot evaluate is refused early
+  //
+  // The stub advertises expressionFunctions: ["ABS"]. ROUND is therefore not
+  // available in a pushed-down formula, and the refusal must arrive while the
+  // dialog is open rather than on the first query — which is what the engine would
+  // otherwise do, after every sheet using the field had already failed.
+  console.log('\nA formula function the engine lacks is refused at creation');
+
+  await clickButton('New calculated field');
+  await sleep(700);
+  await setDialogName('Rounded');
+  await setDialogFormula('ROUND(SUM([Sales]), 0)');
+  await sleep(300);
+  await clickButton('Create field');
+  await sleep(1800);
+
+  const functionError = await evaluate(
+    `[...document.querySelectorAll('.calc-error')].map(e => e.textContent).join(' ')`,
+  );
+  console.log('  function refusal:', JSON.stringify(functionError));
+  check('the dialog reports the missing function', /ROUND/.test(functionError), functionError);
+  check('it lists the functions the engine does implement',
+    /implements: ABS/.test(functionError), functionError);
+  check('the dialog stays open so the formula can be fixed', await calcDialogOpen());
+
+  await clickButton('Cancel');
+  await sleep(500);
+
+  // ------------------------------------- filter controls follow the engine
+  //
+  // The stub advertises filterOperators: ["in", "between"]. So a categorical filter
+  // can include but not exclude, and a numeric filter offers Range but not the
+  // ranking or null modes. The Rust engine reports only in/equals/notEquals, which
+  // would leave no numeric filter at all — same rule, stricter list.
+  console.log('\nFilter controls follow the engine filter operators');
+
+  const openFilter = (field) => evaluate(`(() => {
+    const select = document.querySelector('.filter-add');
+    if (!select) return 'no select';
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    setter.call(select, ${JSON.stringify(field)});
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'ok';
+  })()`);
+
+  const closeDialog = () => evaluate(`(() => {
+    const backdrop = document.querySelector('.dialog-backdrop');
+    if (backdrop) backdrop.click();
+    return true;
+  })()`);
+
+  check('a Region filter dialog opens', (await openFilter('Region')) === 'ok');
+  await sleep(2200);
+
+  const filterTitle = await evaluate(`document.querySelector('.dialog h2')?.textContent ?? ''`);
+  check('the categorical filter dialog is showing', /Filter/.test(filterTitle), filterTitle);
+
+  // The apply buttons are disabled while nothing is selected for an unrelated
+  // reason, so select a value before reading their capability-driven state.
+  await evaluate(`(() => {
+    const box = document.querySelector('.value-list input[type=checkbox]');
+    if (box) box.click();
+    return true;
+  })()`);
+  await sleep(300);
+
+  const categoricalControls = await evaluate(`(() => {
+    const buttons = [...document.querySelectorAll('.dialog-footer button')];
+    const byText = (text) => buttons.find((b) => b.textContent.trim() === text);
+    return {
+      include: byText('Include only')?.disabled ?? null,
+      includeTitle: byText('Include only')?.title ?? '',
+      exclude: byText('Exclude')?.disabled ?? null,
+      excludeTitle: byText('Exclude')?.title ?? '',
+    };
+  })()`);
+  console.log('  categorical controls:', JSON.stringify(categoricalControls));
+
+  check('"in" is offered: Include is enabled', categoricalControls.include === false,
+    String(categoricalControls.include));
+  check('"notIn" is NOT offered: Exclude is disabled', categoricalControls.exclude === true,
+    String(categoricalControls.exclude));
+  check('and the Exclude control says why it is disabled',
+    /notIn/.test(categoricalControls.excludeTitle), categoricalControls.excludeTitle);
+
+  await closeDialog();
+  await sleep(500);
+
+  check('a Sales filter dialog opens', (await openFilter('Sales')) === 'ok');
+  await sleep(1200);
+
+  const rangeModes = await evaluate(`(() => {
+    const labels = [...document.querySelectorAll('.field-group .radio span')]
+      .map((span) => span.textContent.trim());
+    const apply = [...document.querySelectorAll('.dialog-footer button')]
+      .find((b) => b.textContent.trim() === 'Apply');
+    return { labels, applyDisabled: apply?.disabled ?? null };
+  })()`);
+  console.log('  numeric filter modes:', JSON.stringify(rangeModes));
+
+  check('"between" is offered: the Range mode is present',
+    rangeModes.labels.includes('Range'), JSON.stringify(rangeModes.labels));
+  check('"top"/"bottom" are NOT offered',
+    !rangeModes.labels.includes('Top N by this measure') &&
+      !rangeModes.labels.includes('Bottom N by this measure'),
+    JSON.stringify(rangeModes.labels));
+  check('"notNull" is NOT offered',
+    !rangeModes.labels.includes('Exclude null values'), JSON.stringify(rangeModes.labels));
+  check('the dialog can still be applied', rangeModes.applyDisabled === false,
+    String(rangeModes.applyDisabled));
+
+  await closeDialog();
+  await sleep(500);
+
+  // The UI hides unsupported operators; the API must refuse them too, because a
+  // workbook can be saved against one engine and opened against another.
+  const unsupportedFilter = await evaluate(`(async () => {
+    const datasetId = document.querySelector('#dataset-select')?.value;
+    const response = await fetch('/api/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        datasetId,
+        fields: [{ name: 'Region', kind: 'dimension' }],
+        filters: [{ id: 'f1', field: 'Region', scope: 'dimension', operator: 'top', limit: 3 }],
+      }),
+    });
+    return { status: response.status, body: await response.json() };
+  })()`);
+  console.log('  unsupported-filter response:', JSON.stringify(unsupportedFilter));
+  check('the API refuses an unsupported filter operator', unsupportedFilter.status === 400,
+    String(unsupportedFilter.status));
+  check('the refusal names the operator', /top/.test(unsupportedFilter.body?.error ?? ''),
+    JSON.stringify(unsupportedFilter.body));
+  check('and names the operators the engine does implement',
+    /implements/.test(unsupportedFilter.body?.error ?? ''), JSON.stringify(unsupportedFilter.body));
+
   // ------------------------------------- LOD support is believed and reported
   console.log('\nAn engine that does claim LOD support');
   stubSupportsLod = true;

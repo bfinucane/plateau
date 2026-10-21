@@ -662,6 +662,19 @@ export function useAppState() {
     return reported;
   }, [state.dataset]);
 
+  /**
+   * Filter operators the active data source implements.
+   *
+   * Same policy as `allowedAggregations`: `null` when nothing was reported, so the
+   * filter dialogs offer every operator. A report is honoured — the engine refuses
+   * the rest anyway, and finding out by clicking Apply is not a design.
+   */
+  const allowedFilterOperators = useMemo<Filter['operator'][] | null>(() => {
+    const reported = state.dataset?.capabilities?.filterOperators;
+    if (!reported || reported.length === 0) return null;
+    return reported as Filter['operator'][];
+  }, [state.dataset]);
+
   return {
     state,
     dispatch,
@@ -674,6 +687,7 @@ export function useAppState() {
     querying,
     retryQuery,
     allowedAggregations,
+    allowedFilterOperators,
     selectDataset,
     refreshDatasets,
     addFieldToShelf,

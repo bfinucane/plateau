@@ -1420,6 +1420,53 @@ export function collectAggregateSlots(node: AstNode, out: AggregateSlot[] = []):
 }
 
 /**
+ * Collects the function and construct names an expression needs, uppercased.
+ *
+ * This is the vocabulary a backend must implement to evaluate the formula. It is
+ * used to check a pushed-down calculated field against an engine's
+ * `capabilities.expressionFunctions` BEFORE the field is created, because an engine
+ * that cannot evaluate it would otherwise reject every sheet using it at query
+ * time — long after the user made the choice.
+ *
+ * `IF` is reported for conditionals. `CASE` parses into the same node, and the
+ * protocol advertises constructs in the same list as functions
+ * (`expressionFunctions: ["ABS", "IF", "ROUND"]`), so one namespace is enough.
+ */
+export function collectFunctionNames(node: AstNode, out: Set<string> = new Set()): Set<string> {
+  switch (node.type) {
+    case 'call':
+      out.add(node.name.toUpperCase());
+      node.args.forEach((arg) => collectFunctionNames(arg, out));
+      break;
+    case 'unary':
+      collectFunctionNames(node.operand, out);
+      break;
+    case 'binary':
+      collectFunctionNames(node.left, out);
+      collectFunctionNames(node.right, out);
+      break;
+    case 'if':
+      out.add('IF');
+      node.branches.forEach((branch) => {
+        collectFunctionNames(branch.condition, out);
+        collectFunctionNames(branch.result, out);
+      });
+      if (node.otherwise) collectFunctionNames(node.otherwise, out);
+      break;
+    case 'lod':
+      // An LOD is refused for pushdown before this is reached, but report its
+      // vocabulary too so a caller that only inspects the AST sees the truth.
+      out.add('LOD');
+      out.add(node.spec.toUpperCase());
+      collectFunctionNames(node.expression, out);
+      break;
+    default:
+      break;
+  }
+  return out;
+}
+
+/**
  * Collects field references that are NOT part of an aggregate. When a formula
  * contains aggregates, these bare fields must become grouping dimensions for
  * the expression to be well defined at the query's level of detail.

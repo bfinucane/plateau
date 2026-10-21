@@ -1001,6 +1001,11 @@ textarea {
   white-space: nowrap;
 }
 
+/* A filter the active engine does not implement: shown, but flagged. */
+.filter-unsupported {
+  color: #8a5a12;
+}
+
 .filter-chip-actions {
   display: flex;
   gap: 1px;

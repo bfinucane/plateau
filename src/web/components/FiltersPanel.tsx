@@ -11,6 +11,11 @@ import {
   type ColumnInfo,
   type Filter,
 } from '../api';
+import {
+  availableFilterModes,
+  supportsFilterOperator,
+  type FilterMode,
+} from '../viewModel';
 
 interface FiltersPanelProps {
   filters: Filter[];
@@ -18,6 +23,22 @@ interface FiltersPanelProps {
   datasetId: string;
   onAdd: (filter: Filter) => void;
   onRemove: (filterId: string) => void;
+  /**
+   * Filter operators the active data source implements.
+   *
+   * Omitted means "nothing reported": a local dataset, or an engine without a
+   * capabilities endpoint. Every operator is offered then.
+   */
+  supportedOperators?: Filter['operator'][];
+}
+
+/** Why an operator's control is disabled, said the same way everywhere. */
+function unsupportedOperatorTitle(operator: Filter['operator']): string {
+  return (
+    `This data source does not implement the "${operator}" filter, so it is not ` +
+    'offered: the query would fail. Connect to an engine that supports it, or use ' +
+    'a local dataset.'
+  );
 }
 
 function describe(filter: Filter): string {
@@ -53,6 +74,7 @@ export function FiltersPanel({
   datasetId,
   onAdd,
   onRemove,
+  supportedOperators,
 }: FiltersPanelProps) {  const [pickerField, setPickerField] = useState<ColumnInfo | null>(null);
 
   const available = useMemo(
@@ -87,7 +109,15 @@ export function FiltersPanel({
           <li key={filter.id} className="filter-chip">
             <div className="filter-chip-text">
               <span className="filter-field">{filter.field}</span>
-              <span className="filter-desc">{describe(filter)}</span>
+              <span className="filter-desc">
+                {describe(filter)}
+                {!supportsFilterOperator(supportedOperators, filter.operator) && (
+                  <span className="filter-unsupported">
+                    {' '}
+                    — not supported by this data source
+                  </span>
+                )}
+              </span>
             </div>
             <div className="filter-chip-actions">
               <button
@@ -119,6 +149,7 @@ export function FiltersPanel({
           column={pickerField}
           datasetId={datasetId}
           existing={filters.find((f) => f.field === pickerField.name) ?? null}
+          supportedOperators={supportedOperators}
           onClose={() => setPickerField(null)}
           onApply={(filter) => {
             onAdd(filter);
@@ -134,6 +165,7 @@ interface FilterDialogProps {
   column: ColumnInfo;
   datasetId: string;
   existing: Filter | null;
+  supportedOperators?: Filter['operator'][];
   onClose: () => void;
   onApply: (filter: Filter) => void;
 }
@@ -143,12 +175,20 @@ function newFilterId(field: string): string {
 }
 
 /** Chooses the right editor for the field's type. */
-function FilterDialog({ column, datasetId, existing, onClose, onApply }: FilterDialogProps) {
+function FilterDialog({
+  column,
+  datasetId,
+  existing,
+  supportedOperators,
+  onClose,
+  onApply,
+}: FilterDialogProps) {
   const isRange = column.dataType === 'number' || column.dataType === 'date';
   return isRange ? (
     <RangeFilterDialog
       column={column}
       existing={existing}
+      supportedOperators={supportedOperators}
       onClose={onClose}
       onApply={onApply}
     />
@@ -157,6 +197,7 @@ function FilterDialog({ column, datasetId, existing, onClose, onApply }: FilterD
       column={column}
       datasetId={datasetId}
       existing={existing}
+      supportedOperators={supportedOperators}
       onClose={onClose}
       onApply={onApply}
     />
@@ -166,6 +207,7 @@ function FilterDialog({ column, datasetId, existing, onClose, onApply }: FilterD
 interface CategoricalFilterDialogProps {  column: ColumnInfo;
   datasetId: string;
   existing: Filter | null;
+  supportedOperators?: Filter['operator'][];
   onClose: () => void;
   onApply: (filter: Filter) => void;
 }
@@ -175,6 +217,7 @@ function CategoricalFilterDialog({
   column,
   datasetId,
   existing,
+  supportedOperators,
   onClose,
   onApply,
 }: CategoricalFilterDialogProps) {
@@ -185,6 +228,12 @@ function CategoricalFilterDialog({
   );
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+
+  // Value lists and row counts are still useful to look at, but applying one is
+  // only offered for an operator the engine implements.
+  const canInclude = supportsFilterOperator(supportedOperators, 'in');
+  const canExclude = supportsFilterOperator(supportedOperators, 'notIn');
+  const canFilter = canInclude || canExclude;
 
   useEffect(() => {
     let cancelled = false;
@@ -306,6 +355,13 @@ function CategoricalFilterDialog({
         </div>
 
         <div className="dialog-body">
+          {!canFilter && (
+            <p className="dialog-note">
+              This data source does not implement the &quot;in&quot; or &quot;not in&quot;
+              filter, so this field cannot be filtered here. The values are still listed
+              for reference.
+            </p>
+          )}
           {loading && <p className="dialog-note">Loading values</p>}
           {!loading && visible.length === 0 && <p className="dialog-note">No matching values.</p>}
           <ul className="value-list">
@@ -330,10 +386,22 @@ function CategoricalFilterDialog({
 
         <footer className="dialog-footer">
           <span className="dialog-status">{selected.size} selected</span>
-          <button type="button" className="button-secondary" onClick={() => apply('notIn')} disabled={selected.size === 0}>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={() => apply('notIn')}
+            disabled={selected.size === 0 || !canExclude}
+            title={canExclude ? undefined : unsupportedOperatorTitle('notIn')}
+          >
             Exclude
           </button>
-          <button type="button" className="button-primary" onClick={() => apply('in')} disabled={selected.size === 0}>
+          <button
+            type="button"
+            className="button-primary"
+            onClick={() => apply('in')}
+            disabled={selected.size === 0 || !canInclude}
+            title={canInclude ? undefined : unsupportedOperatorTitle('in')}
+          >
             Include only
           </button>
         </footer>
@@ -345,14 +413,42 @@ function CategoricalFilterDialog({
 interface RangeFilterDialogProps {
   column: ColumnInfo;
   existing: Filter | null;
+  supportedOperators?: Filter['operator'][];
   onClose: () => void;
   onApply: (filter: Filter) => void;
 }
 
 /** Range plus top/bottom-N editor for numeric and temporal fields. */
-function RangeFilterDialog({ column, existing, onClose, onApply }: RangeFilterDialogProps) {
-  const [mode, setMode] = useState<'range' | 'top' | 'bottom' | 'notNull'>(
-    existing?.operator === 'top' ? 'top' : existing?.operator === 'bottom' ? 'bottom' : 'range',
+function RangeFilterDialog({
+  column,
+  existing,
+  supportedOperators,
+  onClose,
+  onApply,
+}: RangeFilterDialogProps) {
+  /*
+   * Only the modes this data source implements are offered.
+   *
+   * The Rust engine today accepts `in`/`equals`/`notEquals` and nothing else, so on
+   * a remote dataset none of these modes survives the filter and the dialog says so
+   * instead of showing controls whose Apply could only fail. A mode the current
+   * filter already uses is kept visible by `canApplyMode` below; the initial
+   * selection falls back to the first supported mode.
+   */
+  const modes = availableFilterModes(supportedOperators);
+  const available = (mode: FilterMode): boolean => modes.some((entry) => entry.mode === mode);
+
+  const initialMode: FilterMode =
+    existing?.operator === 'top'
+      ? 'top'
+      : existing?.operator === 'bottom'
+        ? 'bottom'
+        : existing?.operator === 'notNull'
+          ? 'notNull'
+          : 'range';
+
+  const [mode, setMode] = useState<FilterMode>(
+    available(initialMode) ? initialMode : modes[0]?.mode ?? 'range',
   );
   const [min, setMin] = useState(String(existing?.min ?? column.min ?? ''));
   const [max, setMax] = useState(String(existing?.max ?? column.max ?? ''));
@@ -399,70 +495,95 @@ function RangeFilterDialog({ column, existing, onClose, onApply }: RangeFilterDi
         </header>
 
         <div className="dialog-body">
-          <div className="field-group">
-            <label className="radio">
-              <input type="radio" checked={mode === 'range'} onChange={() => setMode('range')} />
-              <span>Range</span>
-            </label>
-            {mode === 'range' && (
-              <div className="range-inputs">
-                <label>
-                  <span>Min</span>
-                  <input
-                    type={column.dataType === 'date' ? 'date' : 'number'}
-                    value={min}
-                    onChange={(event) => setMin(event.target.value)}
-                  />
-                </label>
-                <label>
-                  <span>Max</span>
-                  <input
-                    type={column.dataType === 'date' ? 'date' : 'number'}
-                    value={max}
-                    onChange={(event) => setMax(event.target.value)}
-                  />
-                </label>
-              </div>
-            )}
-          </div>
+          {modes.length === 0 && (
+            <p className="dialog-note">
+              This data source implements no range, ranking or null filter, so numeric
+              and date fields cannot be filtered here. It reports only{' '}
+              {(supportedOperators ?? []).join(', ') || 'no filter operators'}, all of
+              which apply to categories.
+            </p>
+          )}
 
-          <div className="field-group">
-            <label className="radio">
-              <input type="radio" checked={mode === 'top'} onChange={() => setMode('top')} />
-              <span>Top N by this measure</span>
-            </label>
-            <label className="radio">
-              <input type="radio" checked={mode === 'bottom'} onChange={() => setMode('bottom')} />
-              <span>Bottom N by this measure</span>
-            </label>
-            {(mode === 'top' || mode === 'bottom') && (
-              <div className="range-inputs">
-                <label>
-                  <span>N</span>
-                  <input
-                    type="number"
-                    min="1"
-                    value={limit}
-                    onChange={(event) => setLimit(event.target.value)}
-                  />
-                </label>
-              </div>
-            )}
-          </div>
+          {available('range') && (
+            <div className="field-group">
+              <label className="radio">
+                <input type="radio" checked={mode === 'range'} onChange={() => setMode('range')} />
+                <span>Range</span>
+              </label>
+              {mode === 'range' && (
+                <div className="range-inputs">
+                  <label>
+                    <span>Min</span>
+                    <input
+                      type={column.dataType === 'date' ? 'date' : 'number'}
+                      value={min}
+                      onChange={(event) => setMin(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span>Max</span>
+                    <input
+                      type={column.dataType === 'date' ? 'date' : 'number'}
+                      value={max}
+                      onChange={(event) => setMax(event.target.value)}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
 
-          <div className="field-group">
-            <label className="radio">
-              <input type="radio" checked={mode === 'notNull'} onChange={() => setMode('notNull')} />
-              <span>Exclude null values</span>
-            </label>
-          </div>
+          {(available('top') || available('bottom')) && (
+            <div className="field-group">
+              {available('top') && (
+                <label className="radio">
+                  <input type="radio" checked={mode === 'top'} onChange={() => setMode('top')} />
+                  <span>Top N by this measure</span>
+                </label>
+              )}
+              {available('bottom') && (
+                <label className="radio">
+                  <input type="radio" checked={mode === 'bottom'} onChange={() => setMode('bottom')} />
+                  <span>Bottom N by this measure</span>
+                </label>
+              )}
+              {(mode === 'top' || mode === 'bottom') && (
+                <div className="range-inputs">
+                  <label>
+                    <span>N</span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={limit}
+                      onChange={(event) => setLimit(event.target.value)}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+
+          {available('notNull') && (
+            <div className="field-group">
+              <label className="radio">
+                <input type="radio" checked={mode === 'notNull'} onChange={() => setMode('notNull')} />
+                <span>Exclude null values</span>
+              </label>
+            </div>
+          )}
         </div>
 
         <footer className="dialog-footer">
           <button type="button" className="button-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button type="button" className="button-primary" onClick={apply}>
+          <button
+            type="button"
+            className="button-primary"
+            onClick={apply}
+            disabled={modes.length === 0}
+            title={modes.length === 0 ? 'This data source implements no filter this dialog can build.' : undefined}
+          >
             Apply
           </button>
         </footer>
