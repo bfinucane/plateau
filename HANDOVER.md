@@ -13,7 +13,7 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 31 total; **1 unpushed** (`origin/main` is at `47f5566`) |
+| Commits | 31 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 55 files in `src/`, ~21,300 lines |
 | Unit tests | **551 checks**, 16 suites, all passing |
 | Browser tests | **411 checks**, 15 harnesses, all passing |
@@ -316,8 +316,8 @@ and returns **`null` in every group**; the join harness passes 38/38 against it.
 
 Ordered by what I would do next.
 
-### 8.1 One commit unpushed
-`origin/main` is at `47f5566`; the wire follow-up commit is one ahead. `origin` is
+### 8.1 Nothing is unpushed
+`origin/main` matches `HEAD` at `7581189`; the wire follow-up was pushed. `origin` is
 https://github.com/bfinucane/plateau.git.
 
 Pushing from an agent command needs the **wider sandbox**: the confined one fails with
