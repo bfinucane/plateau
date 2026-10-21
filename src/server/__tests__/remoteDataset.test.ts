@@ -13,7 +13,14 @@ import type { AddressInfo } from 'node:net';
 import { PROTOCOL_VERSION, ProtocolError } from '../../core/protocol.js';
 import { HttpEngineTransport } from '../httpTransport.js';
 import { isMaterialized } from '../dataSource.js';
-import { createRemoteDataset, getDataset, listDatasets } from '../store.js';
+import {
+  CalculatedFieldError,
+  addCalculatedField,
+  createRemoteDataset,
+  getDataset,
+  listDatasets,
+  removeCalculatedField,
+} from '../store.js';
 
 let passed = 0;
 let failed = 0;
@@ -30,6 +37,16 @@ function check(name: string, condition: boolean, detail = ''): void {
 
 function section(title: string): void {
   console.log(`\n${title}`);
+}
+
+/** Runs `run` and returns the error it raised, or null when it succeeded. */
+async function rejected(run: () => Promise<unknown>): Promise<Error | null> {
+  try {
+    await run();
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
 }
 
 function startStub(
@@ -94,6 +111,9 @@ async function main(): Promise<void> {
     check('the source is marked as remote', dataset.meta.source === 'remote engine',
       dataset.meta.source);
     check('columns are described for the data pane', dataset.meta.columns.length === 4);
+    check('the metadata carries the engine capabilities',
+      (dataset.meta.capabilities?.aggregations ?? []).join(',') === capabilities.aggregations.join(','),
+      JSON.stringify(dataset.meta.capabilities?.aggregations));
 
     // Policy stays client-side: the engine claimed Postal Code is a measure, but
     // summable ZIP codes are meaningless and the client must not accept the hint.
@@ -179,6 +199,8 @@ async function main(): Promise<void> {
     check('asking for capabilities does surface the failure',
       capabilitiesError instanceof ProtocolError,
       String(capabilitiesError));
+    check('but registration carries "unknown", not "nothing works"',
+      dataset.meta.capabilities === null, JSON.stringify(dataset.meta.capabilities));
     server.close();
   }
 
@@ -231,6 +253,109 @@ async function main(): Promise<void> {
     check('measure labels are preserved for the renderer',
       JSON.stringify(result.measureLabels) === JSON.stringify(['SUM(Sales)']),
       JSON.stringify(result.measureLabels));
+
+    server.close();
+  }
+
+  section('Calculated fields on a remote dataset');
+
+  {
+    const { server, port } = await startStub((url) => {
+      if (url === '/v1/capabilities') return { body: capabilities };
+      if (url.includes('/query')) {
+        return {
+          body: {
+            columns: ['Region', 'Margin'],
+            columnMeta: [
+              { name: 'Region', kind: 'dimension', dataType: 'string', logicalType: 'string', semanticType: 'nominal', defaultAggregation: 'COUNT' },
+              { name: 'Margin', kind: 'measure', dataType: 'number', logicalType: 'real', semanticType: 'quantitative', defaultAggregation: 'SUM' },
+            ],
+            rows: [['East', 0.5]],
+            dimensionNames: ['Region'],
+            measureNames: ['Margin'],
+            measureLabels: ['Margin'],
+            domain: {},
+            elapsedMs: 1,
+            truncated: false,
+          },
+        };
+      }
+      return { body: catalog };
+    });
+
+    const transport = new HttpEngineTransport({ baseUrl: `http://127.0.0.1:${port}` });
+    const dataset = await createRemoteDataset({ name: 'Calc remote', dataset: 'sales', transport });
+
+    const before = await dataset.backend.schema();
+    check('no calculated column exists yet',
+      !before.some((column) => column.name === 'Margin'));
+
+    const column = await addCalculatedField(dataset, 'Margin', 'SUM([Sales]) / COUNTD([Region])');
+    check('an aggregate formula is registered', column.name === 'Margin', column.name);
+    check('it is a continuous measure', column.kind === 'measure' && column.role === 'continuous',
+      `${column.kind}/${column.role}`);
+    check('it is marked calculated and carries its formula',
+      column.isCalculated === true && column.formula === 'SUM([Sales]) / COUNTD([Region])',
+      String(column.formula));
+
+    const after = await dataset.backend.schema();
+    check('the field appears in the schema the UI lists',
+      after.some((entry) => entry.name === 'Margin'));
+    check('and in the dataset metadata',
+      dataset.meta.columns.some((entry) => entry.name === 'Margin'));
+
+    const rowLevel = await rejected(() =>
+      addCalculatedField(dataset, 'Unit Price', '[Sales] / 4'),
+    );
+    check('a row-level formula is refused', rowLevel instanceof CalculatedFieldError, String(rowLevel));
+    check('the refusal explains that the engine does not expose rows',
+      /row-level/i.test(rowLevel?.message ?? '') && /aggregate/i.test(rowLevel?.message ?? ''),
+      rowLevel?.message);
+
+    const lod = await rejected(() =>
+      addCalculatedField(dataset, 'RegionTotal', '{ FIXED [Region] : SUM([Sales]) }'),
+    );
+    check('an LOD formula is refused rather than silently nulled',
+      lod instanceof CalculatedFieldError, String(lod));
+    check('the LOD refusal says what does work',
+      /level-of-detail/i.test(lod?.message ?? '') && /aggregate/i.test(lod?.message ?? ''),
+      lod?.message);
+
+    const unknownReference = await rejected(() =>
+      addCalculatedField(dataset, 'Bad', 'SUM([Nope])'),
+    );
+    check('a formula referencing an unknown field is refused',
+      /Unknown field \[Nope\]/.test(unknownReference?.message ?? ''), unknownReference?.message);
+
+    const duplicate = await rejected(() =>
+      addCalculatedField(dataset, 'Margin', 'SUM([Sales])'),
+    );
+    check('a duplicate name is refused',
+      /already exists/i.test(duplicate?.message ?? ''), duplicate?.message);
+
+    const unsupported = await rejected(() =>
+      addCalculatedField(dataset, 'Median Sales', 'MEDIAN([Sales])'),
+    );
+    check('an aggregation the engine lacks is refused at creation, not at query time',
+      unsupported instanceof CalculatedFieldError &&
+        /MEDIAN/.test(unsupported?.message ?? ''),
+      unsupported?.message);
+
+    const queryable = await dataset.backend.query({
+      fields: [
+        { name: 'Region', kind: 'dimension' },
+        { name: 'Margin', kind: 'measure', aggregation: 'SUM' },
+      ],
+    });
+    check('a query naming the pushed-down field runs', queryable.table.rowCount === 1,
+      String(queryable.table.rowCount));
+
+    check('removal reports success', removeCalculatedField(dataset, 'Margin') === true);
+    const afterRemoval = await dataset.backend.schema();
+    check('the field is gone from the schema',
+      !afterRemoval.some((entry) => entry.name === 'Margin'));
+    check('and from the calculated-field list',
+      !dataset.calculated.has('Margin'));
 
     server.close();
   }

@@ -168,6 +168,30 @@ export const AGGREGATIONS: Aggregation[] = [
   'ATTR',
 ];
 
+/**
+ * The aggregations a pill may offer, given what the backend can compute.
+ *
+ * A remote engine reports which aggregations it implements; offering one it lacks
+ * produces a query that fails, so the menu is driven by that list. `undefined`
+ * means "nothing was reported" — a local dataset, or an engine without a
+ * capabilities endpoint — and everything is offered.
+ *
+ * A value the engine does NOT implement is kept at the top of the list when it is
+ * the one the encoding already has. Dropping it would render "Sum" in the select
+ * while the view was actually computed with something else: a control that lies
+ * about the current state is worse than one that admits a gap.
+ */
+export function availableAggregations(
+  supported: Aggregation[] | undefined,
+  current: Aggregation | undefined,
+): Aggregation[] {
+  // An empty list is treated as "nothing was reported", not as "nothing works":
+  // an engine that omits the field or sends [] is not claiming to implement none.
+  if (!supported || supported.length === 0) return AGGREGATIONS;
+  if (current && !supported.includes(current)) return [current, ...supported];
+  return supported;
+}
+
 let encodingCounter = 0;
 
 /** Creates a unique encoding for a field. */

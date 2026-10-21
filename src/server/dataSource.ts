@@ -217,6 +217,16 @@ export class RemoteBackend implements DatasetBackend {
   private formulas: Map<string, string> = new Map();
 
   /**
+   * Schema for each calculated field pushed down to the engine.
+   *
+   * The engine's catalog knows nothing about a field the CLIENT defined, so
+   * without this the data pane would not list it and a query naming it would be
+   * rejected as unknown before it ever left this process. The schema is supplied
+   * by the store, which owns the policy for what a calculated field looks like.
+   */
+  private calculatedColumns: Map<string, ColumnSchema> = new Map();
+
+  /**
    * The join this dataset attaches, if any.
    *
    * Kept on the backend rather than in the query spec because a join is a property
@@ -239,9 +249,16 @@ export class RemoteBackend implements DatasetBackend {
     this.transport = options.transport;
   }
 
-  /** Registers a calculated field so it can be sent to the engine. */
-  defineFormula(name: string, formula: string): void {
+  /**
+   * Registers a calculated field so it can be sent to the engine.
+   *
+   * `column` is the schema the UI should show for it. It is required for a
+   * pushed-down field: the engine's catalog will never report the column, so the
+   * client is the only place the data pane can learn of it.
+   */
+  defineFormula(name: string, formula: string, column?: ColumnSchema): void {
     this.formulas.set(name, formula);
+    if (column) this.calculatedColumns.set(name, { ...column, isCalculated: true, formula });
   }
 
   /** Sets or clears the join applied to every query on this dataset. */
@@ -294,6 +311,7 @@ export class RemoteBackend implements DatasetBackend {
   /** Forgets a calculated field. */
   forgetFormula(name: string): void {
     this.formulas.delete(name);
+    this.calculatedColumns.delete(name);
   }
 
   /** Names of every calculated field known to this backend. */
@@ -318,7 +336,11 @@ export class RemoteBackend implements DatasetBackend {
     const catalog = await this.ensureCatalog();
     const base = catalog.columns.map((column) => engineColumnToSchema(column));
 
-    if (!this.join) return base;
+    // Calculated fields defined on this dataset are unknown to the engine's
+    // catalog, so they are appended regardless of whether a join is attached.
+    const calculated = [...this.calculatedColumns.values()];
+
+    if (!this.join) return [...base, ...calculated];
 
     const existing = new Set(base.map((column) => column.name));
     // Captured before the map: `this.join` is re-read inside the closure below.
@@ -346,7 +368,7 @@ export class RemoteBackend implements DatasetBackend {
         joinedVia: join.using,
       }));
 
-    return [...base, ...attributes];
+    return [...base, ...attributes, ...this.calculatedColumns.values()];
   }
 
   async rowCount(): Promise<number> {
@@ -404,6 +426,19 @@ export class RemoteBackend implements DatasetBackend {
     }
     if (Object.keys(expressions).length > 0) request.expressions = expressions;
 
+    /*
+     * A calculated measure travels as `{ name, expr }`, not `{ name, aggregation }`.
+     *
+     * There is no column for the engine to aggregate — the formula already
+     * contains its own aggregates (SUM([Profit]) / SUM([Sales])). Sending an
+     * aggregation would have the engine look for a column named after the
+     * formula, which is exactly the "unknown field" the protocol warns about.
+     */
+    request.measures = request.measures.map((measure) => {
+      const expr = expressions[measure.name];
+      return expr ? { name: measure.name, expr } : measure;
+    });
+
     // A client-side LOD fallback is required, not optional: an engine that does
     // not implement LOD semantics must not be asked to evaluate one, because it
     // will return plausible wrong numbers rather than an error. Where the engine
@@ -422,6 +457,11 @@ export class RemoteBackend implements DatasetBackend {
   }
 
   async domain(field: string, limit = 1000): Promise<unknown[]> {
+    // A calculated field is not a column on the engine, so it has no enumerable
+    // domain — asking would come back as "unknown field". A filter over one is a
+    // measure-scoped range or top-N filter, which needs no value list.
+    if (this.formulas.has(field)) return [];
+
     // Numeric and temporal fields are filtered by RANGE, not enumerated. This is
     // a client-side convention rather than an engine limitation, so it is
     // enforced here rather than delegated — otherwise a remote backend happily

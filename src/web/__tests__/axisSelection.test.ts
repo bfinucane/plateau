@@ -11,7 +11,7 @@
  * until you read the axis.
  */
 
-import { pickCategoryEncoding, nestCategories } from '../chartSpec.js';
+import { pickCategoryEncoding, nestCategories, nestCategoryLevels } from '../chartSpec.js';
 import type { Encoding } from '../viewModel.js';
 
 let passed = 0;
@@ -153,6 +153,65 @@ section('A second dimension is nested into the axis label, not dropped');
   check('empty input gives no labels', nestCategories([], []).length === 0);
   const short = nestCategories(['A'], []);
   check('a missing inner value does not crash', short[0] === 'A\n   ', JSON.stringify(short[0]));
+}
+
+// ------------------------------------------- a third dimension nests too ---
+
+section('A third dimension is nested as a third level, not dropped');
+
+{
+  // The reported gap: two levels were folded into the label and a third was
+  // grouped by the query and never shown, so the axis repeated and the user could
+  // not tell the extra field had done anything.
+  const labels = nestCategoryLevels([
+    ['Consumer', 'Consumer', 'Corporate'],
+    ['Ava', 'Ava', 'Cara'],
+    ['Chairs', 'Tables', 'Phones'],
+  ]);
+
+  check('one label per row', labels.length === 3, String(labels.length));
+  check('three lines per label',
+    labels.every((label) => label.split('\n').length === 3), JSON.stringify(labels));
+  check('the outermost level has no indent',
+    labels[0].startsWith('Consumer\n'), JSON.stringify(labels[0]));
+  check('the second level is indented once',
+    labels[0].split('\n')[1] === '   Ava', JSON.stringify(labels[0]));
+  check('the third level is indented twice',
+    labels[0].split('\n')[2] === '      Chairs', JSON.stringify(labels[0]));
+}
+
+{
+  // Repeats are blanked per level, so a group reads as a group at any depth.
+  const labels = nestCategoryLevels([
+    ['Consumer', 'Consumer', 'Corporate'],
+    ['Ava', 'Ben', 'Cara'],
+    ['Chairs', 'Tables', 'Phones'],
+  ]);
+
+  check('a repeated outer value is blank on the second row',
+    labels[1].split('\n')[0] === '', JSON.stringify(labels[1]));
+  check('a NON-repeated middle value is still printed',
+    labels[1].split('\n')[1] === '   Ben', JSON.stringify(labels[1]));
+  check('the leaf survives on every row',
+    labels.map((label) => label.split('\n')[2].trim()).join(',') === 'Chairs,Tables,Phones',
+    JSON.stringify(labels));
+}
+
+{
+  // Two levels must produce exactly what the two-level helper did before the
+  // generalisation — the existing nested-axis behaviour is pinned elsewhere too.
+  const outer = ['Central', 'East', 'South'];
+  const inner = ['Ava Thompson', 'Ben Carter', 'Cara Diaz'];
+  check('two levels match the two-level helper',
+    JSON.stringify(nestCategoryLevels([outer, inner])) === JSON.stringify(nestCategories(outer, inner)),
+    JSON.stringify(nestCategoryLevels([outer, inner])));
+}
+
+{
+  // Uneven input must not crash: rows are driven by the longest level.
+  const labels = nestCategoryLevels([['A', 'B'], ['x']]);
+  check('a shorter level pads with blanks', labels.length === 2, JSON.stringify(labels));
+  check('the missing value is blank', labels[1].endsWith('   '), JSON.stringify(labels[1]));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

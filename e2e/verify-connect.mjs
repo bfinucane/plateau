@@ -40,6 +40,8 @@ function check(name, ok, detail = '') {
 /** Whether the stub advertises LOD support; flipped between phases. */
 let stubSupportsLod = false;
 let stubQueryCount = 0;
+/** The most recent query request the stub received, so the wire shape can be read. */
+let lastQueryBody = null;
 
 const catalog = {
   dataset: 'sales',
@@ -65,18 +67,77 @@ function capabilities() {
   };
 }
 
-function queryResponse() {
+/** Sample dimension members, enough to build a small cross-product. */
+const DIMENSIONS = {
+  Region: ['East', 'West', 'Central', 'South'],
+  Category: ['Furniture', 'Office', 'Technology'],
+};
+
+/** Collation label the real engine uses, e.g. SUM(Sales) -> "Sum of Sales". */
+function outputName(aggregation, field) {
+  const label = aggregation.charAt(0) + aggregation.slice(1).toLowerCase();
+  return `${label} of ${field}`;
+}
+
+/**
+ * Answers a query by echoing its shape back.
+ *
+ * The previous stub returned one canned response, which was fine while every
+ * query had the same shape. It is not fine for a pushed-down calculated field:
+ * that measure has no aggregation, and the column is named after the FIELD, so a
+ * canned response would have hidden a client bug in either naming direction.
+ */
+function queryResponse(body) {
+  const groupBy = body?.groupBy?.length ? body.groupBy : [{ name: 'Region' }];
+  const measures = body?.measures?.length
+    ? body.measures
+    : [{ name: 'Sales', aggregation: 'SUM' }];
+
+  let combos = [[]];
+  for (const dimension of groupBy) {
+    const values = DIMENSIONS[dimension.name] ?? [`${dimension.name} A`, `${dimension.name} B`];
+    combos = combos.flatMap((combo) => values.map((value) => [...combo, value]));
+  }
+
+  const measureColumns = measures.map((measure) =>
+    measure.expr ? measure.name : outputName(measure.aggregation ?? 'SUM', measure.name),
+  );
+  const measureLabels = measures.map((measure) =>
+    measure.expr ? measure.name : `${measure.aggregation ?? 'SUM'}(${measure.name})`,
+  );
+
+  const rows = combos.map((combo, rowIndex) => [
+    ...combo,
+    ...measures.map((_, measureIndex) => 1000 + rowIndex * 10 + measureIndex),
+  ]);
+
   return {
-    columns: ['Region', 'Sum of Sales'],
+    columns: [...groupBy.map((dimension) => dimension.name), ...measureColumns],
     columnMeta: [
-      { name: 'Region', kind: 'dimension', dataType: 'string', logicalType: 'string', semanticType: 'nominal', defaultAggregation: 'COUNT' },
-      { name: 'Sum of Sales', kind: 'measure', dataType: 'number', logicalType: 'real', semanticType: 'quantitative', defaultAggregation: 'SUM' },
+      ...groupBy.map((dimension) => ({
+        name: dimension.name,
+        kind: 'dimension',
+        dataType: 'string',
+        logicalType: 'string',
+        semanticType: 'nominal',
+        defaultAggregation: 'COUNT',
+      })),
+      ...measureColumns.map((name) => ({
+        name,
+        kind: 'measure',
+        dataType: 'number',
+        logicalType: 'real',
+        semanticType: 'quantitative',
+        defaultAggregation: 'SUM',
+      })),
     ],
-    rows: [['East', 314000], ['West', 251000], ['Central', 198000], ['South', 162000]],
-    dimensionNames: ['Region'],
-    measureNames: ['Sum of Sales'],
-    measureLabels: ['SUM(Sales)'],
-    domain: { Region: ['East', 'West', 'Central', 'South'] },
+    rows,
+    dimensionNames: groupBy.map((dimension) => dimension.name),
+    measureNames: measureColumns,
+    measureLabels,
+    domain: Object.fromEntries(
+      groupBy.map((dimension, index) => [dimension.name, [...new Set(rows.map((row) => row[index]))]]),
+    ),
     elapsedMs: 4,
     truncated: false,
   };
@@ -84,16 +145,30 @@ function queryResponse() {
 
 const engine = createServer((req, res) => {
   const url = req.url ?? '';
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  if (url === '/v1/capabilities') return res.end(JSON.stringify(capabilities()));
-  if (url.includes('/query')) {
-    stubQueryCount++;
-    return res.end(JSON.stringify(queryResponse()));
-  }
-  if (url.includes('/sample')) {
-    return res.end(JSON.stringify({ columns: ['Region'], rows: [['East']], rowCount: 5560 }));
-  }
-  res.end(JSON.stringify(catalog));
+  let raw = '';
+  req.on('data', (chunk) => {
+    raw += chunk;
+  });
+  req.on('end', () => {
+    let body = null;
+    try {
+      body = raw ? JSON.parse(raw) : null;
+    } catch {
+      body = null;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (url === '/v1/capabilities') return res.end(JSON.stringify(capabilities()));
+    if (url.includes('/query')) {
+      stubQueryCount++;
+      lastQueryBody = body;
+      return res.end(JSON.stringify(queryResponse(body)));
+    }
+    if (url.includes('/sample')) {
+      return res.end(JSON.stringify({ columns: ['Region'], rows: [['East']], rowCount: 5560 }));
+    }
+    res.end(JSON.stringify(catalog));
+  });
 });
 
 await new Promise((r) => engine.listen(ENGINE_PORT, '127.0.0.1', r));
@@ -323,6 +398,181 @@ try {
   );
   check('a chart rendered from remote data', /mark/.test(marks) && hasCanvas, marks.trim());
   await screenshot('34-connect-chart.png');
+
+  // ------------------------------------- the menu follows the capabilities
+  //
+  // The stub implements SUM, AVG, MIN, MAX, COUNT and COUNTD — not MEDIAN, STDEV,
+  // VAR or ATTR. The connect dialog already names those; the pill menu used to
+  // ignore the report and offer them anyway, so choosing one failed at query time.
+  console.log('\nThe pill menu offers only what the engine implements');
+
+  const openSalesPill = () => evaluate(`(() => {
+    const pill = [...document.querySelectorAll('.shelf .pill')]
+      .find(p => (p.querySelector('.pill-label')?.textContent ?? '').includes('(Sales)'));
+    if (!pill) return 'missing';
+    pill.click();
+    return 'ok';
+  })()`);
+
+  check('the Sales pill opens its editor', (await openSalesPill()) === 'ok');
+  await sleep(500);
+
+  const aggregationOptions = await evaluate(`(() => {
+    const editor = document.querySelector('.pill-editor');
+    if (!editor) return null;
+    const select = [...editor.querySelectorAll('select')]
+      .find(s => [...s.options].some(o => o.value === 'SUM'));
+    return select ? [...select.options].map(o => o.value) : null;
+  })()`);
+  console.log('  aggregation options:', JSON.stringify(aggregationOptions));
+
+  check('the menu lists the reported aggregations',
+    Array.isArray(aggregationOptions) &&
+      ['SUM', 'AVG', 'MIN', 'MAX', 'COUNT', 'COUNTD'].every((a) => aggregationOptions.includes(a)),
+    JSON.stringify(aggregationOptions));
+  check('an aggregation the engine lacks is NOT offered',
+    Array.isArray(aggregationOptions) && !aggregationOptions.includes('MEDIAN'),
+    JSON.stringify(aggregationOptions));
+  check('nor are STDEV, VAR or ATTR offered',
+    Array.isArray(aggregationOptions) &&
+      !aggregationOptions.includes('STDEV') &&
+      !aggregationOptions.includes('VAR') &&
+      !aggregationOptions.includes('ATTR'),
+    JSON.stringify(aggregationOptions));
+
+  // Close the editor by toggling the same pill.
+  await openSalesPill();
+  await sleep(300);
+
+  // ------------------------- a calculated field is pushed down to the engine
+  console.log('\nA calculated field is pushed down to the engine');
+
+  const setDialogName = (value) => evaluate(`(() => {
+    const el = document.querySelector('.calc-body .calc-main input[type=text]');
+    if (!el) return 'no input';
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, ${JSON.stringify(value)});
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return 'ok';
+  })()`);
+
+  const setDialogFormula = (value) => evaluate(`(() => {
+    const el = document.getElementById('calc-formula');
+    if (!el) return 'no input';
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(el, ${JSON.stringify(value)});
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return 'ok';
+  })()`);
+
+  const calcDialogOpen = () => evaluate(`Boolean(document.querySelector('.calc-body'))`);
+
+  check('the calculated-field dialog opens', (await clickButton('New calculated field')) === 'ok');
+  await sleep(700);
+  check('the dialog is showing', await calcDialogOpen());
+
+  check('a name was entered', (await setDialogName('Margin')) === 'ok');
+  check('an aggregate formula was entered',
+    (await setDialogFormula('SUM([Profit]) / SUM([Sales])')) === 'ok');
+  await sleep(300);
+  check('Create field is pressed', (await clickButton('Create field')) === 'ok');
+  await sleep(2500);
+
+  check('the dialog closes when the engine accepts the field', !(await calcDialogOpen()));
+
+  const remoteFields = await evaluate(
+    `[...document.querySelectorAll('.field-row .field-name')].map(e => e.textContent)`,
+  );
+  console.log('  remote fields:', JSON.stringify(remoteFields));
+  check('the pushed-down field appears in the data pane',
+    remoteFields.includes('Margin'), JSON.stringify(remoteFields));
+
+  const fieldRow = await evaluate(`(() => {
+    const row = [...document.querySelectorAll('.field-row')]
+      .find(r => r.querySelector('.field-name')?.textContent.trim() === 'Margin');
+    if (!row) return 'missing';
+    row.click();
+    return 'ok';
+  })()`);
+  check('the pushed-down field can be placed on a shelf', fieldRow === 'ok');
+  await sleep(2800);
+
+  const pushed = lastQueryBody ?? {};
+  const pushedMeasure = (pushed.measures ?? []).find((measure) => measure.name === 'Margin');
+  console.log('  measure sent:', JSON.stringify(pushedMeasure));
+  console.log('  expressions sent:', JSON.stringify(Object.keys(pushed.expressions ?? {})));
+
+  check('the engine received the formula as an expression, not an aggregation',
+    Boolean(pushedMeasure?.expr) && pushedMeasure?.aggregation === undefined,
+    JSON.stringify(pushedMeasure));
+  check('the AST travels in the expressions map',
+    Boolean(pushed.expressions?.Margin), JSON.stringify(Object.keys(pushed.expressions ?? {})));
+  check('the AST names the fields it aggregates',
+    JSON.stringify(pushed.expressions?.Margin ?? {}).includes('Profit'),
+    JSON.stringify(pushed.expressions?.Margin));
+
+  const pushedCanvas = await evaluate(`Boolean(document.querySelector('.chart-canvas canvas'))`);
+  const pushedError = await evaluate(`document.querySelector('.view-error')?.innerText ?? ''`);
+  check('the view renders using the pushed-down field',
+    pushedCanvas && pushedError === '', pushedError.slice(0, 120));
+  await screenshot('35-connect-calculated.png');
+
+  // ----------------------------------- a row-level formula is refused, clearly
+  console.log('\nA row-level formula on a remote dataset is refused with a reason');
+
+  await clickButton('New calculated field');
+  await sleep(700);
+  await setDialogName('Unit Price');
+  await setDialogFormula('[Sales] / 4');
+  await sleep(300);
+  await clickButton('Create field');
+  await sleep(1800);
+
+  const rowLevelError = await evaluate(
+    `[...document.querySelectorAll('.calc-error')].map(e => e.textContent).join(' ')`,
+  );
+  console.log('  refusal:', JSON.stringify(rowLevelError));
+  check('the refusal is reported in the dialog', /row-level/i.test(rowLevelError), rowLevelError);
+  check('it says aggregate formulas still work', /aggregate/i.test(rowLevelError), rowLevelError);
+  check('the dialog stays open so the formula can be fixed', await calcDialogOpen());
+
+  await clickButton('Cancel');
+  await sleep(500);
+  check('Cancel closes the dialog', !(await calcDialogOpen()));
+
+  // ---------------------- unknown field names are refused, not answered with nulls
+  console.log('\nAn unknown field name is refused by the API');
+
+  const datasetMetadata = await evaluate(`(async () => {
+    const id = document.querySelector('#dataset-select')?.value;
+    const response = await fetch('/api/datasets/' + id);
+    return (await response.json()).dataset;
+  })()`);
+  check('the dataset metadata carries the engine capabilities',
+    Array.isArray(datasetMetadata.capabilities?.aggregations) &&
+      datasetMetadata.capabilities.aggregations.includes('COUNTD'),
+    JSON.stringify(datasetMetadata.capabilities?.aggregations));
+
+  const unknownField = await evaluate(`(async () => {
+    const datasetId = document.querySelector('#dataset-select')?.value;
+    const response = await fetch('/api/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        datasetId,
+        fields: [
+          { name: 'Region', kind: 'dimension' },
+          { name: 'NoSuchField', kind: 'measure', aggregation: 'SUM' },
+        ],
+      }),
+    });
+    return { status: response.status, body: await response.json() };
+  })()`);
+  console.log('  unknown-field response:', JSON.stringify(unknownField));
+  check('the API answers 400 rather than a result', unknownField.status === 400,
+    String(unknownField.status));
+  check('the error names the unknown field',
+    /NoSuchField/.test(unknownField.body?.error ?? ''), JSON.stringify(unknownField.body));
 
   // ------------------------------------- LOD support is believed and reported
   console.log('\nAn engine that does claim LOD support');

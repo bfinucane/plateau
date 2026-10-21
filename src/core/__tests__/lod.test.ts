@@ -98,12 +98,13 @@ function makeDataset(table: DataTable, id: string): Dataset {
 }
 
 /** Registers a calculated field and returns the updated table. */
-function withField(table: DataTable, name: string, formula: string): DataTable {
+async function withField(table: DataTable, name: string, formula: string): Promise<DataTable> {
   // A dataset is now a backend plus bookkeeping, so build the real shape rather
   // than a fake: `addCalculatedField` reads the schema from the backend and
-  // appends the new column through it.
+  // appends the new column through it. It is async because a remote backend's
+  // schema is only available from its engine.
   const dataset = makeDataset(table, `test-${name}`);
-  addCalculatedField(dataset, name, formula);
+  await addCalculatedField(dataset, name, formula);
   return (dataset.backend as LocalBackend).table();
 }
 
@@ -270,7 +271,7 @@ section('LOD through the query engine');
 
 {
   let table = buildFixture();
-  table = withField(table, 'Region Total', '{ FIXED [Region] : SUM([Sales]) }');
+  table = await withField(table, 'Region Total', '{ FIXED [Region] : SUM([Sales]) }');
 
   const result = executeQuery(table, {
     fields: [
@@ -303,7 +304,7 @@ section('LOD through the query engine');
   // A FIXED LOD used directly as a measure must return the per-region value,
   // not a sum of rows.
   let table = buildFixture();
-  table = withField(table, 'Region Max', '{ FIXED [Region] : MAX([Sales]) }');
+  table = await withField(table, 'Region Max', '{ FIXED [Region] : MAX([Sales]) }');
 
   const result = executeQuery(table, {
     fields: [
@@ -333,7 +334,7 @@ section('Filter ordering (the LOD semantics that matter)');
   // Filtering Category to A must NOT change a FIXED LOD, because FIXED is
   // computed before dimension filters run.
   let table = buildFixture();
-  table = withField(table, 'FixedRegion', '{ FIXED [Region] : SUM([Sales]) }');
+  table = await withField(table, 'FixedRegion', '{ FIXED [Region] : SUM([Sales]) }');
 
   const unfiltered = executeQuery(table, {
     fields: [{ name: 'Region', kind: 'dimension' }, { name: 'FixedRegion', kind: 'measure' }],
@@ -357,7 +358,7 @@ section('Filter ordering (the LOD semantics that matter)');
 {
   // An INCLUDE LOD is computed after dimension filters, so it DOES change.
   let table = buildFixture();
-  table = withField(table, 'InclCustomer', '{ INCLUDE [Customer] : SUM([Sales]) }');
+  table = await withField(table, 'InclCustomer', '{ INCLUDE [Customer] : SUM([Sales]) }');
 
   const filtered = executeQuery(table, {
     fields: [
@@ -383,8 +384,8 @@ section('Filter ordering (the LOD semantics that matter)');
   // LOD would count each region's total once per contributing row, which is
   // exactly the trap this feature exists to make visible.
   let table = buildFixture();
-  table = withField(table, 'RegionTotal', '{ FIXED [Region] : SUM([Sales]) }');
-  table = withField(table, 'RegionShare', 'SUM([Sales]) / MAX([RegionTotal])');
+  table = await withField(table, 'RegionTotal', '{ FIXED [Region] : SUM([Sales]) }');
+  table = await withField(table, 'RegionShare', 'SUM([Sales]) / MAX([RegionTotal])');
 
   const result = executeQuery(table, {
     fields: [
@@ -404,8 +405,8 @@ section('Filter ordering (the LOD semantics that matter)');
 {
   // And the genuinely useful variant: share of the grand total.
   let table = buildFixture();
-  table = withField(table, 'GrandTotal', '{ FIXED : SUM([Sales]) }');
-  table = withField(table, 'GrandShare', 'SUM([Sales]) / MAX([GrandTotal])');
+  table = await withField(table, 'GrandTotal', '{ FIXED : SUM([Sales]) }');
+  table = await withField(table, 'GrandShare', 'SUM([Sales]) / MAX([GrandTotal])');
 
   const result = executeQuery(table, {
     fields: [
@@ -433,7 +434,7 @@ section('Filter ordering (the LOD semantics that matter)');
   // idempotent: the result is the region total. Grouping by Category instead
   // spans several regions, so the region totals are added up.
   let table = buildFixture();
-  table = withField(table, 'RegionTotal', '{ FIXED [Region] : SUM([Sales]) }');
+  table = await withField(table, 'RegionTotal', '{ FIXED [Region] : SUM([Sales]) }');
 
   const byRegion = executeQuery(table, {
     fields: [
@@ -464,7 +465,7 @@ section('Filter ordering (the LOD semantics that matter)');
 
   // Aggregating the LOD column with MAX must also recover the region total,
   // which exercises the field-reference path rather than the bare-LOD path.
-  table = withField(table, 'RegionTotalMax', 'MAX([RegionTotal])');
+  table = await withField(table, 'RegionTotalMax', 'MAX([RegionTotal])');
   const maxed = executeQuery(table, {
     fields: [
       { name: 'Region', kind: 'dimension' },
@@ -496,8 +497,8 @@ section('An aggregate wrapping an LOD honours its function');
   //   North customers 40, 30, 35, 25  ->  MAX 40,  SUM 130
   //   West  customers 18, 12, 11, 9   ->  MAX 18,  SUM  50
   let table = buildFixture();
-  table = withField(table, 'MaxCustomer', 'MAX({ INCLUDE [Customer] : SUM([Sales]) })');
-  table = withField(table, 'SumCustomer', 'SUM({ INCLUDE [Customer] : SUM([Sales]) })');
+  table = await withField(table, 'MaxCustomer', 'MAX({ INCLUDE [Customer] : SUM([Sales]) })');
+  table = await withField(table, 'SumCustomer', 'SUM({ INCLUDE [Customer] : SUM([Sales]) })');
 
   const result = executeQuery(table, {
     fields: [
@@ -542,7 +543,7 @@ section('Calculated field classification');
   const table = buildFixture();
   const dataset = makeDataset(table, 'classify');
 
-  const column = addCalculatedField(dataset, 'RegionTotal', '{ FIXED [Region] : SUM([Sales]) }');
+  const column = await addCalculatedField(dataset, 'RegionTotal', '{ FIXED [Region] : SUM([Sales]) }');
   check('an LOD field is classified as a measure', column.kind === 'measure', column.kind);
   check('an LOD field is numeric', column.dataType === 'number', column.dataType);
   check('the formula is preserved for later planning', column.formula?.includes('FIXED') === true);

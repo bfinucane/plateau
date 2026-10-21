@@ -5,8 +5,8 @@
 import { useState } from 'react';
 import { getDragPayload, hasDragPayload, setDragPayload, type DragPayload } from '../dnd';
 import {
-  AGGREGATIONS,
   AGGREGATION_LABELS,
+  availableAggregations,
   pillLabel,
   type Encoding,
   type ShelfId,
@@ -23,6 +23,13 @@ interface PillProps {
   index: number;
   /** Dimensions available to partition a table calculation by. */
   partitionOptions?: string[];
+  /**
+   * Aggregations the active data source implements, when it said.
+   *
+   * Omitted means "no negotiation": a local dataset, or an engine that did not
+   * report capabilities. Everything is offered then.
+   */
+  aggregations?: Aggregation[];
 }
 
 const DATE_PARTS: { value: NonNullable<Encoding['datePart']>; label: string }[] = [
@@ -41,6 +48,7 @@ export function Pill({
   onDropBefore,
   index,
   partitionOptions = [],
+  aggregations,
 }: PillProps) {
   const [editing, setEditing] = useState(false);
 
@@ -48,6 +56,7 @@ export function Pill({
   // Discrete dimensions are blue, continuous measures are green -- Tableau's
   // colour convention, which users read without thinking.
   const toneClass = isMeasure ? 'pill-measure' : 'pill-dimension';
+  const aggregationChoices = availableAggregations(aggregations, encoding.aggregation);
 
   return (
     <div className="pill-wrap">
@@ -96,9 +105,18 @@ export function Pill({
                   onUpdate({ aggregation: event.target.value as Aggregation })
                 }
               >
-                {AGGREGATIONS.map((agg) => (
-                  <option key={agg} value={agg}>
+                {aggregationChoices.map((agg) => (
+                  <option
+                    key={agg}
+                    value={agg}
+                    title={
+                      aggregations && !aggregations.includes(agg)
+                        ? 'This data source does not implement it, so the query will fail'
+                        : undefined
+                    }
+                  >
                     {AGGREGATION_LABELS[agg]}
+                    {aggregations && !aggregations.includes(agg) ? ' (unsupported)' : ''}
                   </option>
                 ))}
               </select>
@@ -227,6 +245,8 @@ interface ShelfProps {
   onUpdate: (encodingId: string, patch: Partial<Encoding>) => void;
   /** Dimensions a table calculation may be partitioned by. */
   partitionOptions?: string[];
+  /** Aggregations the active data source implements, when it said. */
+  aggregations?: Aggregation[];
 }
 
 export function Shelf({
@@ -238,6 +258,7 @@ export function Shelf({
   onRemove,
   onUpdate,
   partitionOptions,
+  aggregations,
 }: ShelfProps) {
   const [hover, setHover] = useState(false);
 
@@ -272,6 +293,7 @@ export function Shelf({
             onUpdate={(patch) => onUpdate(encoding.id, patch)}
             onDropBefore={(payload, at) => onDropPayload(id, payload, at)}
             partitionOptions={partitionOptions}
+            aggregations={aggregations}
           />
         ))}
       </div>

@@ -5,9 +5,16 @@
  * workspace in the middle, and an inspector on the right.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CellValue, ColumnInfo, Filter } from './api';
-import { fetchPreview, fetchWorkbook, saveWorkbook, uploadDataset } from './api';
+import {
+  fetchPreview,
+  fetchWorkbook,
+  fetchWorkbookBackup,
+  restoreWorkbook,
+  saveWorkbook,
+  uploadDataset,
+} from './api';
 import type { DragPayload } from './dnd';
 import { useAppState } from './useAppState';
 import {
@@ -66,6 +73,51 @@ export function App() {
   const [status, setStatus] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  /**
+   * Shows a status line, replacing whatever was there.
+   *
+   * There is one clear timer for the whole line, and setting a message always
+   * clears the previous one. Without that, an earlier message's timer clears a
+   * message that arrived after it — a restore reported "Restored the previous
+   * workbook generation" and the line went blank a second later because the save
+   * before it had scheduled its own cleanup.
+   */
+  const statusTimer = useRef<number | undefined>(undefined);
+
+  /** Cancels any pending clear, so an untimed message cannot be wiped out. */
+  const stopStatusTimer = useCallback(() => {
+    if (statusTimer.current !== undefined) {
+      window.clearTimeout(statusTimer.current);
+      statusTimer.current = undefined;
+    }
+  }, []);
+
+  /** A status line that stays until another message replaces it. */
+  const setStatusNow = useCallback(
+    (message: string) => {
+      stopStatusTimer();
+      setStatus(message);
+    },
+    [stopStatusTimer],
+  );
+
+  /** A status line that clears itself, taking ownership of the timer. */
+  const showStatus = useCallback(
+    (message: string, timeoutMs = 3000) => {
+      stopStatusTimer();
+      setStatus(message);
+      statusTimer.current = window.setTimeout(() => {
+        setStatus(null);
+        statusTimer.current = undefined;
+      }, timeoutMs);
+    },
+    [stopStatusTimer],
+  );
+
+  useEffect(() => {
+    return () => stopStatusTimer();
+  }, [stopStatusTimer]);
+
   const columns = state.dataset?.columns ?? [];
 
   // --- restore / persist the workbook -----------------------------------
@@ -80,6 +132,53 @@ export function App() {
    */
   const [restoreOk, setRestoreOk] = useState(false);
 
+  /** True when the server holds a previous generation, so restoring is possible. */
+  const [backupAvailable, setBackupAvailable] = useState(false);
+
+  /**
+   * Loads a workbook read from the server.
+   *
+   * Workbooks saved before dashboards existed lack these fields; filling in
+   * defaults rather than rendering an undefined dashboard list is why this is a
+   * function and not three lines in the mount effect — a restore has to apply the
+   * same normalisation as a start-up load.
+   */
+  const applySavedWorkbook = useCallback(
+    (saved: Partial<WorkbookState> | null) => {
+      if (!saved?.sheets?.length) return;
+      dispatch({
+        type: 'workbook/loaded',
+        workbook: {
+          sheets: saved.sheets,
+          activeSheetId: saved.activeSheetId ?? saved.sheets[0].id,
+          dashboards: saved.dashboards ?? [],
+          view: saved.view === 'dashboard' && (saved.dashboards?.length ?? 0) > 0 ? 'dashboard' : 'sheet',
+          activeDashboardId: saved.activeDashboardId ?? saved.dashboards?.[0]?.id ?? null,
+        },
+      });
+    },
+    [dispatch],
+  );
+
+  /**
+   * Re-reads whether a previous generation exists.
+   *
+   * Kept in state rather than fetched on click so the button can say honestly
+   * whether there is anything to restore: a control that only ever fails is worse
+   * than no control.
+   */
+  const refreshBackup = useCallback(async () => {
+    try {
+      setBackupAvailable(Boolean(await fetchWorkbookBackup<unknown>()));
+    } catch {
+      setBackupAvailable(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshBackup();
+  }, [refreshBackup]);
+
   useEffect(() => {
     let cancelled = false;
     fetchWorkbook<Partial<WorkbookState>>()
@@ -88,19 +187,7 @@ export function App() {
         // The read succeeded. Whether a workbook existed or not, saving over it is
         // now safe: there is nothing unseen to lose.
         setRestoreOk(true);
-        if (!saved?.sheets?.length) return;
-        // Workbooks saved before dashboards existed lack these fields; fill in
-        // defaults rather than rendering an undefined dashboard list.
-        dispatch({
-          type: 'workbook/loaded',
-          workbook: {
-            sheets: saved.sheets,
-            activeSheetId: saved.activeSheetId ?? saved.sheets[0].id,
-            dashboards: saved.dashboards ?? [],
-            view: saved.view === 'dashboard' && (saved.dashboards?.length ?? 0) > 0 ? 'dashboard' : 'sheet',
-            activeDashboardId: saved.activeDashboardId ?? saved.dashboards?.[0]?.id ?? null,
-          },
-        });
+        applySavedWorkbook(saved);
       })
       .catch(() => {
         // A failed read leaves autosave DISARMED: a server that is down must not
@@ -116,12 +203,30 @@ export function App() {
   const saveNow = useCallback(async () => {
     try {
       await saveWorkbook(state.workbook);
-      setStatus('Workbook saved to data/workbook.json');
-      setTimeout(() => setStatus(null), 3000);
+      showStatus('Workbook saved to data/workbook.json');
+      // The save just rotated the previous generation into place.
+      void refreshBackup();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Save failed');
+      setStatusNow(error instanceof Error ? error.message : 'Save failed');
     }
-  }, [state.workbook]);
+  }, [state.workbook, refreshBackup, showStatus, setStatusNow]);
+
+  /**
+   * Swaps the workbook for the previous generation.
+   *
+   * Deliberately unconfirmed: the server rotates the CURRENT file into the backup
+   * position, so a restore is itself undoable and a prompt would be noise.
+   */
+  const restoreBackupNow = useCallback(async () => {
+    try {
+      await restoreWorkbook();
+      applySavedWorkbook(await fetchWorkbook<Partial<WorkbookState>>());
+      showStatus('Restored the previous workbook generation', 4000);
+      await refreshBackup();
+    } catch (error) {
+      setStatusNow(error instanceof Error ? error.message : 'Restore failed');
+    }
+  }, [applySavedWorkbook, refreshBackup, showStatus, setStatusNow]);
 
   // Debounced autosave so dragging pills does not hammer the disk.
   useEffect(() => {
@@ -263,16 +368,16 @@ export function App() {
   const handleUpload = useCallback(
     async (file: File) => {
       try {
-        setStatus(`Uploading ${file.name}`);
+        setStatusNow(`Uploading ${file.name}`);
         const dataset = await uploadDataset(file);
         await app.refreshDatasets();
         await app.selectDataset(dataset.id);
-        setStatus(`Loaded ${dataset.name} (${dataset.rowCount.toLocaleString()} rows)`);
+        setStatusNow(`Loaded ${dataset.name} (${dataset.rowCount.toLocaleString()} rows)`);
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : 'Upload failed');
+        setStatusNow(error instanceof Error ? error.message : 'Upload failed');
       }
     },
-    [app],
+    [app, setStatusNow],
   );
 
   const handleFileInput = useCallback(
@@ -289,12 +394,12 @@ export function App() {
       try {
         await app.refreshDatasets();
         await app.selectDataset(datasetId);
-        setStatus('Connected to the engine');
+        setStatusNow('Connected to the engine');
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : 'Could not open the dataset');
+        setStatusNow(error instanceof Error ? error.message : 'Could not open the dataset');
       }
     },
-    [app],
+    [app, setStatusNow],
   );
 
   const handleExport = useCallback(() => {
@@ -372,6 +477,19 @@ export function App() {
 
         <button type="button" className="button-secondary" onClick={saveNow}>
           Save workbook
+        </button>
+        <button
+          type="button"
+          className="button-secondary"
+          onClick={() => void restoreBackupNow()}
+          disabled={!backupAvailable}
+          title={
+            backupAvailable
+              ? 'Replace the workbook with the previous generation. The current one is kept as the next backup.'
+              : 'No previous generation to restore yet. Save the workbook twice and the earlier save becomes restorable.'
+          }
+        >
+          Restore backup
         </button>
         <button
           type="button"
@@ -514,6 +632,7 @@ export function App() {
               onRemove={handleRemoveEncoding}
               onUpdate={handleUpdateEncoding}
               partitionOptions={partitionOptions}
+              aggregations={app.allowedAggregations ?? undefined}
             />
             <Shelf
               id="rows"
@@ -524,6 +643,7 @@ export function App() {
               onRemove={handleRemoveEncoding}
               onUpdate={handleUpdateEncoding}
               partitionOptions={partitionOptions}
+              aggregations={app.allowedAggregations ?? undefined}
             />
           </div>
 
@@ -771,8 +891,7 @@ export function App() {
           onClose={() => setCalcDialog(null)}
           onSubmit={async (name, formula, kind) => {
             await app.createCalculated(name, formula, kind);
-            setStatus(`Created calculated field "${name}"`);
-            setTimeout(() => setStatus(null), 3000);
+            showStatus(`Created calculated field "${name}"`);
           }}
         />
       )}

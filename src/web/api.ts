@@ -54,6 +54,15 @@ export interface DatasetMeta {
   source: string;
   createdAt: string;
   columns: ColumnInfo[];
+  /**
+   * What a remote engine reports it can do.
+   *
+   * `null` for a local dataset (this process's own engine, so there is nothing to
+   * negotiate) and absent when a remote engine did not report capabilities at
+   * all. Either way the UI offers everything: it must not disable features on a
+   * guess.
+   */
+  capabilities?: EngineCapabilities | null;
 }
 
 export type CellValue = string | number | boolean | null;
@@ -336,4 +345,25 @@ export async function fetchWorkbook<T>(): Promise<T | null> {
 
 export async function saveWorkbook(workbook: unknown): Promise<void> {
   await request('/workbook', { method: 'PUT', body: JSON.stringify({ workbook }) });
+}
+
+/**
+ * The previous workbook generation, if the server is keeping one.
+ *
+ * Used to decide whether "Restore backup" is worth offering, so the button is not
+ * a control that can only fail.
+ */
+export async function fetchWorkbookBackup<T>(): Promise<T | null> {
+  const data = await request<{ backup: T | null }>('/workbook/backup');
+  return data.backup;
+}
+
+/**
+ * Swaps the current workbook for the previous generation.
+ *
+ * The server rotates the current file aside first, so a restore is itself
+ * undoable — which is why this needs no confirmation dialog.
+ */
+export async function restoreWorkbook(): Promise<void> {
+  await request('/workbook/restore', { method: 'POST' });
 }

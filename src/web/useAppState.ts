@@ -14,6 +14,7 @@ import {
   fetchDatasets,
   removeCalculatedField as apiRemoveCalculatedField,
   runQuery,
+  type Aggregation,
   type ColumnInfo,
   type DatasetMeta,
   type Filter,
@@ -646,6 +647,21 @@ export function useAppState() {
     return state.workbook.sheets.filter((s) => !placed.has(s.id));
   }, [activeDashboard, state.workbook.sheets]);
 
+  /**
+   * Aggregations the active data source can actually compute.
+   *
+   * `null` means "no negotiation": a local dataset, or a remote engine that did
+   * not report capabilities. The UI then offers everything, which is both the
+   * previous behaviour and the only honest answer when nothing was reported — a
+   * guess that disables a working feature is as wrong as one that offers a
+   * broken one.
+   */
+  const allowedAggregations = useMemo<Aggregation[] | null>(() => {
+    const reported = state.dataset?.capabilities?.aggregations;
+    if (!reported || reported.length === 0) return null;
+    return reported;
+  }, [state.dataset]);
+
   return {
     state,
     dispatch,
@@ -657,6 +673,7 @@ export function useAppState() {
     queryError,
     querying,
     retryQuery,
+    allowedAggregations,
     selectDataset,
     refreshDatasets,
     addFieldToShelf,

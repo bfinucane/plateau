@@ -144,8 +144,16 @@ descending already reads correctly.
 - View / Data tabs, and an inspector showing field statistics or the exact engine
   request that produced the view
 - **Dashboards** composing several worksheets on a shared grid (see below)
-- Multi-sheet workbook with debounced autosave to `data/workbook.json`
+- Multi-sheet workbook with debounced autosave to `data/workbook.json`, plus
+  **Restore backup**, which swaps the current file for the previous generation (the
+  server rotates the current one aside first, so a restore is itself undoable)
+- **Nested category axes**: every placed dimension gets its own indented line in the
+  axis label — ECharts has no nested category axis, so the hierarchy lives in the
+  label — which is what makes a third dimension visible instead of silently
+  grouping the query
 - CSV export of any result
+
+![Three dimensions nested into the category axis](docs/screenshots/51-three-dimensions.png)
 
 Each Marks-card channel does real work, and every mark type honours it:
 
@@ -241,22 +249,27 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 122 engine assertions (CSV, expressions, inference, queries, calcs, LODs)
+npm test         # 441 unit checks, 12 suites
 npm run typecheck
-npm run test:ui  # drives the real UI in headless Chrome; 25 end-to-end checks
+npm run test:ui  # drives the real UI in headless Chrome; 35 end-to-end checks
 ```
-`npm test` runs two suites: `engine.test.ts` (expressions, CSV, inference, query
-execution, calculated fields) and `lod.test.ts` (parsing, dimension resolution,
-filter ordering, and inline aggregates over LODs). LOD tests use a small
-hand-computable fixture so every expected number can be checked by arithmetic rather
-than by trusting the implementation.
+
+`npm test` runs twelve suites: `engine.test.ts` (expressions, CSV, inference, query
+execution, calculated fields), `lod.test.ts` (parsing, dimension resolution, filter
+ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport`,
+`remoteDataset`, `queryValidation` (unknown field names are refused), `workbookBackup`,
+`tableCalcs`, `split`, `axisSelection`, `aggregationMenu` and `join`. LOD and engine
+tests use a small hand-computable fixture so every expected number can be checked by
+arithmetic rather than by trusting the implementation.
 
 `npm run test:ui` needs the app running and Chrome installed; it writes screenshots
-to `.tmp/`. It asserts on rendering, not just HTTP status: that an ECharts canvas
-appears, that pills land on the right shelves, that filters change results, and that
-the browser console stays clean.
+to `.tmp/`. Inside the DSH sandbox it also needs the wider sandbox mode — headless
+Chrome cannot start without it (see [ENVIRONMENT.md](ENVIRONMENT.md)). It asserts on
+rendering, not just HTTP status: that an ECharts canvas appears, that pills land on
+the right shelves, that filters change results, that nested axis labels carry every
+placed dimension, and that the browser console stays clean.
 
-Two extra harnesses exist for verification the main suite does not cover:
+The other harnesses, each of which prints `N passed, M failed`:
 
 ```bash
 node e2e/verify-lod.mjs        # 14 checks: LOD fields through the real UI, incl. filter ordering
@@ -265,11 +278,16 @@ node e2e/verify-viz.mjs        # 27 checks: scatter axes, trend-line fit, heat m
 node e2e/verify-sort.mjs       # 15 checks: Sort control reaches the engine; axis orientation
 node e2e/verify-treemap.mjs    # 16 checks: treemap hierarchy, tooltip paths, Detail guard
 node e2e/verify-dashboard.mjs  # 29 checks: panels, independent queries, resize, swap, persistence
-node e2e/verify-connect.mjs    # 26 checks: connect dialog against a real stub engine
+node e2e/verify-connect.mjs    # 49 checks: connect dialog, capability menus, pushed-down fields
+node e2e/verify-tablecalc.mjs  # 14 checks: table calculations in the real UI
+node e2e/verify-split.mjs      # 16 checks: split panes
+node e2e/verify-measuresplit.mjs # 26 checks: one pane per measure
+node e2e/verify-retry.mjs      # 13 checks: a failed query is recoverable
+node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips without it
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **402 checks** — 232 unit, 170 browser.
+Total: **751 checks** — 441 unit, 310 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -277,7 +295,14 @@ Total: **402 checks** — 232 unit, 170 browser.
 | LOD | 45 | `FIXED`/`INCLUDE`/`EXCLUDE` parsing and filter ordering |
 | protocol | 56 | **local/remote parity**, wire shapes, LOD fallback, capability negotiation |
 | http transport | 35 | request encoding, error mapping, timeouts, doc/code consistency |
-| remote dataset | 19 | registration, failure modes, query through a registered engine |
+| remote dataset | 38 | registration, failure modes, queries, pushed-down calculated fields |
+| query validation | 17 | unknown field names are refused, local and remote |
+| table calculations | 51 | partitions, addressing, null handling |
+| workbook backup | 14 | rotation, restore, corruption |
+| split | 35 | partitioning, ordering, refusals |
+| axis selection | 34 | dimensions beat measures; nesting to any depth |
+| aggregation menus | 11 | capability-driven, never lying about the current value |
+| joins | 28 | join schema, gating, capability refusal |
 
 Both browser and transport suites run against the real thing — a loopback HTTP
 server and a real server process — rather than mocked fetches, so the parts that
@@ -286,6 +311,9 @@ themselves; see `e2e/harness.mjs`.
 
 `verify-viz.mjs` recomputes the least-squares fit independently in the browser and
 compares it to the one the renderer drew, so a broken trend line cannot pass.
+`verify-connect.mjs` runs a stub engine that answers a query by echoing its shape,
+so a pushed-down calculated measure arriving as a bare aggregation would fail the
+check rather than hide behind a canned response.
 
 ---
 
@@ -350,6 +378,12 @@ renderer locates a series without re-deriving the query.
 | `DELETE` | `/api/datasets/:id/calculated/:name` | Remove a calculated field |
 | `POST` | `/api/query` | Execute a query |
 | `GET`/`PUT` | `/api/workbook` | Load / save workbook state |
+| `GET` | `/api/workbook/backup` | Read the previous workbook generation |
+| `POST` | `/api/workbook/restore` | Swap the current workbook for that generation |
+
+A query naming a column the dataset does not have answers `400` with
+`{ "error": "Unknown field \"X\": …", "code": "unknown_field" }` rather than a
+column of nulls.
 
 Example query:
 
@@ -437,11 +471,31 @@ than can be materialised:
 An engine that cannot compute LOD semantics must not be trusted with them —
 `RemoteBackend` detects this from `capabilities()` and computes those formulas
 locally instead of silently returning wrong numbers. Aggregations the engine does
-not implement are advertised as absent so the UI can disable them rather than
-failing at query time.
+not implement are carried in the dataset metadata to the browser, so the pill menu
+offers only what the engine implements instead of failing at query time; a value
+already saved in a workbook that the engine lacks stays visible, labelled
+`(unsupported)`, so the menu never lies about the current view. Calculated fields
+pushed to a remote engine are checked against the same list at creation time — an
+aggregation the engine lacks is refused while the user is still looking at the
+formula, not on the first query.
 
 **What this deliberately does not do:** there is no SQL anywhere in this path, and
 no dialect handling. `specToRequest` is the only place the two vocabularies meet.
+
+### Calculated fields on a remote engine
+
+Only **aggregate-bearing** formulas can be pushed down. `SUM([Profit]) /
+SUM([Sales])` has no per-row value, so it travels as a parsed AST:
+
+```json
+"measures":   [{ "name": "Margin", "expr": { "type": "binary", "op": "/", … } }],
+"expressions": { "Margin": { "type": "binary", "op": "/", … } }
+```
+
+Row-level formulas and LOD expressions are refused with an explanation rather than
+registered as columns that would evaluate to null. That is the honest half of the
+feature: the engine does not expose its rows, so `[Profit] / [Sales]` has nowhere
+to run.
 
 ---
 
@@ -451,7 +505,10 @@ no dialect handling. `specToRequest` is the only place the two vocabularies meet
 
 - In-memory engine, 14 mark types, calculated fields, LOD expressions
 - Dashboards on a shared grid
-- 266 checks green (122 unit, 144 browser)
+- Native engine protocol: remote datasets, joins, and aggregate calculated fields
+  pushed down as ASTs
+- Workbook autosave with a restorable previous generation
+- 751 checks green (441 unit, 310 browser)
 
 ### Connecting to an engine
 
@@ -498,16 +555,25 @@ the engine is up and what it can actually do *before* committing:
   `COMPUTED BY PLATEAU` rather than looking identical to one that has it, and an
   approximate `COUNTD` is labelled as such.
 - **Unsupported aggregations are named up front**, so a missing feature reads as
-  "this engine does not do that" rather than "this is broken".
+  "this engine does not do that" rather than "this is broken" — and once connected
+  the pill editor offers only what the engine implements.
+- **Calculated fields work on the remote dataset** when the formula aggregates
+  (`SUM([Profit]) / SUM([Sales])`); row-level and LOD formulas are refused in the
+  dialog with the reason.
 - **Connect** registers the dataset, which then behaves like any other data
   source — fields in the pane, drag onto shelves, charts render.
 
 ![A chart built on a remote dataset](docs/screenshots/34-connect-chart.png)
 
+A calculated field on a remote dataset is pushed down as an AST rather than
+computed client-side:
+
+![A pushed-down calculated field on a remote dataset](docs/screenshots/52-connect-calculated.png)
+
 Everything upstream is unchanged: the query travels as a plan, the engine
 executes it, and the client renders what comes back.
 
-### In progress — remote backend
+### The remote backend, piece by piece
 
 - `src/core/protocol.ts` — versioned contract, validation, typed errors
 - `src/server/dataSource.ts` — `DataSource`, `LocalBackend`, `RemoteBackend`
@@ -525,6 +591,14 @@ executes it, and the client renders what comes back.
 - **Connect dialog** — probe, capability reporting, and registration in the UI.
   A remote dataset is then indistinguishable from a local one: drag fields, build
   charts, add it to a dashboard.
+- **Capability-driven menus** — the engine's aggregation list travels in the dataset
+  metadata to the browser and drives the pill editor, so an aggregation the engine
+  does not implement is not offered.
+- **Calculated fields pushed down** — an aggregate formula is registered on the
+  backend, listed in the data pane, and sent as `{ name, expr }` with the AST in
+  `expressions`. Row-level and LOD formulas are refused with the reason.
+- **Unknown field names refused** — `POST /api/query` names the offending field and
+  answers 400 instead of returning a column of nulls.
 - 122 new checks across the protocol, transport, registration and dialog paths.
   The load bearing one is **local/remote parity**: the same query through both
   backends is compared value for value, so the protocol cannot silently lose
@@ -532,27 +606,34 @@ executes it, and the client renders what comes back.
 
 ### Next
 
-1. **Push row-level calculated fields down** to the engine, which is what the
-   protocol's expression AST exists for. Until then a remote dataset refuses them
-   with a typed error rather than registering a column that evaluates to null.
-   `RemoteBackend.defineFormula` is the hook; nothing calls it yet.
-2. **Capability-driven field menus** — unsupported aggregations are reported in
-   the dialog but not yet removed from the pill editor.
-3. **Then** the higher-value analytics gaps: joins, then table calculations.
-   Ranked in *Known limitations*.
+1. **Row-level and LOD calculated fields on a remote engine.** An aggregate formula
+   has a value per group; `[Profit] / [Sales]` has one per source row, and the engine
+   exposes no rows. What it needs is an engine-side row-expression evaluation, or
+   `sample()` plus client-side materialisation with the formula appended as a real
+   column (the local path already does the second half). Until then both are refused
+   with a typed error rather than registered as columns that evaluate to null.
+2. **The rest of `capabilities()`.** `filterOperators` and `expressionFunctions` are
+   reported but not yet used to gate the filter menu or to validate a pushed-down
+   formula, so an unsupported filter or function still fails at query time.
+3. **Then** the higher-value analytics gaps: sets and groups, bins, reference lines,
+   forecasting. Ranked in *Known limitations*.
 
 ### A note on calculated fields
 
 They are a client concept — the formula is authored in Plateau's syntax and the
-workbook owns it — so the store has two strategies:
+workbook owns it — so the store chooses a strategy per backend:
 
 - **Row-level** formulas are evaluated per row and appended as a real column.
-- **Aggregate-bearing** formulas, LODs included, cannot exist per row. They are
-  still appended as a column, deliberately holding nulls, because the planner
-  discovers LODs by walking the table schema for `isCalculated` entries carrying a
-  formula. Registering them as metadata only left `scanLodDependencies` unable to
-  resolve a reference like `[RegionTotal]`, and the LOD silently evaluated to
-  null — a real bug hit during the store migration and caught by the LOD suite.
+- **Aggregate-bearing** formulas, LODs included, cannot exist per row. On a local
+  dataset they are still appended as a column, deliberately holding nulls, because
+  the planner discovers LODs by walking the table schema for `isCalculated` entries
+  carrying a formula. Registering them as metadata only left `scanLodDependencies`
+  unable to resolve a reference like `[RegionTotal]`, and the LOD silently evaluated
+  to null — a real bug hit during the store migration and caught by the LOD suite.
+- **Pushed down** (remote backend) — only aggregate-bearing formulas qualify. The
+  AST travels in the query's `expressions` map, a measure naming the field carries
+  `expr` instead of `aggregation`, and the schema entry is synthesised client-side
+  because the engine's catalog cannot know about a field the client defined.
 
 ---
 
@@ -560,7 +641,15 @@ workbook owns it — so the store has two strategies:
 
 Deliberately out of scope for this build, and the honest next steps:
 
-- **No joins or data blends.** One dataset per view.
+- **Joins are structural, not arbitrary.** One join per dataset, LEFT only, keyed on a
+  conformed dimension; no arbitrary predicates, no data blending across sources, no
+  cross-source calculation.
+- **Calculated fields on a remote engine are aggregate-only.** Row-level and LOD
+  formulas are refused with an explanation; the engine exposes no rows for them to
+  run against.
+- **Nesting beyond the category axis stops at two levels.** Bar-like marks nest every
+  placed dimension into the axis label; line/area, heat map, treemap and text still
+  show at most two, and the extra field only groups the query.
 - **Dashboards use a snapping grid, not a free-form canvas.** Panels carry column and
   row spans; there is no pixel positioning, overlapping, floating text, or
   cross-panel filtering. Dragging a header to swap positions is best-effort — the

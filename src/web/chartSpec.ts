@@ -179,13 +179,15 @@ export function pickCategoryEncoding(
 }
 
 /**
- * Folds a second dimension into a category axis as an indented second line.
+ * Folds a hierarchy of dimension values into a category axis, one indented line
+ * per level.
  *
  * The outer value is printed once, on the first row of its group, and its members
  * sit beneath it — the reading a nested (hierarchical) axis gives:
  *
  *     Consumer
  *        Ava Thompson
+ *           Chairs
  *        Ben Carter
  *     Corporate
  *        Cara Diaz
@@ -194,15 +196,38 @@ export function pickCategoryEncoding(
  * rather than in the axis structure. That keeps it working for every mark that has
  * a category axis instead of only the ones with bespoke handling.
  *
+ * A value that repeats the previous row at the same level is left blank, so a
+ * group reads as a group even when a level is several rows tall.
+ *
+ * @param levels One array of values per level, outermost first, all row-aligned.
+ */
+export function nestCategoryLevels(levels: string[][]): string[] {
+  const rowCount = levels.reduce((max, values) => Math.max(max, values.length), 0);
+  const labels: string[] = [];
+
+  for (let index = 0; index < rowCount; index++) {
+    const lines = levels.map((values, level) => {
+      const value = values[index] ?? '';
+      const repeated = index > 0 && values[index - 1] === value;
+      // The outermost level carries no indent; each level below it is indented
+      // once more, and the drawn padding below follows the same rule.
+      if (level === 0) return repeated ? '' : value;
+      return `${'   '.repeat(level)}${repeated ? '' : value}`;
+    });
+    labels.push(lines.join('\n'));
+  }
+
+  return labels;
+}
+
+/**
+ * Two-level shorthand for `nestCategoryLevels`.
+ *
  * @param outer Outer dimension values, one per row.
  * @param inner Inner dimension values, one per row.
  */
 export function nestCategories(outer: string[], inner: string[]): string[] {
-  return outer.map((value, index) => {
-    const repeated = index > 0 && outer[index - 1] === value;
-    const head = repeated ? '' : value;
-    return `${head}\n   ${inner[index] ?? ''}`;
-  });
+  return nestCategoryLevels([outer, inner]);
 }
 
 /**
@@ -677,30 +702,51 @@ function buildBarLike(
   }
 
   /*
-   * A second dimension has nowhere to go in a single-axis chart: it groups the
-   * query but is never shown, so the axis repeats the first dimension's labels and
-   * the second is invisible. That is what made "Manager with any other dimension"
-   * look broken — the manager was in the data and nowhere on screen.
+   * A second, third, or fourth dimension has nowhere to go in a single-axis chart:
+   * it groups the query but is never shown, so the axis repeats the first
+   * dimension's labels and the others are invisible. That is what made "Manager
+   * with any other dimension" look broken — the manager was in the data and
+   * nowhere on screen.
    *
-   * Only dimensions the user actually PLACED are nested. A join can add the
-   * conformed key to the grouping without it being on a shelf, and printing that
-   * would put Region under Manager even though Region was never asked for.
+   * Every extra PLACED dimension becomes a nesting level in the axis label, so the
+   * hierarchy is at least readable. Only dimensions the user actually placed are
+   * nested: a join can add the conformed key to the grouping without it being on a
+   * shelf, and printing that would put Region under Manager even though Region was
+   * never asked for.
+   *
+   * A dimension on Color is the series, not a level — it already appears in the
+   * legend, and printing it under every category would say the same thing twice.
    */
   const placedDimensions = [...(sheet?.shelves.columns ?? []), ...(sheet?.shelves.rows ?? [])].filter(
     (encoding) => encoding.kind === 'dimension' && encoding.id !== axisEncoding?.id,
   );
-  const secondaryEncoding = colorEncoding?.kind === 'dimension'
-    ? placedDimensions.find((encoding) => encoding.id !== colorEncoding.id)
-    : placedDimensions[0];
-  const secondaryIndex = secondaryEncoding && columns ? columns.indexOf(secondaryEncoding) : -1;
+  const nestedEncodings = placedDimensions.filter(
+    (encoding) => !(colorEncoding?.kind === 'dimension' && encoding.id === colorEncoding.id),
+  );
+  const nestedIndices = nestedEncodings
+    .map((encoding) => (columns ? columns.indexOf(encoding) : -1))
+    .filter((index) => index >= 0);
+
+  const columnIsTemporal = (index: number): boolean => {
+    const meta = result.columnMeta[index];
+    return (
+      meta?.dataType === 'date' ||
+      meta?.logicalType === 'date' ||
+      meta?.logicalType === 'datetime'
+    );
+  };
 
   const axisLabels =
-    secondaryIndex >= 0
-      ? nestCategories(
+    nestedIndices.length > 0
+      ? nestCategoryLevels([
           result.rows.map((row) => formatCategory(row[dimensionIndex], isDate)),
-          result.rows.map((row) => formatCategory(row[secondaryIndex], false)),
-        )
+          ...nestedIndices.map((index) =>
+            result.rows.map((row) => formatCategory(row[index], columnIsTemporal(index))),
+          ),
+        ])
       : categories;
+
+  const nestingLevels = 1 + nestedIndices.length;
 
   const categoryAxis = {
     type: 'category',
@@ -717,7 +763,7 @@ function buildBarLike(
        * styles give each line its own left edge and padding, which is what makes
        * the hierarchy visible.
        */
-      ...(secondaryIndex >= 0
+      ...(nestedIndices.length > 0
         ? {
             lineHeight: 13,
             /*
@@ -729,13 +775,27 @@ function buildBarLike(
             interval: (axisLabels.length <= 12 ? 0 : 'auto') as number | 'auto',
             hideOverlap: axisLabels.length > 12,
             formatter: (value: string) => {
-              const [outer = '', inner = ''] = String(value).split('\n');
-              return `{outer|${outer}}\n{inner|${inner.trim()}}`;
+              const lines = String(value).split('\n');
+              // Pad every level that exists, including blank repeated ones: a
+              // missing line would otherwise shift the levels below it up.
+              return Array.from(
+                { length: nestingLevels },
+                (_, level) => `{level${level}|${(lines[level] ?? '').trim()}}`,
+              ).join('\n');
             },
-            rich: {
-              outer: { align: 'left' as const, fontSize: 11, color: '#5b6472' },
-              inner: { align: 'left' as const, fontSize: 11, color: '#5b6472', padding: [0, 0, 0, 14] },
-            },
+            rich: Object.fromEntries(
+              Array.from({ length: nestingLevels }, (_, level) => [
+                `level${level}`,
+                {
+                  align: 'left' as const,
+                  fontSize: 11,
+                  color: '#5b6472',
+                  // The first level has no indent; each level below adds one, so
+                  // the drawn hierarchy matches the leading spaces in the data.
+                  padding: [0, 0, 0, level * 14] as [number, number, number, number],
+                },
+              ]),
+            ),
           }
         : {}),
     },

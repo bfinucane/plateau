@@ -60,6 +60,56 @@ project owner approved running Vite with the wider sandbox sandbox mode, so
 
 `tsc --noEmit` has no such restriction and works in the confined sandbox.
 
+### The build command that actually works
+
+`pnpm run build` first runs pnpm's own dependency-status check, which tries to
+re-run `pnpm install`; that fails in two different ways unless the bundled Node is
+on `PATH` (its postinstall scripts call `node`) and the process tree is allowed to
+spawn. The reliable recipe is to skip pnpm's wrapper and put the bundled Node
+directory on `PATH`:
+
+```powershell
+$nodeDir = "C:\Users\Startklar\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin"
+$env:PATH = "$nodeDir;$env:PATH"
+& "$nodeDir\node.exe" node_modules\vite\bin\vite.js build     # wider sandbox
+```
+
+It prints the new `dist/web/assets/index-XXXX.js` name; that name is what a
+handover should quote, because the served bundle is read from disk per request.
+
+## Headless Chrome (the `e2e/` harnesses) needs the wider sandbox
+
+Every browser harness fails in the confined sandbox, and the failure looks
+nothing like a permissions problem. Chrome starts, prints an error, and exits:
+
+```
+FATAL:mojo\public\cpp\platform\platform_channel.cc:112] Check failed: . : Zugriff verweigert (0x5)
+crash server failed to launch, self-terminating
+```
+
+Chrome's multi-process IPC uses named pipes, which the sandbox blocks. The harness
+then reports `Could not reach the Chrome debugging endpoint`, which is easy to
+misread as a broken harness. Run the harnesses with the wider sandbox; they need
+no other changes.
+
+`verify-retry.mjs` is the one harness that starts and stops its own app server
+(port 5190), so it takes `[chromePath] [outDir]` rather than `[appUrl] ...`.
+
+## Verifying against a server without leaving one behind
+
+The rule is that a server must not be a session's background job. For a harness
+run, start the server **and stop it inside the same command** — it is then a child
+of that command, not a lingering process:
+
+```powershell
+$env:PORT = '5180'
+$server = Start-Process -FilePath $node -ArgumentList @('scripts\run.mjs','src\server\index.ts','--serve-static') -PassThru
+try { <wait for /api/health, run the harnesses> } finally { Stop-Process -Id $server.Id -Force }
+```
+
+`node src/server/index.ts` defaults to **5177**; passing no `PORT` is how a
+"wrong port" mystery starts.
+
 ## Bundled toolchain paths
 
 The bundled runtime is not on `PATH`; invoke Node by absolute path:

@@ -353,6 +353,118 @@ try {
   check('filter description rendered', filtered.desc.length > 0, filtered.desc);
   await screenshot('08-filtered.png');
 
+  // --- view 7: a third dimension nests as a third level -------------------
+  console.log('\nView 7: three dimensions on the category axis');
+
+  /** Drops a data-pane field onto Columns or Rows explicitly. */
+  const dropOnAxis = (field, shelf) => evaluate(`(() => {
+    const r = [...document.querySelectorAll('.field-row')]
+      .find(x => x.querySelector('.field-name')?.textContent.trim() === ${JSON.stringify(field)});
+    const t = document.querySelector('[data-shelf=${shelf}]');
+    if (!r || !t) return 'missing';
+    const dt = new DataTransfer();
+    r.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+    t.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    t.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    return 'ok';
+  })()`);
+
+  await evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Clear sheet');
+    if (btn) btn.click();
+    return true;
+  })()`);
+  await sleep(700);
+
+  // The Data tab was left open by the previous view, and a pie mark by the one
+  // before it: neither has a category axis, so both must be reset before the
+  // axis labels mean anything.
+  await evaluate(`(() => {
+    const tab = [...document.querySelectorAll('.view-tabs button')].find(b => b.textContent.trim() === 'View');
+    if (tab) tab.click();
+    const select = document.querySelector('.mark-select');
+    if (select) {
+      select.value = 'column';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    return true;
+  })()`);
+  await sleep(600);
+
+  check('Category -> Columns', (await dropOnAxis('Category', 'columns')) === 'ok');
+  await sleep(500);
+  check('Sub-Category -> Columns', (await dropOnAxis('Sub-Category', 'columns')) === 'ok');
+  await sleep(500);
+  check('Region -> Columns', (await dropOnAxis('Region', 'columns')) === 'ok');
+  await sleep(500);
+  await evaluate(`window.__click('Sales')`);
+  await sleep(3000);
+
+  const axisLabels = await evaluate(`(() => {
+    const echarts = window.__ECHARTS__;
+    const el = document.querySelector('.chart-canvas');
+    if (!echarts || !el) return null;
+    const inst = echarts.getInstanceByDom(el);
+    if (!inst) return null;
+    const option = inst.getOption();
+    const axis = Array.isArray(option.xAxis) ? option.xAxis[0] : option.xAxis;
+    return axis?.data ?? null;
+  })()`);
+
+  const axisSample = Array.isArray(axisLabels) ? axisLabels.slice(0, 3) : null;
+  console.log('  axis labels:', JSON.stringify(axisSample));
+
+  check('the third dimension is not dropped from the axis',
+    Array.isArray(axisLabels) &&
+      axisLabels.length > 0 &&
+      axisLabels.every((label) => String(label).split('\n').length === 3),
+    JSON.stringify(axisSample));
+  check('the first level has no indent',
+    Array.isArray(axisLabels) && String(axisLabels[0]).split('\n')[0].trim().length > 0,
+    JSON.stringify(axisSample));
+  check('the second level is indented once',
+    Array.isArray(axisLabels) && String(axisLabels[0]).split('\n')[1].startsWith('   '),
+    JSON.stringify(axisSample));
+  check('the third level is indented twice',
+    Array.isArray(axisLabels) &&
+      String(axisLabels[0]).split('\n')[2].startsWith('      ') &&
+      !String(axisLabels[0]).split('\n')[2].startsWith('       '),
+    JSON.stringify(axisSample));
+
+  await screenshot('09-three-dimensions.png');
+
+  // --- restore the previous workbook generation --------------------------
+  console.log('\nRestore backup');
+
+  const restoreButton = `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Restore backup')`;
+
+  check('a Restore backup button exists',
+    (await evaluate(`Boolean(${restoreButton})`)) === true);
+
+  // Saving rotates the current file into the backup position, which is what makes
+  // the button meaningful. The app also autosaves, but a save here makes the state
+  // deterministic rather than dependent on how long the harness has been running.
+  await evaluate(`(() => {
+    const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Save workbook');
+    if (btn) btn.click();
+    return true;
+  })()`);
+  await sleep(1500);
+
+  const restoreEnabled = await evaluate(`${restoreButton}?.disabled === false`);
+  check('the button enables once a previous generation exists', restoreEnabled === true,
+    String(restoreEnabled));
+
+  await evaluate(`${restoreButton}?.click()`);
+  await sleep(2500);
+
+  const restoreStatus = await evaluate(
+    `document.querySelector('.status-message')?.textContent ?? ''`,
+  );
+  console.log('  restore status:', JSON.stringify(restoreStatus));
+  check('the restore is confirmed in the status line',
+    /Restored the previous workbook generation/.test(restoreStatus), restoreStatus);
+
   // --- console error check ------------------------------------------------
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' || '));
 

@@ -10,17 +10,17 @@
  * ## Where calculated fields live
  *
  * They are a CLIENT concept: the formula is authored in Plateau's own syntax and
- * the workbook owns it. Two strategies follow, chosen by what the backend can do:
+ * the workbook owns it. What can be done with one depends on the backend:
  *
- *   - **Materialised** (local backend) — the formula is evaluated per row and
- *     appended as a real column. The engine can then aggregate it normally.
- *   - **Schema-only** (any backend) — an aggregate-bearing formula such as
- *     `SUM([Profit]) / SUM([Sales])` cannot exist per row. It is registered as a
- *     schema entry and planned by the query engine at the aggregate level.
- *
- * A formula needs row access, so `addCalculatedField` refuses a backend that
- * cannot materialise rather than pretending. Pushing row-level expressions down
- * to a remote engine is the next step, and is why the protocol carries an AST.
+ *   - **Materialised** (local backend) — a row-level formula is evaluated per row
+ *     and appended as a real column, so the engine can aggregate it. An
+ *     aggregate-bearing formula such as `SUM([Profit]) / SUM([Sales])` has no
+ *     per-row value; it becomes a schema-only entry the planner evaluates at the
+ *     aggregate level.
+ *   - **Pushed down** (remote backend) — only aggregate-bearing formulas work.
+ *     The parsed AST travels in the query's `expressions` map and the engine
+ *     evaluates it. A row-level formula would need the source rows, which a remote
+ *     engine does not expose, so it is refused with that explanation.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -28,9 +28,17 @@ import type { CellValue, ColumnSchema, DataTable } from '../core/types.js';
 import { defaultAggregation } from '../core/types.js';
 import { buildTableFromRows, classifyKind, findColumn } from '../core/table.js';
 import { parseCsv } from '../core/csv.js';
-import { evaluateExpression, formulaAst, parseFormula, containsAggregate } from '../core/expression.js';
+import {
+  collectAggregateSlots,
+  containsAggregate,
+  containsLod,
+  evaluateExpression,
+  formulaAst,
+  parseFormula,
+  type AstNode,
+} from '../core/expression.js';
 import type { QuerySpec } from '../core/engine.js';
-import type { EngineTransport, JoinRequest } from '../core/protocol.js';
+import type { Capabilities, EngineTransport, JoinRequest } from '../core/protocol.js';
 import {
   LocalBackend,
   RemoteBackend,
@@ -69,6 +77,15 @@ export interface DatasetMeta {
   source: string;
   createdAt: string;
   columns: ColumnInfo[];
+  /**
+   * What a remote engine said it can do, when it said anything.
+   *
+   * `null` means the dataset is served locally, so the client and the engine are
+   * the same code and everything is offered. `undefined` means the engine did not
+   * report capabilities at all — equally "offer everything", because guessing the
+   * worst and disabling working features is its own kind of wrong.
+   */
+  capabilities?: Capabilities | null;
 }
 
 /** A calculated field definition, stored independently of any materialised column. */
@@ -167,6 +184,8 @@ export function createDatasetFromCsv(
       source,
       createdAt: backend.createdAt,
       columns: describeColumns(table.schema),
+      // The local engine is this same code, so there is nothing to negotiate.
+      capabilities: null,
     },
     backend,
     calculated: new Map(),
@@ -218,6 +237,23 @@ export async function createRemoteDataset(options: {
   // Eagerly prove the connection works before registering anything.
   const schema = await backend.schema();
 
+  /*
+   * Capabilities are asked for here, once, and carried in the metadata the client
+   * already fetches. That is what lets the UI grey out an aggregation the engine
+   * does not implement — the connect dialog's capability report was previously the
+   * only place it appeared, and it vanished as soon as the dialog closed.
+   *
+   * An engine that does not implement `capabilities` is legal, so a failure here
+   * means "unknown", not "broken": registration still succeeds and the UI offers
+   * everything, exactly as before.
+   */
+  let capabilities: Capabilities | null = null;
+  try {
+    capabilities = await backend.capabilities();
+  } catch {
+    capabilities = null;
+  }
+
   const dataset: Dataset = {
     meta: {
       id,
@@ -227,6 +263,7 @@ export async function createRemoteDataset(options: {
       source: 'remote engine',
       createdAt: new Date().toISOString(),
       columns: describeColumns(schema),
+      capabilities,
     },
     backend,
     calculated: new Map(),
@@ -296,45 +333,40 @@ export async function fieldDomain(
 
 export class CalculatedFieldError extends Error {}
 
+/** A query naming a field the dataset does not have. */
+export class UnknownFieldError extends Error {}
+
 /**
  * Appends a calculated field to a dataset.
  *
- * Row-level formulas are materialised into a real column so the engine can
- * aggregate them and the data preview can show them. Aggregate-bearing formulas
- * (SUM([Profit]) / SUM([Sales])) cannot be materialised per row, so they are
- * registered as schema-only measures that the query planner evaluates per group.
+ * Two strategies, chosen by what the backend can do:
+ *
+ *  - **Materialised** (local backend) — a row-level formula is evaluated once per
+ *    row and appended as a real column, so the engine can aggregate it. An
+ *    aggregate-bearing formula (`SUM([Profit]) / SUM([Sales])`) has no per-row
+ *    value, so it is registered as a schema-only measure the planner evaluates per
+ *    group.
+ *  - **Pushed down** (remote backend) — only aggregate-bearing formulas work: the
+ *    AST travels in the query's `expressions` map and the engine evaluates it at
+ *    the aggregate level. A row-level formula needs the source rows, which a
+ *    remote engine does not expose.
  */
-export function addCalculatedField(
+export async function addCalculatedField(
   dataset: Dataset,
   name: string,
   formula: string,
   /** Optional explicit classification; inferred when omitted. */
   requestedKind?: 'dimension' | 'measure',
-): ColumnInfo {
+): Promise<ColumnInfo> {
   const trimmedName = name.trim();
   const trimmedFormula = formula.trim();
 
   if (!trimmedName) throw new CalculatedFieldError('Field name is required');
   if (!trimmedFormula) throw new CalculatedFieldError('Formula is required');
 
-  if (!isMaterialized(dataset.backend)) {
-    // Saying so is better than silently registering a column that will evaluate
-    // to null. Pushing the expression down to the engine is the intended fix.
-    throw new CalculatedFieldError(
-      'This data source cannot host row-level calculated fields yet: it does not ' +
-        'expose its rows. Aggregate formulas are still available.',
-    );
-  }
-
-  const materialized: MaterializedBackend = dataset.backend;
-  const table = materialized.table();
-
-  if (table.index.has(trimmedName)) {
-    throw new CalculatedFieldError(`A field named "${trimmedName}" already exists`);
-  }
-
-  // Parse first so syntax errors surface before anything is mutated.
-  let ast;
+  // Parse first so a syntax error is reported the same way for every backend,
+  // before anything is mutated.
+  let ast: AstNode;
   try {
     ast = parseFormula(trimmedFormula);
   } catch (error) {
@@ -344,6 +376,23 @@ export function addCalculatedField(
   }
 
   const isAggregateMeasure = containsAggregate(ast);
+
+  if (!isMaterialized(dataset.backend)) {
+    return addPushedDownCalculatedField(
+      dataset,
+      trimmedName,
+      trimmedFormula,
+      ast,
+      isAggregateMeasure,
+    );
+  }
+
+  const materialized: MaterializedBackend = dataset.backend;
+  const table = materialized.table();
+
+  if (table.index.has(trimmedName)) {
+    throw new CalculatedFieldError(`A field named "${trimmedName}" already exists`);
+  }
 
   // Validate that every referenced field exists. Anything already in the table
   // qualifies, which includes calculated fields registered earlier — a formula
@@ -385,7 +434,113 @@ export function addCalculatedField(
   dataset.calculated.set(trimmedName, { name: trimmedName, formula: trimmedFormula });
   dataset.meta = refreshMetaSync(dataset, materialized.table());
 
+  // `requestedKind` is deliberately not forced onto the result: the formula's own
+  // shape decides it, and a caller-declared kind that contradicts the formula
+  // would put a text field in the measures list.
+  void requestedKind;
+
   return describeColumns(materialized.table().schema).find((c) => c.name === trimmedName)!;
+}
+
+/**
+ * Registers a calculated field the remote engine evaluates.
+ *
+ * The engine never sees the formula text: it receives the parsed AST in the
+ * query's `expressions` map, keyed by the field name. The column therefore has to
+ * be described here, because the engine's catalog cannot know about it.
+ */
+async function addPushedDownCalculatedField(
+  dataset: Dataset,
+  name: string,
+  formula: string,
+  ast: AstNode,
+  isAggregateMeasure: boolean,
+): Promise<ColumnInfo> {
+  const backend = dataset.backend;
+  if (!(backend instanceof RemoteBackend)) {
+    throw new CalculatedFieldError(
+      'This data source cannot host calculated fields: it exposes neither its rows ' +
+        'nor a way to evaluate an expression.',
+    );
+  }
+
+  if (containsLod(ast)) {
+    // A local LOD fallback would have to evaluate the formula against the source
+    // rows, and a pushed-down field is not one of them — it would silently come
+    // back as null. Refusing is the only honest answer until LOD pushdown exists.
+    throw new CalculatedFieldError(
+      'Level-of-detail expressions cannot be evaluated on a remote data source yet. ' +
+        'A plain aggregate such as SUM([Profit]) / SUM([Sales]) works.',
+    );
+  }
+
+  if (!isAggregateMeasure) {
+    // Saying so is better than silently registering a column that will evaluate to
+    // null: a row-level formula needs a value per SOURCE row, and a remote
+    // backend does not expose its rows.
+    throw new CalculatedFieldError(
+      'This data source cannot host row-level calculated fields yet: it does not ' +
+        'expose its rows. Aggregate formulas such as SUM([Profit]) / SUM([Sales]) ' +
+        'are still available.',
+    );
+  }
+
+  const schema = await backend.schema();
+  const known = new Set(schema.map((column) => column.name));
+
+  if (known.has(name)) {
+    throw new CalculatedFieldError(`A field named "${name}" already exists`);
+  }
+
+  const referenced = new Set<string>();
+  collectFields(ast, referenced);
+  for (const field of referenced) {
+    if (field === name) {
+      throw new CalculatedFieldError('A formula cannot reference itself');
+    }
+    if (!known.has(field)) {
+      throw new CalculatedFieldError(`Unknown field [${field}]`);
+    }
+  }
+
+  /*
+   * Refuse an aggregation this engine does not implement.
+   *
+   * The engine only rejects one when the first query runs — at which point every
+   * sheet using the field fails, long after the field was created. The capability
+   * list is already fetched and cached, so the check is free.
+   */
+  let capabilities: Capabilities | null = null;
+  try {
+    capabilities = await backend.capabilities();
+  } catch {
+    // An engine that does not report capabilities is legal; carry on and let the
+    // engine answer for itself.
+  }
+  if (capabilities) {
+    const supported = new Set(capabilities.aggregations.map((aggregation) => aggregation.toUpperCase()));
+    const slots = collectAggregateSlots(ast);
+    const unsupported = [
+      ...new Set(
+        slots
+          .map((slot) => String(slot.aggregation).toUpperCase())
+          .filter((aggregation) => !supported.has(aggregation)),
+      ),
+    ];
+    if (unsupported.length > 0) {
+      throw new CalculatedFieldError(
+        `This engine does not implement ${unsupported.join(', ')}, so "${name}" ` +
+          'cannot be evaluated there.',
+      );
+    }
+  }
+
+  const columnSchema = makeAggregateMeasureSchema(name, formula);
+  backend.defineFormula(name, formula, columnSchema);
+  dataset.calculated.set(name, { name, formula });
+  await refreshMeta(dataset);
+
+  return describeColumns(await backend.schema()).find((c) => c.name === name)!;
 }
 
 function makeAggregateMeasureSchema(name: string, formula: string): ColumnSchema {
@@ -534,6 +689,11 @@ export function removeCalculatedField(dataset: Dataset, name: string): boolean {
       });
       dataset.meta = refreshMetaSync(dataset, dataset.backend.table());
     }
+  } else if (dataset.backend instanceof RemoteBackend) {
+    // The definition lives on the backend because every query carries it there;
+    // forgetting it only here would leave the engine being sent a formula for a
+    // field the user deleted.
+    dataset.backend.forgetFormula(name);
   }
 
   dataset.calculated.delete(name);
@@ -577,8 +737,43 @@ export function registerDataset(dataset: Dataset): void {
   datasets.set(dataset.meta.id, dataset);
 }
 
-/** Runs a query through the dataset's backend. */
+/**
+ * Rejects a query that names a field this dataset does not have.
+ *
+ * Without this a typo — or a workbook saved against a dataset that has since
+ * changed — is answered with a column of nulls: the planner resolves an unknown
+ * name to nothing and the view renders empty. A silent empty column is
+ * indistinguishable from "no data", which is the failure this exists to remove.
+ *
+ * Names are checked against the BACKEND's schema, which is also where calculated
+ * fields and joined attributes appear, so the accepted set is the set the data
+ * pane offers.
+ */
+async function assertKnownQueryFields(dataset: Dataset, spec: QuerySpec): Promise<void> {
+  const schema = await dataset.backend.schema();
+  const known = new Set(schema.map((column) => column.name));
+
+  const unknown: string[] = [];
+  for (const field of spec.fields ?? []) {
+    if (!known.has(field.name)) unknown.push(field.name);
+  }
+  for (const filter of spec.filters ?? []) {
+    if (!known.has(filter.field)) unknown.push(filter.field);
+  }
+
+  if (unknown.length === 0) return;
+
+  const names = [...new Set(unknown)];
+  throw new UnknownFieldError(
+    names.length === 1
+      ? `Unknown field "${names[0]}": this dataset has no column by that name.`
+      : `Unknown fields ${names.map((name) => `"${name}"`).join(', ')}: this dataset has no columns by those names.`,
+  );
+}
+
+/** Runs a query through the dataset's backend, refusing unknown field names. */
 export async function queryDataset(dataset: Dataset, spec: QuerySpec) {
+  await assertKnownQueryFields(dataset, spec);
   return dataset.backend.query(spec);
 }
 

@@ -18,6 +18,7 @@ import { defaultAggregation, type Aggregation } from '../core/types.js';
 import { HttpEngineTransport } from './httpTransport.js';
 import {
   CalculatedFieldError,
+  UnknownFieldError,
   addCalculatedField,
   createDatasetFromCsv,
   createRemoteDataset,
@@ -212,7 +213,7 @@ export function createServer() {
       kind?: 'dimension' | 'measure';
     };
     try {
-      const column = addCalculatedField(dataset, name ?? '', formula ?? '', kind);
+      const column = await addCalculatedField(dataset, name ?? '', formula ?? '', kind);
       res.status(201).json({ column, columns: await datasetColumns(dataset) });
     } catch (error) {
       if (error instanceof CalculatedFieldError) {
@@ -303,6 +304,12 @@ export function createServer() {
         sourceRowCount: dataset.meta.rowCount,
       });
     } catch (error) {
+      // An unknown field name is the caller's mistake, and saying which field is
+      // the difference between a fixable view and an empty chart.
+      if (error instanceof UnknownFieldError) {
+        res.status(400).json({ error: error.message, code: 'unknown_field' });
+        return;
+      }
       res.status(400).json({
         error: error instanceof Error ? error.message : 'Query failed',
       });
