@@ -161,6 +161,13 @@ $owner = (netstat -ano | Select-String ':5180 .*ABH' | ForEach-Object { ($_.Line
 if ($owner) { Stop-Process -Id $owner -Force }
 ```
 
+**But only kill a server you started.** Port 5180 may be the user's own
+`start.cmd` window, and killing by port owner does not distinguish it from a leaked
+harness server. Treat a busy 5180 as "someone is using the app": run verification on
+a spare port instead (`PORT=5181`, and pass `http://127.0.0.1:5181/` to the
+harnesses) rather than taking the user's session down. This was also learned the hard
+way.
+
 **A process started under the wider sandbox is invisible to a confined command.**
 `netstat` still shows it, but `tasklist` and `Stop-Process` in the default confined
 tool mode report access denied / "no such process". Cleanup therefore has to run

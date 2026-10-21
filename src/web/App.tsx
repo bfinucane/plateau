@@ -207,6 +207,23 @@ export function App() {
     setDirty(JSON.stringify(state.workbook) !== savedSnapshot.current);
   }, [state.workbook]);
 
+  /**
+   * Keeps the active tab visible when the strip is scrolled.
+   *
+   * Selecting a sheet from a dashboard panel, or opening a workbook on a sheet far
+   * along the strip, must not leave the active tab off-screen with no indication of
+   * where the view came from.
+   */
+  useEffect(() => {
+    const active = document.querySelector<HTMLElement>('.sheet-tab.is-active');
+    active?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [
+    state.workbook.activeSheetId,
+    state.workbook.activeDashboardId,
+    state.workbook.view,
+    state.workbook.sheets.length,
+  ]);
+
   /** Records a successful save: the workbook that was written becomes the baseline. */
   const markSaved = useCallback((workbook: WorkbookState) => {
     savedSnapshot.current = JSON.stringify(workbook);
@@ -1057,97 +1074,107 @@ export function App() {
 
       {/* ------------------------------------------ sheet + dashboard tabs */}
       <footer className="sheet-tabs">
-        {sheets.map((sheet) => (
+        {/*
+          The tabs live in their own strip so a workbook with many sheets scrolls
+          horizontally instead of squeezing every tab until its name wraps. Before
+          this, 14 sheets made each tab shrink below its text, and the footer — which
+          is exactly one tab tall — overflowed with three-line labels.
+        */}
+        <div className="sheet-tab-strip">
+          {sheets.map((sheet) => (
+            <button
+              key={sheet.id}
+              type="button"
+              title={sheet.name}
+              className={`sheet-tab${
+                state.workbook.view === 'sheet' && sheet.id === state.workbook.activeSheetId
+                  ? ' is-active'
+                  : ''
+              }`}
+              onClick={() => dispatch({ type: 'sheet/selected', sheetId: sheet.id })}
+              onDoubleClick={() => {
+                const name = window.prompt('Rename sheet', sheet.name);
+                if (name?.trim()) dispatch({ type: 'sheet/renamed', sheetId: sheet.id, name: name.trim() });
+              }}
+            >
+              <span className="sheet-tab-label">{sheet.name}</span>
+              {sheets.length > 1 && (
+                <span
+                  className="sheet-tab-close"
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    dispatch({ type: 'sheet/removed', sheetId: sheet.id });
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') dispatch({ type: 'sheet/removed', sheetId: sheet.id });
+                  }}
+                >
+                  ×
+                </span>
+              )}
+            </button>
+          ))}
           <button
-            key={sheet.id}
             type="button"
-            className={`sheet-tab${
-              state.workbook.view === 'sheet' && sheet.id === state.workbook.activeSheetId
-                ? ' is-active'
-                : ''
-            }`}
-            onClick={() => dispatch({ type: 'sheet/selected', sheetId: sheet.id })}
-            onDoubleClick={() => {
-              const name = window.prompt('Rename sheet', sheet.name);
-              if (name?.trim()) dispatch({ type: 'sheet/renamed', sheetId: sheet.id, name: name.trim() });
-            }}
+            className="sheet-tab-add"
+            title="New worksheet"
+            onClick={() => dispatch({ type: 'sheet/added' })}
           >
-            {sheet.name}
-            {sheets.length > 1 && (
+            +
+          </button>
+
+          {state.workbook.dashboards.length > 0 && <span className="sheet-tabs-divider" />}
+
+          {state.workbook.dashboards.map((dashboard) => (
+            <button
+              key={dashboard.id}
+              type="button"
+              title={dashboard.name}
+              className={`sheet-tab dash-tab${
+                state.workbook.view === 'dashboard' && dashboard.id === state.workbook.activeDashboardId
+                  ? ' is-active'
+                  : ''
+              }`}
+              onClick={() => dispatch({ type: 'dashboard/selected', dashboardId: dashboard.id })}
+              onDoubleClick={() => {
+                const name = window.prompt('Rename dashboard', dashboard.name);
+                if (name?.trim()) {
+                  dispatch({ type: 'dashboard/renamed', dashboardId: dashboard.id, name: name.trim() });
+                }
+              }}
+            >
+              <span className="dash-tab-icon" aria-hidden="true">▤</span>
+              <span className="sheet-tab-label">{dashboard.name}</span>
               <span
                 className="sheet-tab-close"
                 role="button"
                 tabIndex={0}
+                title="Delete dashboard"
                 onClick={(event) => {
                   event.stopPropagation();
-                  dispatch({ type: 'sheet/removed', sheetId: sheet.id });
+                  dispatch({ type: 'dashboard/removed', dashboardId: dashboard.id });
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter') dispatch({ type: 'sheet/removed', sheetId: sheet.id });
+                  if (event.key === 'Enter') {
+                    dispatch({ type: 'dashboard/removed', dashboardId: dashboard.id });
+                  }
                 }}
               >
                 ×
               </span>
-            )}
-          </button>
-        ))}
-        <button
-          type="button"
-          className="sheet-tab-add"
-          title="New worksheet"
-          onClick={() => dispatch({ type: 'sheet/added' })}
-        >
-          +
-        </button>
-
-        {state.workbook.dashboards.length > 0 && <span className="sheet-tabs-divider" />}
-
-        {state.workbook.dashboards.map((dashboard) => (
+            </button>
+          ))}
           <button
-            key={dashboard.id}
             type="button"
-            className={`sheet-tab dash-tab${
-              state.workbook.view === 'dashboard' && dashboard.id === state.workbook.activeDashboardId
-                ? ' is-active'
-                : ''
-            }`}
-            onClick={() => dispatch({ type: 'dashboard/selected', dashboardId: dashboard.id })}
-            onDoubleClick={() => {
-              const name = window.prompt('Rename dashboard', dashboard.name);
-              if (name?.trim()) {
-                dispatch({ type: 'dashboard/renamed', dashboardId: dashboard.id, name: name.trim() });
-              }
-            }}
+            className="sheet-tab-add"
+            title="New dashboard"
+            onClick={() => dispatch({ type: 'dashboard/added' })}
           >
-            <span className="dash-tab-icon" aria-hidden="true">▤</span>
-            {dashboard.name}
-            <span
-              className="sheet-tab-close"
-              role="button"
-              tabIndex={0}
-              title="Delete dashboard"
-              onClick={(event) => {
-                event.stopPropagation();
-                dispatch({ type: 'dashboard/removed', dashboardId: dashboard.id });
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  dispatch({ type: 'dashboard/removed', dashboardId: dashboard.id });
-                }
-              }}
-            >
-              ×
-            </span>
+            ▤
           </button>
-        ))}
-        <button
-          type="button"
-          className="sheet-tab-add"
-          title="New dashboard"
-          onClick={() => dispatch({ type: 'dashboard/added' })}
-        >
-          ▤
-        </button>
+        </div>
 
         <div className="command-spacer" />
         {status && <span className="status-message">{status}</span>}

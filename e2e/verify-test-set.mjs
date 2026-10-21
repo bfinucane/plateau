@@ -172,6 +172,57 @@ try {
     `${tabs.length} tabs`);
 
   // =====================================================================
+  //  The tab strip handles a workbook this size
+  // =====================================================================
+  //
+  // This is where the first rendition failed: the footer is exactly one tab tall,
+  // and with 14 sheets every tab was squeezed until its name wrapped onto three
+  // lines and overlapped its neighbours. Tabs must truncate, and the strip must
+  // scroll.
+  console.log('\nThe tab strip handles this many sheets');
+
+  const tabLayout = await evaluate(`(() => {
+    const tabs = [...document.querySelectorAll('.sheet-tab:not(.dash-tab)')];
+    const rects = tabs.map((tab) => {
+      const rect = tab.getBoundingClientRect();
+      const label = tab.querySelector('.sheet-tab-label');
+      return {
+        top: Math.round(rect.top),
+        height: Math.round(rect.height),
+        labelTruncated: Boolean(label) && label.scrollWidth > label.clientWidth + 1,
+      };
+    });
+    const strip = document.querySelector('.sheet-tab-strip');
+    const footer = document.querySelector('.sheet-tabs');
+    const closeButtons = [...document.querySelectorAll('.sheet-tab .sheet-tab-close')];
+    return {
+      rows: [...new Set(rects.map((rect) => rect.top))].length,
+      maxTabHeight: Math.max(0, ...rects.map((rect) => rect.height)),
+      footerHeight: Math.round(footer?.getBoundingClientRect().height ?? 0),
+      stripScrolls: Boolean(strip) && strip.scrollWidth > strip.clientWidth,
+      anyTruncated: rects.some((rect) => rect.labelTruncated),
+      allTitled: tabs.every((tab) => Boolean(tab.getAttribute('title'))),
+      closeButtonsInline: closeButtons.every((button) => {
+        const rect = button.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.height <= 20;
+      }),
+    };
+  })()`);
+  console.log('  tab layout:', JSON.stringify(tabLayout));
+
+  check('all tabs stay on one row', tabLayout.rows === 1, `${tabLayout.rows} row(s)`);
+  check('the footer stays one tab tall', tabLayout.footerHeight <= 40,
+    `${tabLayout.footerHeight}px`);
+  check('wrapped text does not stretch the tabs', tabLayout.maxTabHeight <= 32,
+    `${tabLayout.maxTabHeight}px`);
+  check('long names truncate instead of wrapping', tabLayout.anyTruncated);
+  check('the strip scrolls when the tabs do not fit', tabLayout.stripScrolls);
+  check('every tab carries its full name as a tooltip', tabLayout.allTitled);
+  check('close buttons stay inline with the label', tabLayout.closeButtonsInline);
+
+  await screenshot('60-test-set-tabs.png');
+
+  // =====================================================================
   //  Every worksheet renders
   // =====================================================================
   console.log('\nEvery worksheet renders');
@@ -200,6 +251,19 @@ try {
     check(`"${sheet.name}" renders`, Boolean(view) && !view.error && rendered,
       `error=${JSON.stringify(view?.error)} canvas=${view?.canvas} rows=${view?.gridRows} message=${JSON.stringify(view?.message)}`);
   }
+
+  // The last sheet visited is far along the strip; the active tab must be visible,
+  // not scrolled off to the left with no indication of what is showing.
+  const activeTabVisible = await evaluate(`(() => {
+    const active = document.querySelector('.sheet-tab.is-active');
+    const strip = document.querySelector('.sheet-tab-strip');
+    if (!active || !strip) return false;
+    const tab = active.getBoundingClientRect();
+    const viewport = strip.getBoundingClientRect();
+    return tab.left >= viewport.left - 1 && tab.right <= viewport.right + 1;
+  })()`);
+  check('the active tab is scrolled into view', activeTabVisible === true,
+    String(activeTabVisible));
 
   await screenshot('58-test-set-sheet.png');
 

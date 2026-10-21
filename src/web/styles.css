@@ -1207,16 +1207,55 @@ textarea {
   align-items: center;
   gap: 2px;
   padding: 0 10px;
-  height: 31px;
+  /* One tab tall plus a thin horizontal scrollbar for the strip. */
+  height: 34px;
   background: var(--bg-panel);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  min-width: 0;
+}
+
+/*
+ * The tab strip scrolls rather than squashing its tabs.
+ *
+ * With a dozen worksheets, flex-shrink shrank every tab below the width of its
+ * name, the text wrapped inside a one-tab-tall footer, and the labels spilled over
+ * each other. Tabs keep their content width, long names truncate with an ellipsis
+ * (the full name is a title tooltip) and the strip scrolls.
+ */
+.sheet-tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.sheet-tab-strip::-webkit-scrollbar {
+  height: 6px;
+}
+
+.sheet-tab-strip::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 3px;
+}
+
+.sheet-tab-strip::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .sheet-tab {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* Never shrink: the strip scrolls instead. */
+  flex: 0 0 auto;
+  max-width: 200px;
+  white-space: nowrap;
   border: 1px solid transparent;
   border-bottom: none;
   background: none;
@@ -1226,6 +1265,19 @@ textarea {
   border-radius: var(--radius) var(--radius) 0 0;
   position: relative;
   top: 1px;
+}
+
+/* The ellipsis has to live on an element, not a bare text node. */
+.sheet-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.sheet-tab .sheet-tab-close,
+.sheet-tab .dash-tab-icon {
+  flex: 0 0 auto;
 }
 
 .sheet-tab:hover {

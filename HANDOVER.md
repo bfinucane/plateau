@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, six session commits on top of `0e252ab`, with the app and
+Written on branch `main`, seven session commits on top of `0e252ab`, with the app and
 engine both running at the time of writing. Every number below was measured, not
 remembered.
 
@@ -14,12 +14,12 @@ remembered.
 
 | | |
 |---|---|
-| Commits | 28 total; **5 unpushed** (`origin/main` is at `4ea48b7`) |
-| Source | 53 files in `src/`, ~20,400 lines |
+| Commits | 29 total; **1 unpushed** (`origin/main` is at `770681b`) |
+| Source | 53 files in `src/`, ~20,500 lines |
 | Unit tests | **520 checks**, 14 suites, all passing |
-| Browser tests | **390 checks**, 15 harnesses, all passing |
-| Screenshots | 51, in `docs/screenshots/` |
-| Bundle | `dist/web/assets/index-XfagK4KE.js` (built this session) |
+| Browser tests | **398 checks**, 15 harnesses, all passing |
+| Screenshots | 52, in `docs/screenshots/` |
+| Bundle | `dist/web/assets/index-kgxHNtrp.js` (built this session) |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | 8080 was up during verification, owned by the OLAP Testing session |
@@ -192,6 +192,13 @@ Worth knowing before "fixing" any of it:
     the current workbook untouched. Opening a file also writes it to
     `data/workbook.json`, so the file becomes the saved state rather than only the
     visible one.
+14. **The sheet-tab strip scrolls and truncates; it never wraps.** The footer is one
+    tab tall, and a workbook can hold dozens of sheets. Every tab keeps its content
+    width, a long name truncates with an ellipsis (full name in the tooltip) and the
+    strip scrolls horizontally. Before this, 14 hand-written test sheets shrank each
+    tab below its text, which then wrapped onto three lines and overlapped the
+    neighbouring tab. The active tab is scrolled into view, so selecting a sheet from
+    a dashboard panel cannot leave the tab strip looking unchanged.
 
 ---
 
@@ -223,7 +230,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Six commits on top of `0e252ab` — five features and a note on verification hygiene.
+Seven commits on top of `0e252ab` — six features and a note on verification hygiene.
 The commit messages have the detail; the shape:
 
 | Was | Now |
@@ -240,15 +247,16 @@ The commit messages have the detail; the shape:
 | The Save button had no visible effect (autosave usually got there first) | A save-state indicator, plus an explicit "already saved" answer and no identical rewrites |
 | The workbook could not leave the server, so it could not be versioned, copied between machines, or hand-authored | **Download as JSON** / **Open from file**, with a validated, versioned, forgiving format |
 | Every UI check was hand-written; there was no way to describe a set of sheets and have them all verified | `workbooks/test-set.json` (14 sheets + dashboard) and `verify-test-set.mjs`, which opens the file and renders every sheet |
+| 14 sheets made the footer tabs shrink and wrap into three-line labels | The tab strip scrolls, truncates long names with a title tooltip, and scrolls the active tab into view |
 | Harnesses assumed a blank start and inherited the previous run's saved workbook once restore worked | `resetWorkbook()` in `e2e/harness.mjs` starts each run blank and puts the previous workbook back on teardown |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts`
 (22 checks), `capabilityGating.test.ts` (25) and `workbookFile.test.ts` (43).
 `verify-ui` grew from 25 to 43 checks, `verify-connect` from 26 to 65,
 `verify-workbook.mjs` is new (36 checks, with its own server and data directory) and
-`verify-test-set.mjs` is new (20 checks, data-driven from the workbook file).
-Screenshots added: `51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`59`
-for the workbook and test-set flows.
+`verify-test-set.mjs` is new (28 checks, data-driven from the workbook file).
+Screenshots added: `51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`60`
+for the workbook, test-set and tab-strip work.
 
 The engine-side stub in `verify-connect.mjs` now answers a query by **echoing its
 shape** rather than returning one canned response. A canned response is what made a
@@ -355,6 +363,10 @@ limitations list predates the join work and has not been audited.
   "passed" against a server left over from an earlier one. ENVIRONMENT.md has the
   recipe, including the fact that a process started under the wider sandbox is
   invisible to a confined command.)
+- **Never kill the process on 5180 on the assumption it is a leak.** It may be the
+  user's own `start.cmd` window. This session did exactly that while the user was
+  looking at the app. A busy 5180 means "someone is using it": run verification on a
+  spare port (`PORT=5181`, harnesses pointed at `http://127.0.0.1:5181/`) instead.
 - **Headless Chrome needs the wider sandbox.** In the confined sandbox it dies at
   start-up with `FATAL:mojo\...\platform_channel.cc Check failed: ... Zugriff
   verweigert` — a named-pipe restriction, not a Chrome bug. The same applies to the
@@ -396,7 +408,7 @@ Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset
 Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 18, `verify-viz`
 27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 65,
 `verify-tablecalc` 14, `verify-split` 16, `verify-measuresplit` 26, `verify-retry` 13,
-`verify-workbook` 36, `verify-test-set` 20, `verify-join` 38 (needs the engine). Each
+`verify-workbook` 36, `verify-test-set` 28, `verify-join` 38 (needs the engine). Each
 prints `N passed, M failed` and exits non-zero on failure. `verify-retry` and
 `verify-workbook` start their own server; the rest need one running and take
 `[appUrl] [chromePath] [outDir]`.
@@ -408,7 +420,7 @@ is worth showing.
 
 ## 11. Provenance
 
-28 commits, `55482d0` … HEAD. The last six are this session; the 14 before them are
+29 commits, `55482d0` … HEAD. The last seven are this session; the 14 before them are
 the work of earlier sessions and are described by their commit messages, which record
 what went wrong as well as what was built — including four test mistakes and one place
 where a fix was worse than the bug.
