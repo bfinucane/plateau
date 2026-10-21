@@ -675,6 +675,29 @@ export function useAppState() {
     return reported as Filter['operator'][];
   }, [state.dataset]);
 
+  /**
+   * Filter operators per scope, when the engine reports a difference.
+   *
+   * `null` means "not reported", and a missing scope inside the map means that
+   * scope falls back to `allowedFilterOperators`. Kept separate from the global
+   * list rather than merged, so a scope the engine did not mention is not silently
+   * narrowed by one it did.
+   */
+  const allowedFilterOperatorsByScope = useMemo<
+    Partial<Record<Filter['scope'], Filter['operator'][]>> | null
+  >(() => {
+    const reported = state.dataset?.capabilities?.filterOperatorsByScope;
+    if (!reported) return null;
+    const normalised: Partial<Record<Filter['scope'], Filter['operator'][]>> = {};
+    for (const scope of ['dimension', 'measure'] as const) {
+      const list = reported[scope];
+      if (Array.isArray(list) && list.length > 0) {
+        normalised[scope] = list as Filter['operator'][];
+      }
+    }
+    return Object.keys(normalised).length > 0 ? normalised : null;
+  }, [state.dataset]);
+
   return {
     state,
     dispatch,
@@ -688,6 +711,7 @@ export function useAppState() {
     retryQuery,
     allowedAggregations,
     allowedFilterOperators,
+    allowedFilterOperatorsByScope,
     selectDataset,
     refreshDatasets,
     addFieldToShelf,

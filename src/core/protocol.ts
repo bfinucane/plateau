@@ -110,8 +110,22 @@ export interface Capabilities {
    * the UI should label it.
    */
   countDistinctExact?: boolean;
-  /** Filter operators the engine evaluates natively. */
+  /** Filter operators the engine evaluates natively, for any scope. */
   filterOperators: Filter['operator'][];
+  /**
+   * Filter operators by scope, when they differ.
+   *
+   * `filterOperators` is the global report; this refines it. A scope present here
+   * overrides the global list for that scope; an absent scope falls back to the
+   * global list. The distinction matters because the two scopes are different
+   * operations: a dimension filter prunes rows before grouping, while a measure
+   * filter ranks or compares aggregated values after grouping. An engine can
+   * support `in` for dimensions and nothing for measures.
+   *
+   * Optional and additive: an engine that does not report it keeps working exactly
+   * as before, and protocolVersion does not change.
+   */
+  filterOperatorsByScope?: Partial<Record<Filter['scope'], Filter['operator'][]>>;
   /** Whether the engine evaluates `lod` AST nodes itself. */
   supportsLod: boolean;
   /**
@@ -135,9 +149,20 @@ export interface Capabilities {
    * reported", and a client may try.
    */
   expressionFunctions: string[];
-  /** Whether the engine can return filter value lists in the query round trip. */
+  /**
+   * Whether the engine can return filter value lists in the query round trip.
+   *
+   * When false, a client must not expect `domainFor` to be honoured: it has to
+   * fetch the values it needs another way (a bounded sample, or not at all).
+   */
   supportsInlineDomain: boolean;
-  /** Maximum rows the engine will return in one response. */
+  /**
+   * Maximum rows the engine will return in one response.
+   *
+   * A client must clamp requested limits to this. It matters most where partial
+   * rows would be WRONG rather than merely truncated — a client-side LOD fallback
+   * computed over half a dataset returns plausible numbers that are not the answer.
+   */
   maxRows?: number;
 }
 
@@ -283,6 +308,7 @@ export type ProtocolErrorCode =
   | 'unsupported_aggregation'
   | 'unsupported_filter'
   | 'unsupported_expression'
+  | 'row_limit'
   | 'invalid_argument'
   | 'engine_error'
   | 'version_mismatch';

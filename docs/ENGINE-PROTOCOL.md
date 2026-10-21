@@ -359,6 +359,21 @@ The list fields are what make the client honest, so say exactly what you impleme
   dialogs, and refuses a query naming any other as `unsupported_filter` **before
   sending it**. Report the operators you actually evaluate; reporting a superset
   produces failures at query time instead of at the control.
+- **`filterOperatorsByScope`** — *optional*, refines `filterOperators`. A scope
+  present here overrides the global list for that scope; an absent scope falls back
+  to the global list. The two scopes are different operations: a `dimension` filter
+  prunes rows **before** grouping, a `measure` filter ranks or compares
+  **aggregated** values after it. An engine can support `in` for dimensions and
+  nothing for measures:
+
+  ```json
+  "filterOperators": ["in", "equals", "between", "notNull"],
+  "filterOperatorsByScope": { "measure": ["top", "bottom"] }
+  ```
+
+  Additive and optional. Plateau uses it for the dialog modes (Range and "exclude
+  nulls" are dimension-scope on a dimension field; Top/Bottom are always
+  measure-scope) and for server-side `unsupported_filter` refusal.
 - **`expressionFunctions`** — the plain function names a calculated field may
   `call`, uppercased. It does **not** include aggregates (those are
   `aggregations`) and it does **not** include `IF` (an AST node, not a function).
@@ -368,6 +383,16 @@ The list fields are what make the client honest, so say exactly what you impleme
   feature; un-joined data looks correct.
 - **`countDistinctExact`** — `false` while `COUNTD` is unimplemented or
   approximate. Do not claim exactness you do not have.
+- **`supportsInlineDomain`** — whether `domainFor` is honoured. If `false`, a client
+  must **not** expect the distinct value lists to come back with the query; Plateau
+  stops sending `domainFor` and takes a bounded sample for those lists instead.
+  Sending it anyway gets an empty list, which a filter dialog cannot tell apart
+  from "this field has no values".
+- **`maxRows`** — the most rows the engine will return in one response. A client
+  must clamp requested limits to it. The case that matters is not a truncated
+  chart, it is a truncated **materialisation**: a client-side LOD computed over
+  half a dataset returns plausible numbers that are not the answer, so Plateau
+  refuses a partial table with `row_limit` instead of computing it.
 
 An **empty** `expressionFunctions` list is a meaningful answer: "this engine has no
 expression evaluator". Plateau then refuses to push a calculated field down at all,

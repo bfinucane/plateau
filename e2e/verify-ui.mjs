@@ -519,8 +519,12 @@ try {
     (await evaluate(`Boolean(document.querySelector('.workbook-menu-trigger'))`)) === true);
 
   // Saving rotates the current file into the backup position, which is what makes
-  // Restore backup meaningful. The app also autosaves, but a save here makes the
-  // state deterministic rather than dependent on how long the harness has run.
+  // Restore backup meaningful. The app also autosaves, and it deliberately does NOT
+  // rewrite identical content — so by the time this runs the view above may already
+  // be saved, and a Save would be a no-op with no generation to restore. Make one
+  // real change first, and save before autosave's debounce catches it.
+  await evaluate(`window.__click('Profit')`);
+  await sleep(200);
   check('Save workbook is a menu action', (await workbookMenuAction('save')) === 'ok');
   await sleep(1500);
 

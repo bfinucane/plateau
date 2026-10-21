@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, nine session commits on top of `0e252ab`. Every number
+Written on branch `main`, eleven session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,12 +13,12 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 31 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
-| Source | 55 files in `src/`, ~21,300 lines |
-| Unit tests | **551 checks**, 16 suites, all passing |
-| Browser tests | **411 checks**, 15 harnesses, all passing |
+| Commits | 33 total; **2 unpushed** (`origin/main` is at `7581189`) |
+| Source | 56 files in `src/`, ~22,000 lines |
+| Unit tests | **584 checks**, 17 suites, all passing |
+| Browser tests | **413 checks**, 15 harnesses, all passing |
 | Screenshots | 53, in `docs/screenshots/` |
-| Bundle | `dist/web/assets/index-Cd-Izv4y.js` (built this session) |
+| Bundle | `dist/web/assets/index-Dkq1T7vP.js` (built this session) |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -156,17 +156,22 @@ Worth knowing before "fixing" any of it:
    **vocabulary the engine does not implement** — an aggregation missing from
    `capabilities.aggregations`, a function missing from `expressionFunctions`, or
    *any* formula on an engine that advertises an empty `expressionFunctions`, which
-   means "no expression evaluator" (the Rust engine on 8080 says exactly that).
+   means "no expression evaluator".
 9. **Menus follow the reported capabilities, and only a report gates.** `undefined`
    capabilities (a local dataset, or an engine with no capabilities endpoint) means
    "offer everything": a guess that disables a working feature is as wrong as one
    that offers a broken one. Three lists drive three controls — `aggregations` the
-   pill editor, `filterOperators` the filter dialogs, `expressionFunctions` the
-   formula checker. A value already in the workbook that the engine lacks stays
-   visible and is labelled: an aggregation reads `(unsupported)`, a filter chip says
-   `not supported by this data source`. For filters the engine's list is also
-   enforced server-side, as `unsupported_filter`, because a workbook can be saved
-   against one engine and opened against another.
+   pill editor, `filterOperators`/`filterOperatorsByScope` the filter dialogs,
+   `expressionFunctions` the formula checker. A value already in the workbook that the
+   engine lacks stays visible and is labelled: an aggregation reads `(unsupported)`, a
+   filter chip says `not supported by this data source`. For filters the engine's list
+   is also enforced server-side, as `unsupported_filter`, per scope when the engine
+   reports one, because a workbook can be saved against one engine and opened against
+   another. The non-list reports are consumed too: requested limits are clamped to
+   `maxRows` (a truncated *materialisation* is refused as `row_limit`, because a
+   client-side LOD over part of a dataset returns plausible wrong numbers), and an
+   engine with `supportsInlineDomain: false` is not sent `domainFor` — its filter value
+   lists come from a bounded sample instead.
 10. **The status line owns one clear timer.** Setting a message cancels the previous
     message's timer; otherwise an earlier save's cleanup blanks a later "Restored the
     previous workbook generation". A harness caught this, not a user.
@@ -250,7 +255,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Nine commits on top of `0e252ab` — six features, a wire follow-up, two notes on
+Eleven commits on top of `0e252ab` — seven features, a wire follow-up and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
 | Was | Now |
@@ -271,15 +276,18 @@ verification hygiene. The commit messages have the detail; the shape:
 | `null` measure cells were coerced to zero by pie, scatter, heat map, treemap and waterfall builders | Absence stays absent in every mark; charts gap, tooltips show `—`, tables empty, trend lines skip nulls |
 | Two measures on one shelf inferred a scatter, which plotted a dimension on an axis and collapsed every point to zero | A scatter needs a measure on each axis; two measures on one shelf are a clustered bar |
 | Harnesses assumed a blank start and inherited the previous run's saved workbook once restore worked | `resetWorkbook()` in `e2e/harness.mjs` starts each run blank and puts the previous workbook back on teardown |
+| `maxRows` was reported and ignored; `supportsInlineDomain: false` still got `domainFor`; filter support was one global list | Limits are clamped to the engine cap (a partial materialisation is refused as `row_limit`), inline-domain-less engines get a bounded-sample value list, and the optional per-scope filter report gates dialogs and server-side refusals |
+| A third dimension vanished from line/area charts, and heat maps showed at most two dimensions | Every placed dimension nests into the axis labels: extras after the series on line/area, per shelf on a heat map |
+| `verify-ui`'s restore check passed only because a stale backup file happened to exist | The harness makes a real change before its save, so the skip-identical rewrite cannot leave it without a generation to restore |
 
-New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (22),
-`capabilityGating.test.ts` (27 now), `workbookFile.test.ts` (43),
-`nullCells.test.ts` (22) and `markInference.test.ts` (7). `verify-ui` grew from 25 to
-43 checks and `verify-connect` from 26 to 78; `verify-workbook.mjs` (36 checks, own
-server and data directory) and `verify-test-set.mjs` (28 checks, data-driven from the
-workbook file) are new. Screenshots added: `51-three-dimensions.png`,
-`52-connect-calculated.png`, `53`–`60` for the workbook, test-set and tab-strip work,
-and `61-null-cells.png`.
+New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (29),
+`capabilityGating.test.ts` (43), `workbookFile.test.ts` (43),
+`nullCells.test.ts` (22), `markInference.test.ts` (7) and `axisNesting.test.ts` (10).
+`verify-ui` grew from 25 to 43 checks and `verify-connect` from 26 to 80;
+`verify-workbook.mjs` (36 checks, own server and data directory) and
+`verify-test-set.mjs` (28 checks, data-driven from the workbook file) are new.
+Screenshots added: `51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`60`
+for the workbook, test-set and tab-strip work, and `61-null-cells.png`.
 
 The engine-side stub in `verify-connect.mjs` answers a query by **echoing its shape**
 rather than returning one canned response, and returns one `null` measure cell. A
@@ -316,8 +324,9 @@ and returns **`null` in every group**; the join harness passes 38/38 against it.
 
 Ordered by what I would do next.
 
-### 8.1 Nothing is unpushed
-`origin/main` matches `HEAD` at `7581189`; the wire follow-up was pushed. `origin` is
+### 8.1 Two commits unpushed
+The user already pushed the wire follow-up (`7581189`). Unpushed now: the handover
+correction and the capability/nesting work. `origin` is
 https://github.com/bfinucane/plateau.git.
 
 Pushing from an agent command needs the **wider sandbox**: the confined one fails with
@@ -341,29 +350,37 @@ and check `GET /v1/capabilities` at runtime before trusting a feature; a running
 server can predate the source.
 
 ### 8.3 Remaining capability gaps
-`capabilities()` reports more than the three lists now in use. Still unused:
+Most of `capabilities()` is now consumed (limits clamped to `maxRows`, a partial
+materialisation refused, `domainFor` skipped when `supportsInlineDomain` is false, and
+an optional per-scope `filterOperatorsByScope` honoured). What is left:
 
-- `maxRows` — a query or sample can ask for more rows than the engine will return.
-  `RemoteBackend.materializeTable` has its own 500k bound but does not read the
-  engine's.
-- `countDistinctExact` — the connect dialog labels a `COUNTD` estimate, but nothing
-  else does; there is no other count-distinct surface to label.
-- `supportsInlineDomain` — `domainFor` is sent unconditionally; an engine that says
-  `false` gets a request it may ignore.
-- Filter **scope** is not negotiable: the Rust engine honours dimension-scope
-  operators only, and the protocol has no way to say so. Today no reachable filter
-  uses a supported operator on a measure scope, so it does not bite — but a capable
-  engine could expose the mismatch.
+- `countDistinctExact` — only labels `COUNTD` in the connect dialog; there is no other
+  count-distinct surface to label.
+- **Per-scope filter support is client-only so far.** The optional
+  `filterOperatorsByScope` report exists in the contract, the dialogs and the server
+  validation honour it, and unit + stub checks cover it — but the reference engine does
+  not send it, so this negotiation has not been exercised against the real engine.
+  That is a wire addition for the OLAP session to adopt when it wants scope-accurate
+  refusals.
+- The engine advertises `filterOperators` but the scope meaning is still implied by
+  the operator (`top`/`bottom` are measure-scope; a range on a measure column is
+  measure-scope in Plateau's model) rather than stated.
 
-### 8.4 Nesting stops at the category axis
-Bar-like marks nest every placed dimension. The other marks still show at most two:
+### 8.4 Nesting now reaches line/area and heat maps; treemap and text differ
+Bar-like, line/area and heat-map marks now nest every placed dimension:
 
-- **line / area** — the second dimension becomes the series, a third is dropped;
-- **heat map** — two axes, two dimensions;
-- **treemap** — axis dimension plus colour;
-- **text** — cross-tab of the first dimension per axis.
+- **bar-like** — every placed dimension except the colour series;
+- **line / area** — the first dimension on the axis, the second (or the colour) as the
+  series, every further placed dimension nested after it;
+- **heat map** — nests per shelf: all Columns-shelf dimensions across, all Rows-shelf
+  dimensions down;
+- **treemap** — still axis dimension + colour as its two hierarchy levels; a third
+  dimension is not shown;
+- **text** — a flat DOM grid: every dimension appears as its own column, and there is
+  no cross-tab (the earlier handover note saying "first dimension per axis" was wrong).
 
-Either extend each builder or say in the UI that the extra field is grouping only.
+Remaining work here is the treemap's N-level hierarchy, and a real cross-tab for the
+text mark if that is wanted.
 
 ### 8.5 The folder is still called `tableau-clone`
 The project is Plateau. The rename is blocked only because the user's browser and
@@ -456,22 +473,22 @@ audited once more but still predates some of the join work.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 551 unit checks
+node scripts/test.mjs                                   # 584 unit checks
 node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 ```
 
 Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset` 38,
-`queryValidation` 17, `capabilityGating` 27, `tableCalcs` 51, `workbookBackup` 14,
-`split` 35, `axisSelection` 34, `aggregationMenu` 22, `workbookFile` 43, `nullCells` 22,
-`markInference` 7, `join` 28.
+`queryValidation` 17, `capabilityGating` 43, `tableCalcs` 51, `workbookBackup` 14,
+`split` 35, `axisSelection` 34, `aggregationMenu` 29, `workbookFile` 43, `nullCells` 22,
+`markInference` 7, `axisNesting` 10, `join` 28.
 
 Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 18, `verify-viz`
-27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 78,
+27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 80,
 `verify-tablecalc` 14, `verify-split` 16, `verify-measuresplit` 26, `verify-retry` 13,
 `verify-workbook` 36, `verify-test-set` 28, `verify-join` 38 (needs the engine). Each
 prints `N passed, M failed` and exits non-zero on failure. `verify-retry` and
-`verify-workbook` start their own server; the rest need one running and take
-`[appUrl] [chromePath] [outDir]`.
+`verify-workbook` start their own server and take `[chromePath] [outDir]`; the rest
+need one running and take `[appUrl] [chromePath] [outDir]`.
 
 Screenshots are written to `.tmp/` and promoted to `docs/screenshots/` when a change
 is worth showing.
@@ -480,7 +497,7 @@ is worth showing.
 
 ## 11. Provenance
 
-31 commits, `55482d0` … HEAD. The last nine are this session; the 14 before them are
+33 commits, `55482d0` … HEAD. The last eleven are this session; the 14 before them are
 the work of earlier sessions and are described by their commit messages, which record
 what went wrong as well as what was built — including four test mistakes and one place
 where a fix was worse than the bug.

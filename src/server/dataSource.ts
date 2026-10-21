@@ -377,8 +377,35 @@ export class RemoteBackend implements DatasetBackend {
   }
 
   async sample(limit: number, offset = 0): Promise<SampleResponse> {
-    const response = await this.transport.sample({ dataset: this.id, limit, offset });
+    const response = await this.transport.sample({
+      dataset: this.id,
+      limit: await this.clampToEngineLimit(limit),
+      offset,
+    });
     return response;
+  }
+
+  /**
+   * The engine's own row cap, applied to a requested limit.
+   *
+   * Asking for more than the engine will return is not an error it reports
+   * usefully: the request is simply capped. Clamping here keeps the request honest
+   * and makes a truncated sample explainable instead of mysterious.
+   */
+  private async clampToEngineLimit(limit: number): Promise<number> {
+    const capabilities = await this.capabilitiesSafe();
+    const maxRows = capabilities?.maxRows;
+    if (typeof maxRows !== 'number' || !Number.isFinite(maxRows) || maxRows <= 0) return limit;
+    return Math.min(limit, maxRows);
+  }
+
+  /** `capabilities()` that treats a failure as "not reported" rather than throwing. */
+  private async capabilitiesSafe(): Promise<Capabilities | null> {
+    try {
+      return await this.capabilities();
+    } catch {
+      return null;
+    }
   }
 
   async query(spec: QuerySpec): Promise<QueryResult> {
@@ -386,6 +413,11 @@ export class RemoteBackend implements DatasetBackend {
     const capabilities = await this.capabilities();
 
     const request = specToRequest(this.id, spec);
+    if (typeof request.limit === 'number') {
+      // The engine will cap this anyway; clamping locally means the request says
+      // what will actually happen, and a caller can trust `truncated` if it reads it.
+      request.limit = await this.clampToEngineLimit(request.limit);
+    }
 
     /*
      * Attach the join, but only when the engine says it understands one.
@@ -459,24 +491,55 @@ export class RemoteBackend implements DatasetBackend {
      * another, and `/api/query` is reachable directly. `unsupported_filter` is the
      * caller's mistake, so it must stay distinguishable from an engine fault.
      *
+     * Reports can be per SCOPE: dimension filters prune rows before grouping, while
+     * measure filters compare aggregated values after it, and an engine may support
+     * one and not the other. A scope-specific list overrides the global one; an
+     * absent scope falls back to it.
+     *
      * The LOD fallback above deliberately runs BEFORE this check: that path
      * evaluates the filters with the local engine, whose capability list is not
      * the remote one.
      */
-    if (capabilities && Array.isArray(capabilities.filterOperators)) {
-      const implemented = new Set(capabilities.filterOperators);
-      const unsupported = request.filters.filter((filter) => !implemented.has(filter.operator));
-      if (unsupported.length > 0) {
-        const named = unsupported
-          .map((filter) => `"${filter.operator}" on "${filter.field}"`)
-          .join(', ');
-        throw new ProtocolError(
-          'unsupported_filter',
-          `This engine does not implement ${named}. It implements: ` +
-            `${[...implemented].join(', ') || 'no filter operators'}.`,
-          'capabilities.filterOperators',
-        );
+    const operatorsForScope = (
+      scope: 'dimension' | 'measure',
+    ): Filter['operator'][] | null => {
+      const byScope = capabilities?.filterOperatorsByScope;
+      const scoped = byScope?.[scope];
+      if (Array.isArray(scoped) && scoped.length > 0) return scoped;
+      if (Array.isArray(capabilities?.filterOperators) && capabilities.filterOperators.length > 0) {
+        return capabilities.filterOperators;
       }
+      return null;
+    };
+
+    const unsupportedByScope = new Map<string, { field: string; operator: string }[]>();
+    for (const filter of request.filters) {
+      const implemented = operatorsForScope(filter.scope);
+      if (!implemented) continue;
+      if (implemented.includes(filter.operator)) continue;
+      const bucket = unsupportedByScope.get(filter.scope) ?? [];
+      bucket.push({ field: filter.field, operator: filter.operator });
+      unsupportedByScope.set(filter.scope, bucket);
+    }
+
+    if (unsupportedByScope.size > 0) {
+      const named: string[] = [];
+      const details: string[] = [];
+      for (const [scope, filters] of unsupportedByScope) {
+        named.push(
+          filters.map((entry) => `"${entry.operator}" on "${entry.field}" (${scope} scope)`).join(', '),
+        );
+        const implemented = operatorsForScope(scope as 'dimension' | 'measure') ?? [];
+        details.push(`for ${scope} filters: ${implemented.join(', ') || 'none'}`);
+      }
+      throw new ProtocolError(
+        'unsupported_filter',
+        `This engine does not implement ${named.join(', ')}. It implements ` +
+          `${details.join('; ')}.`,
+        unsupportedByScope.size === 1 && unsupportedByScope.has('measure')
+          ? 'capabilities.filterOperatorsByScope.measure'
+          : 'capabilities.filterOperators',
+      );
     }
 
     validateQueryRequest(request);
@@ -497,6 +560,17 @@ export class RemoteBackend implements DatasetBackend {
     // returns a thousand distinct order amounts for a numeric filter control.
     if (await this.isRangeField(field)) return [];
 
+    /*
+     * An engine that says it cannot return a domain inline gets no `domainFor`:
+     * sending it anyway is a request known to be ignored, and the empty answer then
+     * looks like "this field has no values". A bounded sample is a worse distinct
+     * path but it is a real one.
+     */
+    const capabilities = await this.capabilitiesSafe();
+    if (capabilities?.supportsInlineDomain === false) {
+      return this.domainFromSample(field, limit);
+    }
+
     // A domain read is a one-dimension, zero-measure query — the engine's own
     // distinct-value path rather than a scan-and-dedupe in the client.
     const response = await this.transport.query({
@@ -505,10 +579,40 @@ export class RemoteBackend implements DatasetBackend {
       groupBy: [{ name: field }],
       measures: [],
       filters: [],
-      limit,
+      limit: await this.clampToEngineLimit(limit),
       domainFor: [field],
     });
     return response.domain[field] ?? [];
+  }
+
+  /**
+   * Distinct values from a bounded sample, for an engine with no inline domain.
+   *
+   * The sample is a prefix of the data, not a scan, so a value that only appears
+   * late can be missed. That is why the engine's own distinct path is preferred
+   * when offered; this is the fallback that keeps a filter dialog usable rather
+   * than empty.
+   */
+  private async domainFromSample(field: string, limit: number): Promise<unknown[]> {
+    const sample = await this.transport.sample({
+      dataset: this.id,
+      limit: await this.clampToEngineLimit(Math.max(limit, 1000)),
+    });
+    const index = sample.columns.indexOf(field);
+    if (index < 0) return [];
+
+    const seen = new Set<string>();
+    const values: unknown[] = [];
+    for (const row of sample.rows) {
+      const value = row[index];
+      if (value === null || value === undefined) continue;
+      const key = String(value);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      values.push(value);
+      if (values.length >= limit) break;
+    }
+    return values;
   }
 
   /** True when the field should be range-filtered rather than enumerated. */
@@ -537,10 +641,34 @@ export class RemoteBackend implements DatasetBackend {
    */
   async materializeTable(maxRows = 500_000): Promise<DataTable> {
     const { buildTableFromRows } = await import('../core/table.js');
-    const response = await this.transport.sample({
-      dataset: this.id,
-      limit: maxRows,
-    });
+
+    /*
+     * Respect the engine's own cap, and refuse to return a partial table.
+     *
+     * This is the escape hatch for row access (client-side LOD, row-level
+     * formulas). An LOD computed over a truncated table returns plausible numbers
+     * that are NOT the answer, and nothing downstream can tell. So a truncated
+     * materialisation is an explicit error, not a smaller table.
+     */
+    const capabilities = await this.capabilitiesSafe();
+    const engineMaxRows = capabilities?.maxRows;
+    const requested =
+      typeof engineMaxRows === 'number' && Number.isFinite(engineMaxRows) && engineMaxRows > 0
+        ? Math.min(maxRows, engineMaxRows)
+        : maxRows;
+
+    const response = await this.transport.sample({ dataset: this.id, limit: requested });
+    if (response.rowCount > response.rows.length) {
+      throw new ProtocolError(
+        'row_limit',
+        `This engine can return at most ${requested.toLocaleString()} rows, and this ` +
+          `dataset has ${response.rowCount.toLocaleString()}. Computing this view ` +
+          'client-side over a partial table would produce wrong numbers, so it is ' +
+          'not attempted.',
+        'capabilities.maxRows',
+      );
+    }
+
     return buildTableFromRows(response.columns, response.rows.map((r) => r.map(String)), {
       name: this.name,
     });

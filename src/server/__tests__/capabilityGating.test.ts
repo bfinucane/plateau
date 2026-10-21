@@ -21,6 +21,7 @@ import type { AddressInfo } from 'node:net';
 import { PROTOCOL_VERSION, ProtocolError, type Capabilities } from '../../core/protocol.js';
 import { collectFunctionNames, parseFormula } from '../../core/expression.js';
 import { HttpEngineTransport } from '../httpTransport.js';
+import type { RemoteBackend } from '../dataSource.js';
 import {
   CalculatedFieldError,
   addCalculatedField,
@@ -143,6 +144,26 @@ function startStub(
         );
         return;
       }
+      if ((req.url ?? '').includes('/sample')) {
+        // A small bounded slice, with duplicates so distinct-value extraction is
+        // actually exercised. `rowCount` is the dataset total, as the contract
+        // says. `sample` is a GET, so the limit arrives in the query string.
+        const limitParam = new URL(`http://stub${req.url}`).searchParams.get('limit');
+        const limit = limitParam === null ? undefined : Number(limitParam);
+        const rows = [
+          ['East', 10],
+          ['West', 20],
+          ['East', 30],
+        ];
+        res.end(
+          JSON.stringify({
+            columns: ['Region', 'Sales'],
+            rows: rows.slice(0, limit ?? rows.length),
+            rowCount: rows.length,
+          }),
+        );
+        return;
+      }
       res.end(JSON.stringify(catalog));
     });
   });
@@ -252,6 +273,134 @@ async function main(): Promise<void> {
     });
     check('an engine that does not report operators is not gated',
       result.table.rowCount === 3, String(result.table.rowCount));
+    server.close();
+  }
+
+  // ------------------------------------------------------ filter scopes ---
+  section('A per-scope filter report overrides the global list for that scope');
+
+  {
+    // The engine supports `in` for both scopes, and `between`/`top` nowhere — but
+    // reports it per scope, which must beat the (deliberately looser) global list.
+    const scoped = capabilities({
+      filterOperators: ['in', 'equals', 'between', 'top'],
+      filterOperatorsByScope: { dimension: ['in', 'equals'], measure: ['in'] },
+    });
+    const requests: RecordedRequest[] = [];
+    const { dataset, server } = await remoteDataset(scoped, requests);
+    const before = queryRequests(requests).length;
+
+    const dimensionError = await rejected(() =>
+      queryDataset(dataset, {
+        fields: [{ name: 'Region', kind: 'dimension' }],
+        filters: [
+          { id: 'f1', field: 'Region', scope: 'dimension', operator: 'between', min: 1, max: 2 },
+        ],
+      }),
+    );
+    check('a dimension filter outside the dimension-scope list is refused',
+      dimensionError instanceof ProtocolError && dimensionError.code === 'unsupported_filter',
+      `${(dimensionError as ProtocolError)?.code}: ${dimensionError?.message}`);
+    check('the refusal says which scope and what that scope implements',
+      /dimension scope/.test(dimensionError?.message ?? '') &&
+        /for dimension filters: in, equals/.test(dimensionError?.message ?? ''),
+      dimensionError?.message);
+
+    const measureError = await rejected(() =>
+      queryDataset(dataset, {
+        fields: [{ name: 'Region', kind: 'dimension' }],
+        filters: [{ id: 'f2', field: 'Region', scope: 'measure', operator: 'top', limit: 3 }],
+      }),
+    );
+    check('a measure filter outside the measure-scope list is refused',
+      measureError instanceof ProtocolError && measureError.code === 'unsupported_filter',
+      `${(measureError as ProtocolError)?.code}: ${measureError?.message}`);
+    check('and it is the scope, not the global list, that decides',
+      /measure scope/.test(measureError?.message ?? ''),
+      measureError?.message);
+    check('neither refusal reached the engine', queryRequests(requests).length === before,
+      `${queryRequests(requests).length - before} queries`);
+
+    const allowed = await queryDataset(dataset, {
+      fields: [{ name: 'Region', kind: 'dimension' }],
+      filters: [{ id: 'f3', field: 'Region', scope: 'dimension', operator: 'in', values: ['East'] }],
+    });
+    check('a filter inside the scope list passes', allowed.table.rowCount === 3,
+      String(allowed.table.rowCount));
+    check('and does reach the engine', queryRequests(requests).length === before + 1,
+      `${queryRequests(requests).length - before} queries`);
+    server.close();
+  }
+
+  // ----------------------------------------------------------- row caps ---
+  section('The engine row cap is clamped, and a partial table is refused');
+
+  {
+    const capped = capabilities({ maxRows: 2 });
+    const requests: RecordedRequest[] = [];
+    const { dataset, server } = await remoteDataset(capped, requests);
+
+    await dataset.backend.sample(10);
+    const sampleRequest = requests.filter((request) => request.url.includes('/sample')).at(-1);
+    const sampleLimit = sampleRequest
+      ? new URL(`http://stub${sampleRequest.url}`).searchParams.get('limit')
+      : null;
+    check('a sample limit larger than maxRows is clamped', sampleLimit === '2', String(sampleLimit));
+
+    await queryDataset(dataset, { fields: [{ name: 'Region', kind: 'dimension' }], limit: 10 });
+    const queryBody = queryRequests(requests).at(-1)?.body as { limit?: number } | undefined;
+    check('a query limit larger than maxRows is clamped', queryBody?.limit === 2,
+      JSON.stringify(queryBody));
+
+    /*
+     * Materialising rows for a client-side LOD over a partial table produces
+     * plausible wrong numbers, so it must fail loudly instead.
+     */
+    const error = await rejected(() => (dataset.backend as RemoteBackend).materializeTable());
+    check('materialising a truncated table is refused, not silently partial',
+      error instanceof ProtocolError && error.code === 'row_limit',
+      `${(error as ProtocolError)?.code}: ${error?.message}`);
+    check('the refusal names the cap and the real size',
+      /at most 2 rows/.test(error?.message ?? '') && /dataset has 3/.test(error?.message ?? ''),
+      error?.message);
+    server.close();
+  }
+
+  // ------------------------------------------------ inline domain support ---
+  section('An engine without inline domains is not sent domainFor');
+
+  {
+    const requests: RecordedRequest[] = [];
+    const { dataset, server } = await remoteDataset(
+      capabilities({ supportsInlineDomain: false }),
+      requests,
+    );
+
+    const values = await dataset.backend.domain('Region');
+    const domainQueries = queryRequests(requests).filter((request) =>
+      JSON.stringify(request.body).includes('domainFor'),
+    );
+    check('no domainFor query is sent', domainQueries.length === 0,
+      JSON.stringify(domainQueries.map((request) => request.url)));
+    check('the values come from a bounded sample instead',
+      requests.some((request) => request.url.includes('/sample')));
+    check('and are deduplicated', JSON.stringify(values) === JSON.stringify(['East', 'West']),
+      JSON.stringify(values));
+    server.close();
+  }
+
+  {
+    const requests: RecordedRequest[] = [];
+    const { dataset, server } = await remoteDataset(capabilities(), requests);
+
+    const values = await dataset.backend.domain('Region');
+    const domainQuery = queryRequests(requests).find((request) =>
+      JSON.stringify(request.body).includes('domainFor'),
+    );
+    check('an engine that supports it still gets the inline domain query',
+      Boolean(domainQuery));
+    check('and its answer is used', JSON.stringify(values) === JSON.stringify(['East', 'West', 'Central']),
+      JSON.stringify(values));
     server.close();
   }
 

@@ -210,6 +210,14 @@ export interface EngineCapabilities {
   aggregations: Aggregation[];
   countDistinctExact?: boolean;
   filterOperators: string[];
+  /**
+   * Filter operators by scope, when the engine reports a difference.
+   *
+   * A scope present here overrides the global list for that scope; an absent scope
+   * falls back to it. Optional and additive — an engine that omits it behaves as
+   * before.
+   */
+  filterOperatorsByScope?: Partial<Record<'dimension' | 'measure', string[]>>;
   supportsLod: boolean;
   /**
    * Whether the engine honours a `join` block.

@@ -59,7 +59,11 @@ function capabilities() {
     protocolVersion: 1,
     aggregations: ['SUM', 'AVG', 'MIN', 'MAX', 'COUNT', 'COUNTD'],
     countDistinctExact: false,
-    filterOperators: ['in', 'between'],
+    // Global report plus a per-scope refinement: `notNull` is a dimension-scope
+    // operator here, not a measure-scope one. That is the shape the wire contract
+    // added so an engine with different support per scope can say so.
+    filterOperators: ['in', 'between', 'notNull'],
+    filterOperatorsByScope: { measure: ['in', 'between'] },
     supportsLod: stubSupportsLod,
     // Function CALLS only, exactly as the reference engine reports them. Aggregates
     // live in `aggregations` and `IF` is an AST node, not an entry here.
@@ -726,10 +730,11 @@ try {
 
   // ------------------------------------- filter controls follow the engine
   //
-  // The stub advertises filterOperators: ["in", "between"]. So a categorical filter
-  // can include but not exclude, and a numeric filter offers Range but not the
-  // ranking or null modes. The Rust engine reports only in/equals/notEquals, which
-  // would leave no numeric filter at all — same rule, stricter list.
+  // The stub advertises filterOperators ["in","between","notNull"] globally and
+  // narrows `measure` to ["in","between"]. So a categorical filter can include but
+  // not exclude, a numeric filter offers Range but not the ranking or null modes,
+  // and a measure-scope `notNull` filter is refused by the API even though the
+  // global list contains it.
   console.log('\nFilter controls follow the engine filter operators');
 
   const openFilter = (field) => evaluate(`(() => {
@@ -832,6 +837,29 @@ try {
     JSON.stringify(unsupportedFilter.body));
   check('and names the operators the engine does implement',
     /implements/.test(unsupportedFilter.body?.error ?? ''), JSON.stringify(unsupportedFilter.body));
+
+  // The stub's per-scope report narrows `notNull` to dimension scope. The global
+  // list includes it, so without honouring the scope this measure filter would pass.
+  const scopedFilter = await evaluate(`(async () => {
+    const datasetId = document.querySelector('#dataset-select')?.value;
+    const response = await fetch('/api/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        datasetId,
+        fields: [{ name: 'Region', kind: 'dimension' }],
+        filters: [{ id: 'f2', field: 'Sales', scope: 'measure', operator: 'notNull' }],
+      }),
+    });
+    return { status: response.status, body: await response.json() };
+  })()`);
+  console.log('  scoped-filter response:', JSON.stringify(scopedFilter));
+  check('a measure-scope operator the engine reports only for dimensions is refused',
+    scopedFilter.status === 400, String(scopedFilter.status));
+  check('the refusal names the scope and that scope\'s list',
+    /measure scope/.test(scopedFilter.body?.error ?? '') &&
+      /for measure filters: in, between/.test(scopedFilter.body?.error ?? ''),
+    JSON.stringify(scopedFilter.body));
 
   // ------------------------------------- LOD support is believed and reported
   console.log('\nAn engine that does claim LOD support');

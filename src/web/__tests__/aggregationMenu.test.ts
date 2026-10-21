@@ -12,11 +12,13 @@
  * "nothing works".
  */
 
+import type { Filter } from '../api.js';
 import {
   AGGREGATIONS,
   FILTER_MODES,
   availableAggregations,
   availableFilterModes,
+  filterOperatorsForScope,
   supportsFilterOperator,
 } from '../viewModel.js';
 
@@ -125,6 +127,38 @@ section('A reported engine offers only the filter operators it implements');
   check('a single supported mode is offered',
     partial.length === 1 && partial[0].mode === 'notNull',
     JSON.stringify(partial.map((entry) => entry.mode)));
+}
+
+section('A per-scope filter report refines the global list');
+
+{
+  const global: Filter['operator'][] = ['in', 'between', 'top'];
+  const byScope = { dimension: ['in'] as Filter['operator'][], measure: ['top'] as Filter['operator'][] };
+
+  check('a reported scope wins over the global list',
+    JSON.stringify(filterOperatorsForScope(global, byScope, 'dimension')) === JSON.stringify(['in']),
+    JSON.stringify(filterOperatorsForScope(global, byScope, 'dimension')));
+  check('the other scope uses its own list',
+    JSON.stringify(filterOperatorsForScope(global, byScope, 'measure')) === JSON.stringify(['top']),
+    JSON.stringify(filterOperatorsForScope(global, byScope, 'measure')));
+  check('an absent scope falls back to the global list',
+    JSON.stringify(filterOperatorsForScope(global, { dimension: ['in'] }, 'measure')) ===
+      JSON.stringify(global));
+  check('nothing reported at all means no gate',
+    filterOperatorsForScope(undefined, undefined, 'dimension') === undefined);
+  check('an empty scoped list is treated as unreported, like an empty global one',
+    JSON.stringify(filterOperatorsForScope(global, { dimension: [] }, 'dimension')) ===
+      JSON.stringify(global));
+
+  // The dialog consequence: a measure-scope report of [] (via fallback) must not
+  // silently offer a measure filter the engine never claimed.
+  const measureModes = availableFilterModes(filterOperatorsForScope(global, byScope, 'measure'));
+  check('measure-scope modes follow the measure-scope list',
+    measureModes.map((entry) => entry.mode).join(',') === 'top',
+    JSON.stringify(measureModes.map((entry) => entry.mode)));
+  const dimensionModes = availableFilterModes(filterOperatorsForScope(global, byScope, 'dimension'));
+  check('dimension-scope modes follow the dimension-scope list',
+    dimensionModes.length === 0, JSON.stringify(dimensionModes.map((entry) => entry.mode)));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

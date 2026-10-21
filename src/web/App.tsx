@@ -993,6 +993,7 @@ export function App() {
               columns={columns}
               datasetId={state.activeDatasetId ?? ''}
               supportedOperators={app.allowedFilterOperators ?? undefined}
+              supportedOperatorsByScope={app.allowedFilterOperatorsByScope ?? undefined}
               onAdd={addFilter}
               onRemove={removeFilter}
             />

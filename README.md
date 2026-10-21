@@ -338,18 +338,19 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 551 unit checks, 16 suites
+npm test         # 584 unit checks, 17 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
 
-`npm test` runs sixteen suites: `engine.test.ts` (expressions, CSV, inference, query
+`npm test` runs seventeen suites: `engine.test.ts` (expressions, CSV, inference, query
 execution, calculated fields), `lod.test.ts` (parsing, dimension resolution, filter
 ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport`,
 `remoteDataset`, `queryValidation` (unknown field names are refused),
-`capabilityGating` (filter operators and formula vocabulary), `workbookBackup`,
-`tableCalcs`, `split`, `axisSelection`, `aggregationMenu`, `workbookFile`,
-`nullCells` (absence is not zero, in every mark), `markInference` and `join`. LOD and
+`capabilityGating` (filter operators, scopes and formula vocabulary),
+`workbookBackup`, `tableCalcs`, `split`, `axisSelection`, `aggregationMenu`,
+`workbookFile`, `nullCells` (absence is not zero, in every mark), `markInference`,
+`axisNesting` (line and heat map show every placed dimension) and `join`. LOD and
 engine tests use a small hand-computable fixture so every expected number can be
 checked by arithmetic rather than by trusting the implementation.
 
@@ -369,7 +370,7 @@ node e2e/verify-viz.mjs        # 27 checks: scatter axes, trend-line fit, heat m
 node e2e/verify-sort.mjs       # 15 checks: Sort control reaches the engine; axis orientation
 node e2e/verify-treemap.mjs    # 16 checks: treemap hierarchy, tooltip paths, Detail guard
 node e2e/verify-dashboard.mjs  # 29 checks: panels, independent queries, resize, swap, persistence
-node e2e/verify-connect.mjs    # 78 checks: connect dialog, capability gating, pushed-down fields, null cells
+node e2e/verify-connect.mjs    # 80 checks: connect dialog, capability gating, pushed-down fields, null cells, filter scopes
 node e2e/verify-tablecalc.mjs  # 14 checks: table calculations in the real UI
 node e2e/verify-split.mjs      # 16 checks: split panes
 node e2e/verify-measuresplit.mjs # 26 checks: one pane per measure
@@ -380,7 +381,7 @@ node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **962 checks** — 551 unit, 411 browser.
+Total: **997 checks** — 584 unit, 413 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -390,15 +391,16 @@ Total: **962 checks** — 551 unit, 411 browser.
 | http transport | 35 | request encoding, error mapping, timeouts, doc/code consistency |
 | remote dataset | 38 | registration, failure modes, queries, pushed-down calculated fields |
 | query validation | 17 | unknown field names are refused, local and remote |
-| capability gating | 27 | filter operators and formula vocabulary are enforced |
+| capability gating | 43 | filter operators, per-scope reports, row caps, formula vocabulary |
 | table calculations | 51 | partitions, addressing, null handling |
 | workbook backup | 14 | rotation, restore, corruption |
 | split | 35 | partitioning, ordering, refusals |
 | axis selection | 34 | dimensions beat measures; nesting to any depth |
-| capability menus | 22 | aggregations and filter operators, never lying about the current value |
+| capability menus | 29 | aggregations, filter operators and per-scope lists, never lying about the current value |
 | workbook file | 43 | round trip, hand-authored files, refusals, repairs |
 | null cells | 22 | absence is not zero, in every mark |
 | mark inference | 7 | a scatter needs a measure on each axis |
+| axis nesting | 10 | line and heat map show every placed dimension |
 | joins | 28 | join schema, gating, capability refusal |
 
 Both browser and transport suites run against the real thing — a loopback HTTP
@@ -590,8 +592,11 @@ dataset metadata:
 | --- | --- |
 | `aggregations` | The pill editor's aggregation menu |
 | `filterOperators` | Which filter dialogs and modes the filter shelf offers |
+| `filterOperatorsByScope` | The same, refined per scope — the two scopes prune rows vs rank aggregates, so an engine may support one and not the other |
 | `expressionFunctions` | Which formula functions the editor offers, and whether a calculated field may be pushed down at all |
 | `supportsJoin` | Whether the connect dialog offers an attribute join |
+| `supportsInlineDomain` | Whether filter value lists travel with the query; `false` falls back to a bounded sample |
+| `maxRows` | The cap on every requested limit, including a materialisation, which is refused rather than truncated |
 
 A value already saved in a workbook that the engine lacks stays visible and
 labelled — an aggregation reads `(unsupported)`, a filter chip says "not supported by
@@ -669,13 +674,19 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
 - Native engine protocol: remote datasets, joins, and aggregate calculated fields
   pushed down as ASTs — **evaluated by the engine**, with the client validating the
   formula against the engine's own capability report
+- The capability report is fully consumed: aggregation and function lists gate the
+  menus, filter operators are per scope where reported, requested limits are clamped
+  to `maxRows`, and an engine without inline domains gets a bounded-sample fallback
+  instead of an empty filter list
+- Line, area and heat-map marks nest every placed dimension into the axis labels, on
+  top of the bar-like marks that already did; heat maps nest per shelf
 - Absent measure cells kept distinct from zero everywhere: charts, tooltips, tables,
   CSV, table calculations
 - Workbook autosave with a restorable previous generation, and portable JSON
   workbook files for keeping, sharing or hand-authoring test sheets
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 962 checks green (551 unit, 411 browser)
+- 997 checks green (584 unit, 413 browser)
 
 ### Connecting to an engine
 
@@ -796,9 +807,10 @@ executes it, and the client renders what comes back.
    the engine. The client refuses the second one with an explanation, but a
    higher-order expression (e.g. a ratio of two aggregates of the same column) still
    needs a separate calculated field or an engine change.
-3. **The rest of `capabilities()`.** `maxRows` is not consulted before asking for a
-   large sample, `supportsInlineDomain` is not used to skip `domainFor`, and filter
-   *scope* support (dimension vs measure) has no wire representation at all.
+3. **The rest of `capabilities()`.** `countDistinctExact` only labels `COUNTD` in the
+   connect dialog. The per-scope filter report is implemented client-side but the
+   reference engine does not send it yet, so that negotiation is untested against
+   the real engine. `maxRows` and `supportsInlineDomain` are now consulted.
 4. **Then** the higher-value analytics gaps: sets and groups, bins, reference lines,
    forecasting. Ranked in *Known limitations*.
 
@@ -838,12 +850,16 @@ Deliberately out of scope for this build, and the honest next steps:
   only by chance.** The engine reports a group with no cells as `null`; Plateau never
   turns that into zero, but it also cannot show a null in a pie slice or a treemap
   tile — those encodings have no way to draw absence, so the group is omitted.
-- **Filter capability is reported by operator, not by scope.** An engine that honours
-  `in` on a dimension but not on a measure cannot say so, so Plateau treats the list
-  as global. No reachable filter hits that mismatch today.
-- **Nesting beyond the category axis stops at two levels.** Bar-like marks nest every
-  placed dimension into the axis label; line/area, heat map, treemap and text still
-  show at most two, and the extra field only groups the query.
+- **Filter capability is reported per scope, but only if the engine says so.** The
+  wire contract gained an optional per-scope operator report; the reference engine
+  does not report it yet, so Plateau falls back to its global list. An engine that
+  reports it gets scope-accurate dialogs and refusals; one that does not is treated
+  exactly as before.
+- **Nesting reaches the category axis for bar-like, line/area and heat-map marks.**
+  Line and heat map now show every PLACED dimension (heat map nests per shelf —
+  Columns across, Rows down). A treemap still uses axis dimension + colour as its
+  hierarchy levels, and the text mark is a flat DOM grid that shows every dimension
+  as its own column rather than a cross-tab.
 - **Dashboards use a snapping grid, not a free-form canvas.** Panels carry column and
   row spans; there is no pixel positioning, overlapping, floating text, or
   cross-panel filtering. Dragging a header to swap positions is best-effort — the

@@ -243,6 +243,87 @@ export function nestCategories(outer: string[], inner: string[]): string[] {
 }
 
 /**
+ * Builds a category axis whose labels carry every dimension of the grouping.
+ *
+ * `levels` are already-formatted value arrays, one per dimension, outermost first,
+ * all row-aligned. The labels come back newline-separated (what ECharts expects for
+ * a multi-line tick), and `axisLabel` carries the rich-style formatter that draws
+ * the indent.
+ *
+ * The indent has to be DRAWN, not typed: ECharts centres each line of a multi-line
+ * label, which cancels leading spaces, so the second level looks like a sibling of
+ * the first. Rich styles give each line its own left edge and padding.
+ */
+function nestedCategoryAxis(
+  levels: string[][],
+  options: { rotateAt?: number; rotateDegrees?: number } = {},
+): { labels: string[]; axisLabel: Record<string, unknown>; levelCount: number } {
+  const labels = nestCategoryLevels(levels);
+  const levelCount = levels.length;
+  const rotateAt = options.rotateAt ?? 8;
+  const rotateDegrees = options.rotateDegrees ?? 32;
+
+  if (levelCount <= 1) {
+    /*
+     * One level is a plain value list, NOT a hierarchy: `nestCategoryLevels` blanks
+     * a repeated value so a group reads as a group, but a flat axis must print every
+     * value. Blanking here also collapsed distinct axis keys into one (the heat map
+     * lost its repeated row labels).
+     */
+    const flat = levels[0] ?? [];
+    return {
+      labels: flat,
+      levelCount,
+      axisLabel: { rotate: flat.length > rotateAt ? rotateDegrees : 0 },
+    };
+  }
+
+  return {
+    labels,
+    levelCount,
+    axisLabel: {
+      rotate: labels.length > rotateAt ? rotateDegrees : 0,
+      lineHeight: 13,
+      // Nested labels are wider, so the overlap hider starts dropping whole
+      // categories — two of four regions disappeared once, which loses more than
+      // the overlap ever cost. At small counts every label is shown.
+      interval: (labels.length <= 12 ? 0 : 'auto') as number | 'auto',
+      hideOverlap: labels.length > 12,
+      formatter: (value: string) => {
+        const lines = String(value).split('\n');
+        // Pad every level that exists, including blank repeated ones: a missing
+        // line would otherwise shift the levels below it up.
+        return Array.from(
+          { length: levelCount },
+          (_, level) => `{level${level}|${(lines[level] ?? '').trim()}}`,
+        ).join('\n');
+      },
+      rich: Object.fromEntries(
+        Array.from({ length: levelCount }, (_, level) => [
+          `level${level}`,
+          {
+            align: 'left' as const,
+            fontSize: 11,
+            color: '#5b6472',
+            // The first level has no indent; each level below adds one, so the
+            // drawn hierarchy matches the leading spaces in the data.
+            padding: [0, 0, 0, level * 14] as [number, number, number, number],
+          },
+        ]),
+      ),
+    },
+  };
+}
+
+/** True when the result column carries a date. */
+function isTemporalColumn(result: QueryResponse, index: number): boolean {
+  const meta = result.columnMeta[index];
+  return (
+    meta?.dataType === 'date' || meta?.logicalType === 'date' || meta?.logicalType === 'datetime'
+  );
+}
+
+/**
  * Maps each shelf encoding to its column in the query result.
  *
  * Column names must be taken from the RESPONSE rather than reconstructed
@@ -765,77 +846,20 @@ function buildBarLike(
     .map((encoding) => (columns ? columns.indexOf(encoding) : -1))
     .filter((index) => index >= 0);
 
-  const columnIsTemporal = (index: number): boolean => {
-    const meta = result.columnMeta[index];
-    return (
-      meta?.dataType === 'date' ||
-      meta?.logicalType === 'date' ||
-      meta?.logicalType === 'datetime'
-    );
-  };
-
-  const axisLabels =
-    nestedIndices.length > 0
-      ? nestCategoryLevels([
-          result.rows.map((row) => formatCategory(row[dimensionIndex], isDate)),
-          ...nestedIndices.map((index) =>
-            result.rows.map((row) => formatCategory(row[index], columnIsTemporal(index))),
-          ),
-        ])
-      : categories;
-
-  const nestingLevels = 1 + nestedIndices.length;
+  const axis = nestedCategoryAxis([
+    result.rows.map((row) => formatCategory(row[dimensionIndex], isDate)),
+    ...nestedIndices.map((index) =>
+      result.rows.map((row) => formatCategory(row[index], isTemporalColumn(result, index))),
+    ),
+  ]);
 
   const categoryAxis = {
     type: 'category',
-    data: axisLabels,
+    data: axis.labels,
     axisLabel: {
       ...AXIS_LABEL_STYLE,
-      rotate: axisLabels.length > 8 ? 32 : 0,
       hideOverlap: true,
-      /*
-       * The indent has to be drawn, not typed.
-       *
-       * A multi-line category label is centred line by line, so leading spaces in
-       * the second line are cancelled and the child looks like a sibling. Rich
-       * styles give each line its own left edge and padding, which is what makes
-       * the hierarchy visible.
-       */
-      ...(nestedIndices.length > 0
-        ? {
-            lineHeight: 13,
-            /*
-             * Nested labels are wider, so the overlap hider starts dropping whole
-             * categories — two of four regions disappeared, which loses more than
-             * the overlap ever cost. At small counts every label is shown; past
-             * that the hider earns its keep again.
-             */
-            interval: (axisLabels.length <= 12 ? 0 : 'auto') as number | 'auto',
-            hideOverlap: axisLabels.length > 12,
-            formatter: (value: string) => {
-              const lines = String(value).split('\n');
-              // Pad every level that exists, including blank repeated ones: a
-              // missing line would otherwise shift the levels below it up.
-              return Array.from(
-                { length: nestingLevels },
-                (_, level) => `{level${level}|${(lines[level] ?? '').trim()}}`,
-              ).join('\n');
-            },
-            rich: Object.fromEntries(
-              Array.from({ length: nestingLevels }, (_, level) => [
-                `level${level}`,
-                {
-                  align: 'left' as const,
-                  fontSize: 11,
-                  color: '#5b6472',
-                  // The first level has no indent; each level below adds one, so
-                  // the drawn hierarchy matches the leading spaces in the data.
-                  padding: [0, 0, 0, level * 14] as [number, number, number, number],
-                },
-              ]),
-            ),
-          }
-        : {}),
+      ...axis.axisLabel,
     },
     axisLine: AXIS_LINE_STYLE,
     axisTick: { show: false },
@@ -890,7 +914,6 @@ function buildLineLike(
   }
 
   const isDate = plan.isTemporal[plan.dimensionIndices.indexOf(dimensionIndex)];
-  const categories = result.rows.map((row) => formatCategory(row[dimensionIndex], isDate));
 
   // Group rows by the second dimension so each value becomes its own series.
   // A dimension on Color becomes one line per value; otherwise a second axis
@@ -901,6 +924,35 @@ function buildLineLike(
       ? columns.indexOf(colorEncoding)
       : plan.dimensionIndices[1];
 
+  /*
+   * Every PLACED dimension that is neither the x axis nor the series becomes a
+   * nesting level in the x label.
+   *
+   * A third dimension used to group the query and then vanish: the line was drawn
+   * but nothing on screen said which combination it belonged to. Nesting it in the
+   * axis label is the reading a hierarchical axis gives, and it matches what the
+   * bar-like marks already do.
+   *
+   * The series dimension is excluded on purpose: a line per value already says
+   * which series a point belongs to (and the legend names it), so repeating it
+   * under every tick would say it twice.
+   */
+  const placedDimensionIndices = [...(sheet?.shelves.columns ?? []), ...(sheet?.shelves.rows ?? [])]
+    .filter((encoding) => encoding.kind === 'dimension')
+    .map((encoding) => columns.indexOf(encoding))
+    .filter((index) => index >= 0);
+  const nestedIndices = [...new Set(placedDimensionIndices)].filter(
+    (index) => index !== dimensionIndex && index !== seriesDimensionIndex,
+  );
+
+  const axis = nestedCategoryAxis([
+    result.rows.map((row) => formatCategory(row[dimensionIndex], isDate)),
+    ...nestedIndices.map((index) =>
+      result.rows.map((row) => formatCategory(row[index], isTemporalColumn(result, index))),
+    ),
+  ]);
+  const categories = axis.labels;
+
   if (seriesDimensionIndex === undefined) {
     return {
       option: {
@@ -910,7 +962,7 @@ function buildLineLike(
           type: 'category',
           data: categories,
           boundaryGap: false,
-          axisLabel: { ...AXIS_LABEL_STYLE, hideOverlap: true },
+          axisLabel: { ...AXIS_LABEL_STYLE, hideOverlap: true, ...axis.axisLabel },
           axisLine: AXIS_LINE_STYLE,
           axisTick: { show: false },
         },
@@ -941,9 +993,11 @@ function buildLineLike(
   const seriesNames: string[] = [];
   const bySeries = new Map<string, Map<string, number | null>>();
 
-  for (const row of result.rows) {
+  for (const [rowIndex, row] of result.rows.entries()) {
     const seriesKey = formatCategory(row[seriesDimensionIndex], plan.isTemporal[seriesDimensionIndex]);
-    const category = formatCategory(row[dimensionIndex], isDate);
+    // The nested axis label is the row's category key, so a series with no point
+    // for a category is a genuine gap in the line rather than a lost row.
+    const category = categories[rowIndex];
     if (!bySeries.has(seriesKey)) {
       bySeries.set(seriesKey, new Map());
       seriesNames.push(seriesKey);
@@ -972,7 +1026,7 @@ function buildLineLike(
         type: 'category',
         data: categories,
         boundaryGap: false,
-        axisLabel: { ...AXIS_LABEL_STYLE, hideOverlap: true },
+        axisLabel: { ...AXIS_LABEL_STYLE, hideOverlap: true, ...axis.axisLabel },
         axisLine: AXIS_LINE_STYLE,
         axisTick: { show: false },
       },
@@ -1383,44 +1437,89 @@ function buildHeatmap(
   }
 
   // Orientation comes from the shelves, not column order: whatever is on
-  // Columns runs across the top, whatever is on Rows runs down the side.
+  // Columns runs across the top, whatever is on Rows runs down the side. EVERY
+  // dimension on a shelf nests, so a third dimension is shown rather than dropped.
   const columnShelf = sheet?.shelves.columns ?? [];
   const rowShelf = sheet?.shelves.rows ?? [];
 
-  const firstDimensionIndex = (shelf: Encoding[]): number => {
-    const encoding = shelf.find((e) => e.kind === 'dimension');
-    if (!encoding || !columns) return -1;
-    return columns.indexOf(encoding);
-  };
+  const shelfDimensionIndices = (shelf: Encoding[]): number[] =>
+    [
+      ...new Set(
+        shelf
+          .filter((encoding) => encoding.kind === 'dimension')
+          .map((encoding) => (columns ? columns.indexOf(encoding) : -1)),
+      ),
+    ].filter((index) => index >= 0);
 
-  const colCandidate = firstDimensionIndex(columnShelf);
-  const rowCandidate = firstDimensionIndex(rowShelf);
+  let colDims = shelfDimensionIndices(columnShelf);
+  let rowDims = shelfDimensionIndices(rowShelf);
 
-  const measureField = columns ? columns.labelOf(measureIndex) : measureLabelOf(result, measureIndex) || 'Value';
+  if (colDims.length === 0 && rowDims.length === 0) {
+    // A saved sheet can carry no shelves (an old workbook, or a harness calling
+    // the builder directly): first dimension across, the rest down.
+    colDims = [plan.dimensionIndices[0]];
+    rowDims = plan.dimensionIndices.slice(1);
+  } else if (colDims.length === 0) {
+    colDims = [plan.dimensionIndices.find((index) => !rowDims.includes(index)) ?? plan.dimensionIndices[0]];
+  } else if (rowDims.length === 0) {
+    const spare = plan.dimensionIndices.find((index) => !colDims.includes(index));
+    rowDims = spare !== undefined ? [spare] : colDims.length > 1 ? [colDims.pop() as number] : [];
+  }
 
-  const colDim = colCandidate >= 0 ? colCandidate : plan.dimensionIndices[0];
-  // The row dimension must differ from the column dimension.
-  const rowDim =
-    rowCandidate >= 0 && rowCandidate !== colDim
-      ? rowCandidate
-      : plan.dimensionIndices.find((i) => i !== colDim) ?? plan.dimensionIndices[1];
+  const colDim = colDims[0];
+  const rowDim = rowDims[0];
+  if (colDim === undefined || rowDim === undefined) {
+    return {
+      option: baseOption(),
+      notice:
+        'A heat map needs a dimension across and a dimension down. Put one on ' +
+        'Columns and one on Rows.',
+    };
+  }
 
-  const rowIsDate = plan.isTemporal[plan.dimensionIndices.indexOf(rowDim)];
-  const colIsDate = plan.isTemporal[plan.dimensionIndices.indexOf(colDim)];
+  const dimensionName = (index: number): string => result.columnMeta[index]?.name ?? '';
+  const xName = colDims.map(dimensionName).join(' / ');
+  const yName = rowDims.map(dimensionName).join(' / ');
 
-  const rowNames = [...new Set(result.rows.map((row) => formatCategory(row[rowDim], rowIsDate)))];
-  const colNames = [...new Set(result.rows.map((row) => formatCategory(row[colDim], colIsDate)))];
+  const colParts = colDims.map((index) =>
+    result.rows.map((row) => formatCategory(row[index], isTemporalColumn(result, index))),
+  );
+  const rowParts = rowDims.map((index) =>
+    result.rows.map((row) => formatCategory(row[index], isTemporalColumn(result, index))),
+  );
+
+  const colAxis = nestedCategoryAxis(colParts, { rotateAt: 6, rotateDegrees: 30 });
+  // The row labels are horizontal; rotating them would be unreadable.
+  const rowAxis = nestedCategoryAxis(rowParts, { rotateAt: Number.POSITIVE_INFINITY });
+
+  // Composite keys, first-seen order. The nested label is the key so the grid maps
+  // data cells to the same labels the axes show.
+  const colKeyToIndex = new Map<string, number>();
+  const rowKeyToIndex = new Map<string, number>();
+  const colKeyRow: number[] = [];
+  const rowKeyRow: number[] = [];
 
   /*
    * A cell with an absent measure is drawn EMPTY, not as the colour scale's
    * minimum. Mapping null to 0 would paint it as a real low value, and the colour
    * scale would then be computed including a value the group does not have.
    */
-  const data: [number, number, number | null][] = result.rows.map((row) => [
-    colNames.indexOf(formatCategory(row[colDim], colIsDate)),
-    rowNames.indexOf(formatCategory(row[rowDim], rowIsDate)),
-    toNumber(row[measureIndex]),
-  ]);
+  const data: [number, number, number | null][] = result.rows.map((row, rowIndex) => {
+    const colKey = colAxis.labels[rowIndex];
+    const rowKey = rowAxis.labels[rowIndex];
+    if (!colKeyToIndex.has(colKey)) {
+      colKeyToIndex.set(colKey, colKeyToIndex.size);
+      colKeyRow.push(rowIndex);
+    }
+    if (!rowKeyToIndex.has(rowKey)) {
+      rowKeyToIndex.set(rowKey, rowKeyToIndex.size);
+      rowKeyRow.push(rowIndex);
+    }
+    return [colKeyToIndex.get(colKey)!, rowKeyToIndex.get(rowKey)!, toNumber(row[measureIndex])];
+  });
+
+  const colNames = [...colKeyToIndex.keys()];
+  const rowNames = [...rowKeyToIndex.keys()];
 
   const presentValues = data
     .map((cell) => cell[2])
@@ -1436,8 +1535,11 @@ function buildHeatmap(
 
   const values = presentValues;
   const cellCount = rowNames.length * colNames.length;
-  const xName = result.columnMeta[colDim]?.name ?? '';
-  const yName = result.columnMeta[rowDim]?.name ?? '';
+  const measureField = columns ? columns.labelOf(measureIndex) : measureLabelOf(result, measureIndex) || 'Value';
+
+  /** A nested axis label flattened for a tooltip line. */
+  const flat = (label: string): string => label.replace(/\n/g, ' / ');
+
   return {
     option: {
       ...baseOption(),
@@ -1448,12 +1550,18 @@ function buildHeatmap(
         formatter: (params: unknown) => {
           const item = params as { value: [number, number, number | null] };
           const [c, r, v] = item.value;
-          // Name the full group and the measure, matching every other mark type.
-          // An absent cell says so rather than reading as zero.
+          // Name every level of both groups, and the measure. An absent cell says
+          // so rather than reading as zero.
+          const colLine = colDims.map(
+            (index, level) => `${dimensionName(index)}: ${colParts[level][colKeyRow[c]]}`,
+          );
+          const rowLine = rowDims.map(
+            (index, level) => `${dimensionName(index)}: ${rowParts[level][rowKeyRow[r]]}`,
+          );
           return [
-            `<div style="font-weight:600;margin-bottom:3px">${rowNames[r]} / ${colNames[c]}</div>`,
-            `${yName}: ${rowNames[r]}`,
-            `${xName}: ${colNames[c]}`,
+            `<div style="font-weight:600;margin-bottom:3px">${flat(colNames[c])} / ${flat(rowNames[r])}</div>`,
+            ...colLine,
+            ...rowLine,
             `${measureField}: <b>${formatFull(v)}</b>`,
           ].join('<br/>');
         },
@@ -1466,7 +1574,7 @@ function buildHeatmap(
         nameGap: colNames.length > 8 ? 62 : 46,
         nameTextStyle: { fontSize: 11, color: '#5b6472' },
         splitArea: { show: true },
-        axisLabel: { ...AXIS_LABEL_STYLE, rotate: colNames.length > 6 ? 30 : 0, hideOverlap: true },
+        axisLabel: { ...AXIS_LABEL_STYLE, hideOverlap: true, ...colAxis.axisLabel },
         axisLine: AXIS_LINE_STYLE,
       },
       yAxis: {
@@ -1477,7 +1585,7 @@ function buildHeatmap(
         nameGap: 78,
         nameTextStyle: { fontSize: 11, color: '#5b6472' },
         splitArea: { show: true },
-        axisLabel: { ...AXIS_LABEL_STYLE, hideOverlap: true },
+        axisLabel: { ...AXIS_LABEL_STYLE, hideOverlap: true, ...rowAxis.axisLabel },
         axisLine: AXIS_LINE_STYLE,
       },
       visualMap: {

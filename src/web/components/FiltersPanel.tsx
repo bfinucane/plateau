@@ -13,6 +13,7 @@ import {
 } from '../api';
 import {
   availableFilterModes,
+  filterOperatorsForScope,
   supportsFilterOperator,
   type FilterMode,
 } from '../viewModel';
@@ -30,6 +31,12 @@ interface FiltersPanelProps {
    * capabilities endpoint. Every operator is offered then.
    */
   supportedOperators?: Filter['operator'][];
+  /**
+   * Per-scope refinements, when the engine reports different operator support for
+   * dimension and measure filters. A scope absent here falls back to
+   * `supportedOperators`.
+   */
+  supportedOperatorsByScope?: Partial<Record<Filter['scope'], Filter['operator'][]>>;
 }
 
 /** Why an operator's control is disabled, said the same way everywhere. */
@@ -75,7 +82,13 @@ export function FiltersPanel({
   onAdd,
   onRemove,
   supportedOperators,
-}: FiltersPanelProps) {  const [pickerField, setPickerField] = useState<ColumnInfo | null>(null);
+  supportedOperatorsByScope,
+}: FiltersPanelProps) {
+  const [pickerField, setPickerField] = useState<ColumnInfo | null>(null);
+
+  /** The reported operators for one scope: per-scope list first, then global. */
+  const operatorsFor = (scope: Filter['scope']): Filter['operator'][] | undefined =>
+    filterOperatorsForScope(supportedOperators, supportedOperatorsByScope, scope);
 
   const available = useMemo(
     () => columns.filter((c) => !filters.some((f) => f.field === c.name)),
@@ -111,7 +124,7 @@ export function FiltersPanel({
               <span className="filter-field">{filter.field}</span>
               <span className="filter-desc">
                 {describe(filter)}
-                {!supportsFilterOperator(supportedOperators, filter.operator) && (
+                {!supportsFilterOperator(operatorsFor(filter.scope), filter.operator) && (
                   <span className="filter-unsupported">
                     {' '}
                     — not supported by this data source
@@ -150,6 +163,7 @@ export function FiltersPanel({
           datasetId={datasetId}
           existing={filters.find((f) => f.field === pickerField.name) ?? null}
           supportedOperators={supportedOperators}
+          supportedOperatorsByScope={supportedOperatorsByScope}
           onClose={() => setPickerField(null)}
           onApply={(filter) => {
             onAdd(filter);
@@ -166,6 +180,7 @@ interface FilterDialogProps {
   datasetId: string;
   existing: Filter | null;
   supportedOperators?: Filter['operator'][];
+  supportedOperatorsByScope?: Partial<Record<Filter['scope'], Filter['operator'][]>>;
   onClose: () => void;
   onApply: (filter: Filter) => void;
 }
@@ -180,6 +195,7 @@ function FilterDialog({
   datasetId,
   existing,
   supportedOperators,
+  supportedOperatorsByScope,
   onClose,
   onApply,
 }: FilterDialogProps) {
@@ -189,6 +205,9 @@ function FilterDialog({
       column={column}
       existing={existing}
       supportedOperators={supportedOperators}
+      supportedOperatorsForScope={(scope) =>
+        filterOperatorsForScope(supportedOperators, supportedOperatorsByScope, scope)
+      }
       onClose={onClose}
       onApply={onApply}
     />
@@ -197,7 +216,13 @@ function FilterDialog({
       column={column}
       datasetId={datasetId}
       existing={existing}
-      supportedOperators={supportedOperators}
+      // A categorical filter always prunes rows, so the dimension-scope report is
+      // the one that applies.
+      supportedOperators={filterOperatorsForScope(
+        supportedOperators,
+        supportedOperatorsByScope,
+        'dimension',
+      )}
       onClose={onClose}
       onApply={onApply}
     />
@@ -414,6 +439,8 @@ interface RangeFilterDialogProps {
   column: ColumnInfo;
   existing: Filter | null;
   supportedOperators?: Filter['operator'][];
+  /** Per-scope report, when the engine distinguishes dimension and measure filters. */
+  supportedOperatorsForScope?: (scope: Filter['scope']) => Filter['operator'][] | undefined;
   onClose: () => void;
   onApply: (filter: Filter) => void;
 }
@@ -423,19 +450,38 @@ function RangeFilterDialog({
   column,
   existing,
   supportedOperators,
+  supportedOperatorsForScope,
   onClose,
   onApply,
 }: RangeFilterDialogProps) {
   /*
    * Only the modes this data source implements are offered.
    *
-   * The Rust engine today accepts `in`/`equals`/`notEquals` and nothing else, so on
-   * a remote dataset none of these modes survives the filter and the dialog says so
-   * instead of showing controls whose Apply could only fail. A mode the current
-   * filter already uses is kept visible by `canApplyMode` below; the initial
-   * selection falls back to the first supported mode.
+   * The modes have different scopes: a range or "exclude nulls" prunes rows before
+   * grouping (the scope of the field: dimension for a dimension, measure for a
+   * measure), while Top/Bottom rank aggregated values and are always measure-scoped.
+   * An engine can report support for one scope and not the other, so the operator
+   * list is resolved per scope rather than once.
+   *
+   * The Rust engine today supports only dimension-scope operators, so on a remote
+   * dataset a numeric measure filter has no available mode and the dialog says so
+   * instead of showing controls whose Apply could only fail.
    */
-  const modes = availableFilterModes(supportedOperators);
+  const operatorsFor = (scope: Filter['scope']): Filter['operator'][] | undefined =>
+    supportedOperatorsForScope ? supportedOperatorsForScope(scope) : supportedOperators;
+
+  const rangeScope: Filter['scope'] = column.kind === 'measure' ? 'measure' : 'dimension';
+  const rangeOperators = operatorsFor(rangeScope);
+  const measureOperators = operatorsFor('measure');
+
+  const modes = [
+    ...availableFilterModes(rangeOperators).filter(
+      (entry) => entry.mode === 'range' || entry.mode === 'notNull',
+    ),
+    ...availableFilterModes(measureOperators).filter(
+      (entry) => entry.mode === 'top' || entry.mode === 'bottom',
+    ),
+  ];
   const available = (mode: FilterMode): boolean => modes.some((entry) => entry.mode === mode);
 
   const initialMode: FilterMode =
@@ -498,9 +544,10 @@ function RangeFilterDialog({
           {modes.length === 0 && (
             <p className="dialog-note">
               This data source implements no range, ranking or null filter, so numeric
-              and date fields cannot be filtered here. It reports only{' '}
-              {(supportedOperators ?? []).join(', ') || 'no filter operators'}, all of
-              which apply to categories.
+              and date fields cannot be filtered here. It reports{' '}
+              {[...new Set([...(rangeOperators ?? []), ...(measureOperators ?? [])])].join(', ') ||
+                'no filter operators'}
+              , all of which apply to categories.
             </p>
           )}
 
