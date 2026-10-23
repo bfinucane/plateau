@@ -63,6 +63,35 @@ export interface DatasetMeta {
    * guess.
    */
   capabilities?: EngineCapabilities | null;
+  /**
+   * The engine this dataset lives on, when it is remote.
+   *
+   * Used to aim a re-sign-in prompt at the right engine: one Plateau server can
+   * hold datasets from more than one, and a login form without a target is a guess.
+   */
+  engineUrl?: string;
+}
+
+/**
+ * A failed API call, with the machine-readable code the server sent.
+ *
+ * The code is what lets the UI tell "the engine session expired, ask for the
+ * password again" apart from "this view has a bad field name" — both arrive as an
+ * Error message otherwise, and showing a login form for the second would be wrong.
+ */
+export class ApiError extends Error {
+  readonly code: string;
+  readonly status: number;
+  /** True when the failure means the engine session is gone, not that the call was bad. */
+  readonly authRequired: boolean;
+
+  constructor(message: string, code: string, status: number, authRequired = false) {
+    super(message);
+    this.name = 'ApiError';
+    this.code = code;
+    this.status = status;
+    this.authRequired = authRequired;
+  }
 }
 
 export type CellValue = string | number | boolean | null;
@@ -151,13 +180,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
+    let code = 'http_error';
+    let authRequired = false;
     try {
-      const body = (await response.json()) as { error?: string };
+      const body = (await response.json()) as {
+        error?: string;
+        code?: string;
+        authRequired?: boolean;
+      };
       if (body?.error) message = body.error;
+      if (body?.code) code = body.code;
+      authRequired = body?.authRequired === true;
     } catch {
       // Response was not JSON; keep the status text.
     }
-    throw new Error(message);
+    throw new ApiError(message, code, response.status, authRequired);
   }
 
   return (await response.json()) as T;
@@ -229,12 +266,31 @@ export interface EngineCapabilities {
   expressionFunctions: string[];
   supportsInlineDomain: boolean;
   maxRows?: number;
+  /**
+   * Whether the engine requires a bearer token on protected routes.
+   *
+   * Absent means "no auth" (an older engine) and must be treated as `false` so a
+   * client build that ships before the engine upgrade keeps working.
+   */
+  authRequired?: boolean;
+}
+
+/** What a successful engine sign-in returns. The token itself never reaches the browser. */
+export interface EngineSessionInfo {
+  user: string;
+  roles: string[];
+  /** Unix timestamp in SECONDS, as the engine reports it. */
+  expiresAt: number;
 }
 
 export interface EngineProbe {
   url: string;
   reachable: boolean;
   capabilities?: EngineCapabilities;
+  /** True when the engine needs a sign-in before data calls. */
+  authRequired?: boolean;
+  /** A live server-side session for this engine, when one exists. */
+  session?: EngineSessionInfo | null;
   /** Present when unreachable. */
   error?: string;
   code?: string;
@@ -249,6 +305,38 @@ export interface EngineProbe {
  */
 export async function probeEngine(url: string): Promise<EngineProbe> {
   return request<EngineProbe>(`/engine/probe?url=${encodeURIComponent(url)}`);
+}
+
+/**
+ * Signs in to an engine. The token stays on the Plateau server.
+ *
+ * A 401 here is a wrong password / unknown user and the engine deliberately does not
+ * say which; the caller shows the message verbatim.
+ */
+export async function loginToEngine(
+  url: string,
+  user: string,
+  password: string,
+): Promise<EngineSessionInfo> {
+  const data = await request<{ authenticated: boolean; user: string; roles: string[]; expiresAt: number }>(
+    '/engine/login',
+    { method: 'POST', body: JSON.stringify({ url, user, password }) },
+  );
+  return { user: data.user, roles: data.roles, expiresAt: data.expiresAt };
+}
+
+/** Forgets the engine session on the server (the engine has no logout route yet). */
+export async function logoutEngine(url: string): Promise<void> {
+  await request('/engine/logout', { method: 'POST', body: JSON.stringify({ url }) });
+}
+
+/** Whether the server currently holds a live session for an engine. */
+export async function fetchEngineSession(url: string): Promise<EngineSessionInfo | null> {
+  const data = await request<{ authenticated: boolean } & Partial<EngineSessionInfo>>(
+    `/engine/session?url=${encodeURIComponent(url)}`,
+  );
+  if (!data.authenticated || !data.user) return null;
+  return { user: data.user, roles: data.roles ?? [], expiresAt: data.expiresAt ?? 0 };
 }
 
 export async function registerRemoteDataset(options: {

@@ -9,14 +9,18 @@
 
 import { useState } from 'react';
 import {
-  probeEngine,
+  ApiError,
   fetchCubes,
   fetchJoinCandidates,
+  logoutEngine,
+  probeEngine,
   registerRemoteDataset,
   type EngineCapabilities,
   type EngineCube,
+  type EngineSessionInfo,
   type JoinCandidate,
 } from '../api';
+import { EngineLoginForm } from './EngineLoginForm';
 
 interface ConnectDialogProps {
   onClose: () => void;
@@ -40,6 +44,16 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
   const [probe, setProbe] = useState<ProbeState>({ status: 'idle' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Whether this engine wants a sign-in.
+   *
+   * Set by a probe (`capabilities.authRequired`), and also by a 401 on connect —
+   * a user who typed a URL without probing should meet a sign-in form, not a
+   * generic "connection failed".
+   */
+  const [authRequired, setAuthRequired] = useState(false);
+  /** A live session the Plateau server holds for this engine, if any. */
+  const [session, setSession] = useState<EngineSessionInfo | null>(null);
 
   /** Cube names, once the engine has answered. Empty means "type it yourself". */
   const [cubes, setCubes] = useState<EngineCube[]>([]);
@@ -87,13 +101,24 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
     setError(null);
     try {
       const result = await probeEngine(url.trim());
-      setProbe(
-        result.reachable
-          ? { status: 'reachable', capabilities: result.capabilities ?? null }
-          : { status: 'unreachable', message: result.error ?? 'Engine did not respond' },
-      );
-      if (result.reachable && result.capabilities?.supportsJoin) {
-        void loadDiscovery(url.trim(), dataset.trim());
+      if (!result.reachable) {
+        setProbe({ status: 'unreachable', message: result.error ?? 'Engine did not respond' });
+        return;
+      }
+
+      const authRequiredNow =
+        result.authRequired === true || result.capabilities?.authRequired === true;
+      const existingSession = result.session ?? null;
+      setAuthRequired(authRequiredNow);
+      setSession(existingSession);
+      setProbe({ status: 'reachable', capabilities: result.capabilities ?? null });
+
+      // Do NOT fire discovery requests when a sign-in is needed: they would only
+      // 401, and a burst of them is exactly the behaviour the handover warns about.
+      if (!authRequiredNow || existingSession) {
+        if (result.capabilities?.supportsJoin) {
+          void loadDiscovery(url.trim(), dataset.trim());
+        }
       }
     } catch (probeError) {
       setProbe({
@@ -101,6 +126,26 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
         message: probeError instanceof Error ? probeError.message : 'Probe failed',
       });
     }
+  };
+
+  /** After a sign-in, list the cubes that were previously protected. */
+  const handleLoggedIn = (loggedIn: EngineSessionInfo) => {
+    setError(null);
+    setSession(loggedIn);
+    void loadDiscovery(url.trim(), dataset.trim());
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await logoutEngine(url.trim());
+    } catch {
+      // Dropping the client-side session is the point; a failed logout call must not
+      // leave the form thinking it is still signed in.
+    }
+    setCubes([]);
+    setJoinCandidates([]);
+    setSession(null);
+    setError(null);
   };
 
   const handleConnect = async () => {
@@ -124,13 +169,26 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
       onConnected(created.id);
       onClose();
     } catch (connectError) {
-      setError(connectError instanceof Error ? connectError.message : 'Connection failed');
+      if (connectError instanceof ApiError && connectError.authRequired) {
+        // A 401 here is a session problem, not a connection problem: offer the form
+        // rather than a dead-end message.
+        setAuthRequired(true);
+        setSession(null);
+        setError(connectError.message);
+      } else {
+        setError(connectError instanceof Error ? connectError.message : 'Connection failed');
+      }
     } finally {
       setBusy(false);
     }
   };
 
-  const canConnect = url.trim().length > 0 && dataset.trim().length > 0 && !busy;
+  const canConnect =
+    url.trim().length > 0 &&
+    dataset.trim().length > 0 &&
+    !busy &&
+    // A dataset cannot be registered against an engine that will refuse the call.
+    (!authRequired || session !== null);
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
@@ -162,6 +220,12 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
                 onChange={(event) => {
                   setUrl(event.target.value);
                   setProbe({ status: 'idle' });
+                  // A different engine is a different authority: never carry a
+                  // session or its cube list across.
+                  setAuthRequired(false);
+                  setSession(null);
+                  setCubes([]);
+                  setJoinCandidates([]);
                 }}
                 autoFocus
               />
@@ -232,6 +296,32 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
                 Check that it is running and that this URL is right. A different port is the
                 usual cause.
               </p>
+            </div>
+          )}
+
+          {/*
+            The sign-in gate. It is between probing and the dataset picker because
+            the dataset list itself is protected: asking for cubes before signing in
+            would only 401.
+          */}
+          {authRequired && (
+            <div className="connect-auth" data-testid="engine-auth">
+              {session ? (
+                <p className="calc-hint connect-session" data-testid="engine-session">
+                  Signed in as <strong>{session.user}</strong>
+                  {session.roles.length > 0 && <> ({session.roles.join(', ')})</>}.{' '}
+                  <button type="button" className="link-button" onClick={() => void handleSignOut()}>
+                    Sign out
+                  </button>
+                </p>
+              ) : (
+                <>
+                  <p className="calc-hint calc-hint-warning">
+                    This engine requires a sign-in before it will list or query data.
+                  </p>
+                  <EngineLoginForm url={url.trim()} onSuccess={handleLoggedIn} />
+                </>
+              )}
             </div>
           )}
 

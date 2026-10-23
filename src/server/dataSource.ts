@@ -201,6 +201,14 @@ export class RemoteBackend implements DatasetBackend {
   readonly name: string;
   readonly source: string;
   readonly createdAt: string;
+  /**
+   * The engine this dataset lives on, when known.
+   *
+   * Carried so a session expiry can ask the user to sign in to the RIGHT engine:
+   * a Plateau server can hold datasets from more than one, and a login prompt
+   * without a target would be a guess.
+   */
+  readonly engineUrl?: string;
 
   private transport: EngineTransport;
   /** Cached catalog; the client invalidates by constructing a new backend. */
@@ -241,12 +249,14 @@ export class RemoteBackend implements DatasetBackend {
     source: string;
     createdAt: string;
     transport: EngineTransport;
+    engineUrl?: string;
   }) {
     this.id = options.id;
     this.name = options.name;
     this.source = options.source;
     this.createdAt = options.createdAt;
     this.transport = options.transport;
+    this.engineUrl = options.engineUrl;
   }
 
   /**

@@ -88,6 +88,14 @@ export interface DatasetMeta {
    * worst and disabling working features is its own kind of wrong.
    */
   capabilities?: Capabilities | null;
+  /**
+   * The engine URL a remote dataset lives on.
+   *
+   * Present only for remote datasets. The UI needs it to show a sign-in prompt for
+   * the RIGHT engine when a session expires — datasets from several engines can be
+   * registered at once.
+   */
+  engineUrl?: string;
 }
 
 /** A calculated field definition, stored independently of any materialised column. */
@@ -216,6 +224,8 @@ export async function createRemoteDataset(options: {
   name: string;
   dataset: string;
   transport: EngineTransport;
+  /** The engine URL this dataset came from, carried for sign-in prompts. */
+  engineUrl?: string;
   /**
    * Attributes to attach through a conformed dimension.
    *
@@ -232,6 +242,7 @@ export async function createRemoteDataset(options: {
     source: 'remote engine',
     createdAt: new Date().toISOString(),
     transport: options.transport,
+    engineUrl: options.engineUrl,
   });
 
   if (options.join) backend.setJoin(options.join);
@@ -266,6 +277,7 @@ export async function createRemoteDataset(options: {
       createdAt: new Date().toISOString(),
       columns: describeColumns(schema),
       capabilities,
+      engineUrl: options.engineUrl,
     },
     backend,
     calculated: new Map(),

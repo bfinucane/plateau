@@ -150,6 +150,16 @@ export interface Capabilities {
    */
   expressionFunctions: string[];
   /**
+   * Whether the engine requires a bearer token on every route but login and
+   * capabilities itself.
+   *
+   * Absent means "no auth" (an older engine): a client must treat a missing field
+   * as `false` so a build that ships before the engine upgrade keeps working. The
+   * flag is deliberately in the PUBLIC capabilities response — it is how a client
+   * discovers it needs to show a login screen before firing data requests.
+   */
+  authRequired?: boolean;
+  /**
    * Whether the engine can return filter value lists in the query round trip.
    *
    * When false, a client must not expect `domainFor` to be honoured: it has to
@@ -309,6 +319,7 @@ export type ProtocolErrorCode =
   | 'unsupported_filter'
   | 'unsupported_expression'
   | 'row_limit'
+  | 'unauthorized'
   | 'invalid_argument'
   | 'engine_error'
   | 'version_mismatch';
@@ -326,6 +337,28 @@ export class ProtocolError extends Error {
 }
 
 // ------------------------------------------------------------ transport ---
+
+// ------------------------------------------------------------ authentication ---
+
+/**
+ * Credentials for the engine's login route.
+ *
+ * The browser never sends these directly to the engine: Plateau's server is the
+ * engine's client, so the token is obtained and held server-side and never enters
+ * the browser at all.
+ */
+export interface LoginRequest {
+  user: string;
+  password: string;
+}
+
+/** A successful login. `expiresAt` is a Unix timestamp in SECONDS. */
+export interface LoginResponse {
+  token: string;
+  user: string;
+  roles: string[];
+  expiresAt: number;
+}
 
 /**
  * The transport-agnostic engine interface.
@@ -346,6 +379,13 @@ export interface EngineTransport {
    * but never discover one, which is why the dataset field was a guess.
    */
   listDatasets?(): Promise<string[]>;
+  /**
+   * Exchanges credentials for a bearer token.
+   *
+   * Optional: an engine without authentication has no login route, and a client
+   * only has credentials to send when `capabilities.authRequired` is true.
+   */
+  login?(request: LoginRequest): Promise<LoginResponse>;
 }
 
 // ------------------------------------------------------------ conversion ---

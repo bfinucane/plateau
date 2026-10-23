@@ -30,6 +30,7 @@ import {
 import { ChartView } from './components/ChartView';
 import { CalculatedFieldDialog } from './components/CalculatedFieldDialog';
 import { ConnectDialog } from './components/ConnectDialog';
+import { EngineLoginForm } from './components/EngineLoginForm';
 import { DashboardView } from './components/DashboardView';
 import { DataPane } from './components/DataPane';
 import { FiltersPanel } from './components/FiltersPanel';
@@ -1201,8 +1202,7 @@ export function App() {
       </footer>
 
       {calcDialog && (
-        <CalculatedFieldDialog
-          columns={columns}
+        <CalculatedFieldDialog          columns={columns}
           initialName={calcDialog.name}
           initialFormula={calcDialog.formula}
           editing={calcDialog.editing}
@@ -1220,6 +1220,45 @@ export function App() {
           onClose={() => setConnectOpen(false)}
           onConnected={(datasetId) => void handleConnected(datasetId)}
         />
+      )}
+
+      {/*
+        A query came back 401: the engine session expired (or was revoked). Show the
+        sign-in form aimed at THE dataset's engine — not a generic error, and not an
+        automatic retry, which would hammer an engine that requires auth.
+      */}
+      {app.loginRequired && (
+        <div className="dialog-backdrop" onClick={app.dismissEngineLogin}>
+          <div
+            className="dialog dialog-narrow"
+            role="dialog"
+            aria-label="Sign in to the engine"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="dialog-header">
+              <h2>Sign in again</h2>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={app.dismissEngineLogin}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </header>
+            <div className="dialog-body">
+              <p className="calc-hint">
+                The engine session for <code>{app.loginRequired.url}</code> has expired. Sign
+                in to continue where you left off.
+              </p>
+              <EngineLoginForm
+                url={app.loginRequired.url}
+                submitLabel="Sign in and retry"
+                onSuccess={app.engineSignedInAgain}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

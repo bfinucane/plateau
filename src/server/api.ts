@@ -7,6 +7,7 @@
  */
 
 import express from 'express';
+import type { Response } from 'express';
 import multer from 'multer';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -16,6 +17,13 @@ import type { QuerySpec } from '../core/engine.js';
 import { PROTOCOL_VERSION, ProtocolError } from '../core/protocol.js';
 import { defaultAggregation, type Aggregation } from '../core/types.js';
 import { HttpEngineTransport } from './httpTransport.js';
+import {
+  dropSession,
+  isAuthenticated,
+  loginToEngine,
+  sessionInfo,
+  tokenFor,
+} from './engineAuth.js';
 import {
   CalculatedFieldError,
   UnknownFieldError,
@@ -58,10 +66,55 @@ const upload = multer({
 });
 
 /**
+ * A transport that authenticates itself, per request.
+ *
+ * The token is resolved on every call rather than captured at construction: an
+ * already-registered dataset must start sending a NEW token after a re-login,
+ * without being rebuilt. `tokenFor` also forgets an expired session, so the request
+ * goes out unauthenticated and the engine answers 401 — one honest signal instead
+ * of an old token failing mysteriously.
+ */
+function engineTransport(url: string, timeoutMs = 30_000): HttpEngineTransport {
+  return new HttpEngineTransport({
+    baseUrl: url,
+    timeoutMs,
+    getToken: () => tokenFor(url),
+    // A refused request proves the token is dead even when its expiry has not
+    // passed — e.g. the engine restarted and its in-memory sessions were lost.
+    onUnauthorized: () => dropSession(url),
+  });
+}
+
+/**
+ * Turns an engine failure into the HTTP answer the browser expects.
+ *
+ * `unauthorized` is 401 and carries `authRequired: true`, which is what the UI uses
+ * to open a sign-in prompt instead of showing a dead-end error. Every other
+ * protocol failure keeps its old status mapping (404 for an unknown dataset, 400 for
+ * a caller mistake, 502 otherwise).
+ */
+function respondEngineError(res: Response, error: unknown): void {
+  if (error instanceof ProtocolError) {
+    if (error.code === 'unauthorized') {
+      res.status(401).json({ error: error.message, code: 'unauthorized', authRequired: true });
+      return;
+    }
+    res.status(error.code === 'unknown_dataset' ? 404 : 400).json({
+      error: error.message,
+      code: error.code,
+    });
+    return;
+  }
+  res.status(502).json({
+    error: error instanceof Error ? error.message : 'Could not reach the engine',
+  });
+}
+
+/**
  * Writes the workbook, keeping the previous generation beside it.
  *
  * The current file is copied to `workbook.json.bak` before being replaced, so a
- * bad save â€” an empty session, a bug â€” costs at most the changes since the last
+ * bad save — an empty session, a bug — costs at most the changes since the last
  * save rather than the whole workbook. One generation is deliberate: more needs a
  * pruning policy, and the point is recoverability, not history.
  *
@@ -116,7 +169,11 @@ export function createServer() {
       res.status(404).json({ error: 'Dataset not found' });
       return;
     }
-    res.json({ dataset: { ...dataset.meta, columns: await datasetColumns(dataset) } });
+    try {
+      res.json({ dataset: { ...dataset.meta, columns: await datasetColumns(dataset) } });
+    } catch (error) {
+      respondEngineError(res, error);
+    }
   });
 
   app.patch('/api/datasets/:id', (req, res) => {
@@ -179,10 +236,14 @@ export function createServer() {
     }
     const limit = Math.min(Number(req.query.limit ?? 100) || 100, 1000);
     const offset = Math.max(Number(req.query.offset ?? 0) || 0, 0);
-    res.json({
-      rowCount: dataset.meta.rowCount,
-      ...(await previewRows(dataset, limit, offset)),
-    });
+    try {
+      res.json({
+        rowCount: dataset.meta.rowCount,
+        ...(await previewRows(dataset, limit, offset)),
+      });
+    } catch (error) {
+      respondEngineError(res, error);
+    }
   });
 
   // ------------------------------------------------------------ field domain
@@ -197,7 +258,11 @@ export function createServer() {
       res.status(400).json({ error: 'field is required' });
       return;
     }
-    res.json({ field, values: await fieldDomain(dataset, field) });
+    try {
+      res.json({ field, values: await fieldDomain(dataset, field) });
+    } catch (error) {
+      respondEngineError(res, error);
+    }
   });
 
   // --------------------------------------------------------- calculated fields
@@ -227,6 +292,10 @@ export function createServer() {
     } catch (error) {
       if (error instanceof CalculatedFieldError) {
         res.status(400).json({ error: error.message });
+        return;
+      }
+      if (error instanceof ProtocolError) {
+        respondEngineError(res, error);
         return;
       }
       res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to add field' });
@@ -319,6 +388,12 @@ export function createServer() {
         res.status(400).json({ error: error.message, code: 'unknown_field' });
         return;
       }
+      // A ProtocolError is the ENGINE talking (expired token, unsupported filter):
+      // it keeps its own status so the UI can tell "sign in again" from "bad view".
+      if (error instanceof ProtocolError) {
+        respondEngineError(res, error);
+        return;
+      }
       res.status(400).json({
         error: error instanceof Error ? error.message : 'Query failed',
       });
@@ -326,6 +401,63 @@ export function createServer() {
   });
 
   // ------------------------------------------------------------------ remote
+  // ------------------------------------------------------------- engine auth
+  /**
+   * Exchanges credentials for an engine session, kept on THIS server.
+   *
+   * The response deliberately never includes the token: the browser does not need
+   * it, and not sending it means it cannot leak into browser storage, a log line or
+   * a screenshot. The token stays in memory here (see `engineAuth.ts`).
+   */
+  app.post('/api/engine/login', async (req, res) => {
+    const { url, user, password } = req.body as {
+      url?: string;
+      user?: string;
+      password?: string;
+    };
+    if (!url?.trim()) {
+      res.status(400).json({ error: 'url is required' });
+      return;
+    }
+    if (!user?.trim() || typeof password !== 'string' || password.length === 0) {
+      res.status(400).json({ error: 'user and password are required' });
+      return;
+    }
+    try {
+      const session = await loginToEngine(url.trim(), user.trim(), password);
+      res.json({ authenticated: true, ...session });
+    } catch (error) {
+      respondEngineError(res, error);
+    }
+  });
+
+  /**
+   * Forgets the engine session.
+   *
+   * There is no engine logout route yet; dropping the token here is the client half
+   * of signing out, and the engine's in-memory session expires on its own.
+   */
+  app.post('/api/engine/logout', (req, res) => {
+    const { url } = req.body as { url?: string };
+    if (!url?.trim()) {
+      res.status(400).json({ error: 'url is required' });
+      return;
+    }
+    dropSession(url.trim());
+    res.json({ authenticated: false });
+  });
+
+  /** Whether this server currently holds a live session for an engine. */
+  app.get('/api/engine/session', (req, res) => {
+    const url = String(req.query.url ?? '').trim();
+    if (!url) {
+      res.status(400).json({ error: 'url is required' });
+      return;
+    }
+    const session = sessionInfo(url);
+    res.json({ authenticated: session !== null, ...(session ?? {}) });
+  });
+
   /**
    * Reports what an engine at `url` offers, without registering anything.
    *
@@ -339,9 +471,17 @@ export function createServer() {
       return;
     }
     try {
-      const transport = new HttpEngineTransport({ baseUrl: url, timeoutMs: 10_000 });
+      const transport = engineTransport(url, 10_000);
       const capabilities = await transport.capabilities();
-      res.json({ url, reachable: true, capabilities });
+      res.json({
+        url,
+        reachable: true,
+        capabilities,
+        // A top-level convenience flag: the connect dialog must decide whether to
+        // show a sign-in gate BEFORE firing any protected request.
+        authRequired: capabilities.authRequired === true,
+        session: sessionInfo(url),
+      });
     } catch (error) {
       // Unreachable is a normal answer here, not a server fault.
       res.json({
@@ -357,7 +497,7 @@ export function createServer() {
    * Lists the cubes an engine holds.
    *
    * Until the protocol gained `GET /v1/datasets` a client could validate a
-   * dataset name but never discover one â€” the connect dialog had to ask the user
+   * dataset name but never discover one — the connect dialog had to ask the user
    * to type it from memory. This is what makes the name a choice instead of a
    * guess.
    */
@@ -368,7 +508,16 @@ export function createServer() {
       return;
     }
     try {
-      const transport = new HttpEngineTransport({ baseUrl: url, timeoutMs: 10_000 });
+      const transport = engineTransport(url, 10_000);
+      const capabilities = await transport.capabilities();
+      if (capabilities.authRequired === true && !isAuthenticated(url)) {
+        res.status(401).json({
+          error: 'This engine requires a sign-in before its datasets can be listed.',
+          code: 'unauthorized',
+          authRequired: true,
+        });
+        return;
+      }
       if (typeof transport.listDatasets !== 'function') {
         res.json({ url, cubes: [], unsupported: true });
         return;
@@ -399,14 +548,14 @@ export function createServer() {
 
       res.json({ url, cubes });
     } catch (error) {
-      res.json({ url, cubes: [], error: error instanceof Error ? error.message : 'Engine did not respond' });
+      respondEngineError(res, error);
     }
   });
 
   /**
    * Reports which cubes can be joined to a given cube, and what they offer.
    *
-   * A join keys off a CONFORMED dimension â€” one with the same name in both cubes â€”
+   * A join keys off a CONFORMED dimension — one with the same name in both cubes —
    * so the candidates are those that share a dimension with the primary. The
    * attributes of each are the members of its measure dimension, which `describe`
    * names but does not enumerate; the members come from a domain query.
@@ -420,7 +569,16 @@ export function createServer() {
     }
 
     try {
-      const transport = new HttpEngineTransport({ baseUrl: url, timeoutMs: 20_000 });
+      const transport = engineTransport(url, 20_000);
+      const capabilities = await transport.capabilities();
+      if (capabilities.authRequired === true && !isAuthenticated(url)) {
+        res.status(401).json({
+          error: 'This engine requires a sign-in before joins can be discovered.',
+          code: 'unauthorized',
+          authRequired: true,
+        });
+        return;
+      }
       const names = typeof transport.listDatasets === 'function' ? await transport.listDatasets() : [];
       const primaryCatalog = await transport.describe(primary);
       const primaryDimensions = new Set(
@@ -471,9 +629,7 @@ export function createServer() {
 
       res.json({ url, dataset: primary, candidates });
     } catch (error) {
-      res.status(502).json({
-        error: error instanceof Error ? error.message : 'Could not reach the engine',
-      });
+      respondEngineError(res, error);
     }
   });
 
@@ -496,15 +652,30 @@ export function createServer() {
     }
 
     try {
-      const transport = new HttpEngineTransport({ baseUrl: url, timeoutMs: 30_000 });
+      const transport = engineTransport(url, 30_000);
+
+      /*
+       * Feature-detect before any protected call. Capabilities is public, so this
+       * works without a token; if the engine needs one and this server has none, say
+       * so as 401 with `authRequired` so the UI opens a sign-in prompt instead of
+       * showing a generic connection failure.
+       */
+      const engineCapabilities = await transport.capabilities();
+      if (engineCapabilities.authRequired === true && !isAuthenticated(url)) {
+        res.status(401).json({
+          error: 'This engine requires a sign-in before a dataset can be registered.',
+          code: 'unauthorized',
+          authRequired: true,
+        });
+        return;
+      }
 
       // A join is only meaningful if the engine honours one. Sending it to an
       // older engine would be ignored SILENTLY, handing back un-joined data that
-      // looks correct â€” so refuse instead.
+      // looks correct — so refuse instead.
       let joinRequest;
       if (join?.cube) {
-        const capabilities = await transport.capabilities();
-        if (!capabilities.supportsJoin) {
+        if (!engineCapabilities.supportsJoin) {
           res.status(400).json({
             error: 'This engine does not support joins, so attributes cannot be attached.',
             code: 'unsupported_join',
@@ -543,22 +714,12 @@ export function createServer() {
         name: name?.trim() || dataset.trim(),
         dataset: dataset.trim(),
         transport,
+        engineUrl: url,
         join: joinRequest,
       });
       res.status(201).json({ dataset: created.meta });
     } catch (error) {
-      if (error instanceof ProtocolError) {
-        // The engine answered and rejected us; the status is a property of that
-        // conversation, so it is surfaced rather than flattened to 500.
-        res.status(error.code === 'unknown_dataset' ? 404 : 400).json({
-          error: error.message,
-          code: error.code,
-        });
-        return;
-      }
-      res.status(502).json({
-        error: error instanceof Error ? error.message : 'Could not reach the engine',
-      });
+      respondEngineError(res, error);
     }
   });
 

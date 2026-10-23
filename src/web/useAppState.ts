@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
+  ApiError,
   addCalculatedField as apiAddCalculatedField,
   fetchDataset,
   fetchDatasets,
@@ -431,8 +432,20 @@ export function useAppState() {
   const [queryResult, setQueryResult] = useState<QueryResponse | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [querying, setQuerying] = useState(false);
+  /**
+   * Set when a query fails because the ENGINE session is gone.
+   *
+   * The UI turns this into a sign-in dialog aimed at the right engine. It is not a
+   * plain error because the recovery is specific: obtain a token, then retry ONCE.
+   * Retrying automatically would be a storm against an engine that requires auth.
+   */
+  const [loginRequired, setLoginRequired] = useState<{ url: string; message: string } | null>(null);
   /** Bumped by a retry so the query effect re-runs the same spec. */
   const [attempt, setAttempt] = useState(0);
+
+  /** The active dataset from the latest render, readable inside the query effect. */
+  const datasetMetaRef = useRef<DatasetMeta | null>(state.dataset);
+  datasetMetaRef.current = state.dataset;
 
   // Track the in-flight request so stale responses cannot overwrite newer ones.
   const requestIdRef = useRef(0);
@@ -510,6 +523,19 @@ export function useAppState() {
         const message = error instanceof Error ? error.message : 'Query failed';
 
         /*
+         * An engine session that expired is NOT a view problem: the fix is to sign in
+         * again, so surface it as that and do not retry automatically. A retry storm
+         * against a required-auth engine is how this goes wrong.
+         */
+        if (error instanceof ApiError && (error.code === 'unauthorized' || error.authRequired)) {
+          const engineUrl = datasetMetaRef.current?.engineUrl;
+          setQueryResult(null);
+          setQueryError(message);
+          if (engineUrl) setLoginRequired({ url: engineUrl, message });
+          return;
+        }
+
+        /*
          * A server restart loses its datasets: they live in memory, and the
          * sample is re-seeded under a NEW id. The client is then holding a stale
          * id and every query fails with "Dataset not found" — which looks like
@@ -552,6 +578,21 @@ export function useAppState() {
 
   /** Re-runs the active sheet's query. */
   const retryQuery = useCallback(() => setAttempt((value) => value + 1), []);
+
+  /**
+   * Called after the user signs in again to an engine whose session expired.
+   *
+   * Clears the prompt and re-runs the failed query ONCE. If it 401s again the query
+   * catch raises the prompt again, which is the correct outcome — but nothing here
+   * loops on its own.
+   */
+  const engineSignedInAgain = useCallback(() => {
+    setLoginRequired(null);
+    setAttempt((value) => value + 1);
+  }, []);
+
+  /** Dismisses the sign-in prompt without retrying (the view keeps its error). */
+  const dismissEngineLogin = useCallback(() => setLoginRequired(null), []);
 
   /** Guards against several failed queries all trying to recover at once. */
   const recoveringRef = useRef(false);
@@ -709,6 +750,9 @@ export function useAppState() {
     queryError,
     querying,
     retryQuery,
+    loginRequired,
+    engineSignedInAgain,
+    dismissEngineLogin,
     allowedAggregations,
     allowedFilterOperators,
     allowedFilterOperatorsByScope,

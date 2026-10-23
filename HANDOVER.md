@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, twelve session commits on top of `0e252ab`. Every number
+Written on branch `main`, thirteen session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,12 +13,12 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 34 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
-| Source | 56 files in `src/`, ~22,100 lines |
-| Unit tests | **594 checks**, 17 suites, all passing |
-| Browser tests | **413 checks**, 15 harnesses, all passing |
-| Screenshots | 53, in `docs/screenshots/` |
-| Bundle | `dist/web/assets/index-Drt3ZGWy.js` (built this session) |
+| Commits | 35 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Source | 59 files in `src/`, ~23,300 lines |
+| Unit tests | **624 checks**, 18 suites, all passing |
+| Browser tests | **458 checks**, 16 harnesses, all passing |
+| Screenshots | 54, in `docs/screenshots/` |
+| Bundle | `dist/web/assets/index-CpufojHM.js` (built this session) |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -101,6 +101,11 @@ Change one, change the other.
   operator the engine does not implement is not offered, the formula palette shows
   only the functions it advertises, and a pushed-down formula is validated against
   that report before it is created.
+- **Engine authentication**: an engine that advertises `authRequired` gets a sign-in
+  gate *before* any data request. The token is obtained and held by the Plateau
+  server, attached per request (so a re-login reaches already-registered datasets),
+  never shown to or stored in the browser. A 401 during use drops the dead session and
+  asks for a sign-in, then retries once (§5.17).
 - **Absent values**: a measure cell with no data arrives as `null` and stays absent —
   a chart gap, an em dash in a tooltip, an empty table cell, excluded from table
   calculations and trend fits. Never coerced to zero (§5.15).
@@ -224,6 +229,16 @@ Worth knowing before "fixing" any of it:
     `IFNULL` on the reference engine) and must not be required to list `IF`. One
     aggregation per field per expression (`SUM([x]) / AVG([x])`) is refused client-side
     with an explanation, because the engine rejects it by name.
+17. **Authentication is feature-detected, gated before any data call, and never held by
+    the browser.** `capabilities` is PUBLIC and reports `authRequired` (absent =
+    `false`, for an older engine). When true, the connect dialog shows a sign-in form
+    *before* listing cubes; the Plateau server performs the login, keeps the token in
+    memory keyed by engine URL, and resolves it per request so an already-registered
+    dataset starts using the new token after a re-login. Any 401 —
+    expiry, engine restart, revocation — **drops the stored session**, returns 401 with
+    `authRequired` to the browser, and opens a re-sign-in dialog aimed at that
+    dataset's engine; signing in retries the failed query ONCE. There is deliberately no
+    automatic retry loop, and no refresh endpoint (re-login is the refresh).
 
 ---
 
@@ -255,8 +270,8 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Twelve commits on top of `0e252ab` — seven features, a wire follow-up and two notes on
-verification hygiene. The commit messages have the detail; the shape:
+Thirteen commits on top of `0e252ab` — eight features, a wire follow-up and two notes
+on verification hygiene. The commit messages have the detail; the shape:
 
 | Was | Now |
 |---|---|
@@ -279,15 +294,18 @@ verification hygiene. The commit messages have the detail; the shape:
 | `maxRows` was reported and ignored; `supportsInlineDomain: false` still got `domainFor`; filter support was one global list | Limits are clamped to the engine cap (a partial materialisation is refused as `row_limit`), inline-domain-less engines get a bounded-sample value list, and the optional per-scope filter report gates dialogs and server-side refusals |
 | A third dimension vanished from line/area charts, and heat maps and treemaps stopped at two levels | Every placed dimension nests: extras after the series on line/area, per shelf on a heat map, and every level of a treemap's hierarchy |
 | `verify-ui`'s restore check passed only because a stale backup file happened to exist | The harness makes a real change before its save, so the skip-identical rewrite cannot leave it without a generation to restore |
+| An auth-enabled engine would have met a burst of 401s, a dead token would have lingered, and there was no login UI at all | `authRequired` is feature-detected from public capabilities, a sign-in gate comes first, one server-held token rides every request, and any 401 drops the session and asks for a re-login before one retry |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (29),
 `capabilityGating.test.ts` (43), `workbookFile.test.ts` (43),
-`nullCells.test.ts` (22), `markInference.test.ts` (7) and `axisNesting.test.ts` (20).
-`verify-ui` grew from 25 to 43 checks and `verify-connect` from 26 to 80;
-`verify-workbook.mjs` (36 checks, own server and data directory) and
-`verify-test-set.mjs` (28 checks, data-driven from the workbook file) are new.
-Screenshots added: `51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`60`
-for the workbook, test-set and tab-strip work, and `61-null-cells.png`.
+`nullCells.test.ts` (22), `markInference.test.ts` (7), `axisNesting.test.ts` (20) and
+`engineAuth.test.ts` (30). `verify-ui` grew from 25 to 43 checks, `verify-connect`
+from 26 to 80, and `verify-auth.mjs` is new (45 checks, with two stub engines: one
+requiring auth and one anonymous). `verify-workbook.mjs` (36 checks, own server and
+data directory) and `verify-test-set.mjs` (28 checks, data-driven from the workbook
+file) are new. Screenshots added: `51-three-dimensions.png`,
+`52-connect-calculated.png`, `53`–`60` for the workbook, test-set and tab-strip work,
+`61-null-cells.png` and `62-engine-auth.png`.
 
 The engine-side stub in `verify-connect.mjs` answers a query by **echoing its shape**
 rather than returning one canned response, and returns one `null` measure cell. A
@@ -318,6 +336,42 @@ formula is accepted and the engine evaluates it; `ROUND(...)` and
 `SUM([value]) / AVG([value])` are refused with names; `SUM([value]) / 0` is accepted
 and returns **`null` in every group**; the join harness passes 38/38 against it.
 
+### The authentication change (§7.2)
+
+The engine gained users, roles and bearer tokens (`Patricia/olap_engine/
+PLATEAU-AUTH-HANDOVER.md`). The client-side design, and why:
+
+- **Capabilities stays public and gains `authRequired`.** It is how a client learns a
+  token is needed; the absence of the field means an older engine and is read as
+  `false`, so the upgrade is backward-compatible.
+- **The connect dialog is the gate.** Probe first (public), then — if auth is required
+  — the sign-in form, and only then the cube listing. Nothing protected is requested
+  before sign-in.
+- **The token lives on the Plateau server, not the browser.** `POST /api/engine/login`
+  proxies the login and stores the token in memory keyed by engine URL
+  (`src/server/engineAuth.ts`); the browser receives only user/roles/expiry. This
+  matters because the browser cannot reach the engine anyway, and a bearer credential
+  should not be in page memory, storage or a screenshot.
+- **The token is resolved per request.** `HttpEngineTransport` takes a
+  `getToken` callback, so a dataset registered before a re-login starts sending the new
+  token without being rebuilt. `RemoteBackend` metadata carries `engineUrl` so a 401
+  can aim the sign-in prompt at the right engine.
+- **A 401 drops the session.** The engine may restart (its sessions are in memory) or
+  revoke, so `expiresAt` is not the only way a token dies: the transport calls
+  `onUnauthorized`, the session is forgotten, `/api/query` answers 401 with
+  `authRequired: true`, and the UI opens a re-sign-in dialog. Signing in retries the
+  failed query ONCE. No refresh endpoint exists; re-login is the refresh.
+- **Roles are displayed, not enforced** — permissions are engine S2 work.
+
+Verified against a **fresh auth-enabled engine build** (HEAD `afc235c`): the binary in
+the engine's `target/` predated auth, so it was rebuilt into a scratch target dir.
+On ports 5181/8091 with a copied database and a CLI-created user: capabilities is
+public and reports `authRequired`; protected routes 401 without a token; wrong and
+unknown credentials are indistinguishable; Plateau's login stores the token and never
+returns it; a query runs with it; **restarting the engine invalidates the session**,
+which is the honest expiry test — Plateau then answers 401, reports no session,
+re-accepts a login, and the retried query succeeds. 26/26 checks.
+
 ---
 
 ## 8. Open tasks
@@ -325,8 +379,9 @@ and returns **`null` in every group**; the join harness passes 38/38 against it.
 Ordered by what I would do next.
 
 ### 8.1 Nothing is unpushed
-The wire follow-up, the capability/nesting work and the treemap hierarchy are pushed;
-`origin/main` matches `HEAD`. `origin` is https://github.com/bfinucane/plateau.git.
+The wire follow-up, capability/nesting work, treemap hierarchy and engine
+authentication are pushed; `origin/main` matches `HEAD`. `origin` is
+https://github.com/bfinucane/plateau.git.
 
 Pushing from an agent command needs the **wider sandbox**: the confined one fails with
 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`, because the
@@ -406,8 +461,24 @@ request removed them.
 
 ### 8.8 README reflects the code
 It was refreshed for this session's suites and harnesses, including the null-cell
-semantics and the remote-calculated-field rules. The limitations list has been
-audited once more but still predates some of the join work.
+semantics, the remote-calculated-field rules and engine authentication. The
+limitations list has been audited once more but still predates some of the join work.
+
+### 8.9 Authentication follow-ups (engine-side mostly)
+Authentication works end to end, but four things are deliberately not here yet:
+
+- **Roles are informational.** The engine's role permissions (its S2) do not exist, so
+  every signed-in user sees the same data; Plateau displays `roles` and must not build
+  behaviour on the names.
+- **No revoke/logout endpoint.** Sign-out drops the token on the Plateau side; the
+  engine's in-memory session expires on its own. A real `POST /v1/logout` is small
+  engine work.
+- **No refresh token.** Re-login is the refresh; a 12-hour session that ends forces a
+  sign-in. Acceptable for now.
+- **The engine's `/sql` console has no token field**, so Plateau does not link to it; its
+  `POST /v1/sql` would 401. Engine work.
+- A Plateau restart loses every session (they are in memory). That is the same trade as
+  the engine restarting, and re-login is cheap.
 
 ---
 
@@ -464,6 +535,22 @@ audited once more but still predates some of the join work.
   at each pull and `GET /v1/capabilities` at runtime before trusting a feature; a
   running 8080 process can predate the source, and a stale server makes a new wire
   feature look unimplemented.
+- **An auth-enabled engine needs a user, created by CLI, not by the wire.** Users and
+  password verifiers live in `security.json` BESIDE the database file the engine was
+  started with. For verification, copy the seeded database into `.tmp/` first and pass
+  `--db <copy>` to BOTH `--add-user` and the server, so the engine's own
+  `security.json` is untouched. Starting default-mode without users is refused on
+  purpose, and the message prints the exact command.
+- **A 401 does not always mean "expired".** It can mean the engine restarted (sessions
+  are in memory) or revoked the token. The client must drop the stored session on 401
+  rather than trusting `expiresAt`; otherwise the connect dialog and the session
+  endpoint keep claiming a sign-in that no longer works.
+- **CORS and auth interact.** In a browser-to-engine setup the `Authorization` header
+  triggers a preflight, and the engine must list it in
+  `Access-Control-Allow-Headers` — otherwise the request never leaves the browser and
+  an auth failure is actually a CORS failure. Plateau's server-to-engine path is not
+  affected, but `start-engine.cmd -Cors` is still needed when experimenting from a
+  browser console.
 - **Verified numbers beat recalled ones.** Every figure in this document came from a
   command run at this commit.
 
@@ -473,22 +560,23 @@ audited once more but still predates some of the join work.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 594 unit checks
+node scripts/test.mjs                                   # 624 unit checks
 node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 ```
 
 Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset` 38,
 `queryValidation` 17, `capabilityGating` 43, `tableCalcs` 51, `workbookBackup` 14,
 `split` 35, `axisSelection` 34, `aggregationMenu` 29, `workbookFile` 43, `nullCells` 22,
-`markInference` 7, `axisNesting` 20, `join` 28.
+`markInference` 7, `axisNesting` 20, `engineAuth` 30, `join` 28.
 
 Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 18, `verify-viz`
 27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 80,
 `verify-tablecalc` 14, `verify-split` 16, `verify-measuresplit` 26, `verify-retry` 13,
-`verify-workbook` 36, `verify-test-set` 28, `verify-join` 38 (needs the engine). Each
-prints `N passed, M failed` and exits non-zero on failure. `verify-retry` and
-`verify-workbook` start their own server and take `[chromePath] [outDir]`; the rest
-need one running and take `[appUrl] [chromePath] [outDir]`.
+`verify-workbook` 36, `verify-test-set` 28, `verify-auth` 45, `verify-join` 38 (needs
+the engine). Each prints `N passed, M failed` and exits non-zero on failure.
+`verify-retry` and `verify-workbook` start their own server and take
+`[chromePath] [outDir]`; the rest need one running and take
+`[appUrl] [chromePath] [outDir]`.
 
 Screenshots are written to `.tmp/` and promoted to `docs/screenshots/` when a change
 is worth showing.
@@ -497,7 +585,7 @@ is worth showing.
 
 ## 11. Provenance
 
-34 commits, `55482d0` … HEAD. The last twelve are this session; the 14 before them are
-the work of earlier sessions and are described by their commit messages, which record
-what went wrong as well as what was built — including four test mistakes and one place
-where a fix was worse than the bug.
+35 commits, `55482d0` … HEAD. The last thirteen are this session; the 14 before them
+are the work of earlier sessions and are described by their commit messages, which
+record what went wrong as well as what was built — including four test mistakes and one
+place where a fix was worse than the bug.

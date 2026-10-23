@@ -120,6 +120,37 @@ The seeded cubes happen to be dense, so an empty measure cell is hard to produce
 from them. A pushed-down `SUM([value]) / 0` is the short route: the contract makes
 division by zero **`null`**, so the response carries real absent values to test with.
 
+## Running an engine with authentication
+
+The engine now requires a bearer token by default; `GET /v1/capabilities` (public)
+reports `authRequired`. Two things are needed for a local run, and neither should
+touch the engine directory:
+
+1. **Create a user against a COPY of the database.** Users and password verifiers live
+   in `security.json` BESIDE the database file, so using the copy keeps the engine's own
+   file untouched:
+   ```powershell
+   Copy-Item Patricia\olap_engine\database.bin .tmp\auth-db.bin
+   & Patricia\olap_engine\target\debug\serve.exe --db .tmp\auth-db.bin --add-user alice --role reader --password "correct horse"
+   & Patricia\olap_engine\target\debug\serve.exe --bind 127.0.0.1:8091 --db .tmp\auth-db.bin
+   ```
+   Starting default-mode with no users is refused on purpose, and the message prints
+   that exact command.
+2. **Plateau needs nothing special**: the connect dialog probes (capabilities is
+   public), shows the sign-in gate, and the Plateau SERVER holds the token — the
+   browser never sees it. `start-engine.cmd -Cors` is only required when a *browser*
+   talks to the engine directly, because the `Authorization` header triggers a
+   preflight the engine must allow.
+
+For development without auth, `-Anonymous` (or `serve.exe --allow-anonymous`) makes
+`authRequired` report `false` and every route behaves as before.
+
+**Expiry is most easily simulated by restarting the engine**: its sessions live in
+memory, so a restart invalidates every token without touching `expiresAt`. Plateau
+should then answer 401 and ask for a sign-in; see `.tmp/verify-auth-engine.ps1` in this
+session for the full API-level script (create user, login, query, restart, re-login,
+logout — 26 checks).
+
 ## The saved workbook is restored at start-up, so harnesses must reset it
 
 Plateau loads `data/workbook.json` on start-up — that is the feature. The

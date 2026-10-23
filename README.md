@@ -338,21 +338,22 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 594 unit checks, 17 suites
+npm test         # 624 unit checks, 18 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
 
-`npm test` runs seventeen suites: `engine.test.ts` (expressions, CSV, inference, query
+`npm test` runs eighteen suites: `engine.test.ts` (expressions, CSV, inference, query
 execution, calculated fields), `lod.test.ts` (parsing, dimension resolution, filter
 ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport`,
 `remoteDataset`, `queryValidation` (unknown field names are refused),
 `capabilityGating` (filter operators, scopes and formula vocabulary),
 `workbookBackup`, `tableCalcs`, `split`, `axisSelection`, `aggregationMenu`,
 `workbookFile`, `nullCells` (absence is not zero, in every mark), `markInference`,
-`axisNesting` (line and heat map show every placed dimension) and `join`. LOD and
-engine tests use a small hand-computable fixture so every expected number can be
-checked by arithmetic rather than by trusting the implementation.
+`axisNesting` (line, heat map and treemap show every placed dimension),
+`engineAuth` (login, bearer tokens, 401) and `join`. LOD and engine tests use a small
+hand-computable fixture so every expected number can be checked by arithmetic rather
+than by trusting the implementation.
 
 `npm run test:ui` needs the app running and Chrome installed; it writes screenshots
 to `.tmp/`. Inside the DSH sandbox it also needs the wider sandbox mode — headless
@@ -378,10 +379,11 @@ node e2e/verify-retry.mjs      # 13 checks: a failed query is recoverable
 node e2e/verify-workbook.mjs   # 36 checks: save, start-up restore, menu, JSON files, backup safety
 node e2e/verify-test-set.mjs   # 28 checks: opens workbooks/test-set.json, renders every sheet, checks the tab strip
 node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips without it
+node e2e/verify-auth.mjs       # 45 checks: authRequired gate, login, bearer on every call, expiry re-sign-in, no token in the browser
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **1007 checks** — 594 unit, 413 browser.
+Total: **1082 checks** — 624 unit, 458 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -401,6 +403,7 @@ Total: **1007 checks** — 594 unit, 413 browser.
 | null cells | 22 | absence is not zero, in every mark |
 | mark inference | 7 | a scatter needs a measure on each axis |
 | axis nesting | 20 | line, heat map and treemap show every placed dimension |
+| engine auth | 30 | public capabilities, login, per-request bearer tokens, 401 drops the session |
 | joins | 28 | join schema, gating, capability refusal |
 
 Both browser and transport suites run against the real thing — a loopback HTTP
@@ -683,11 +686,15 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   down) and a treemap turns every placed dimension into a hierarchy level
 - Absent measure cells kept distinct from zero everywhere: charts, tooltips, tables,
   CSV, table calculations
+- **Engine authentication**: feature-detected via public `capabilities.authRequired`,
+  a sign-in gate in the connect dialog, and a server-held bearer token attached per
+  request — so a re-login is picked up by already-registered datasets, and a 401
+  asks for a sign-in and retries once instead of storming
 - Workbook autosave with a restorable previous generation, and portable JSON
   workbook files for keeping, sharing or hand-authoring test sheets
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1007 checks green (594 unit, 413 browser)
+- 1082 checks green (624 unit, 458 browser)
 
 ### Connecting to an engine
 
@@ -756,6 +763,39 @@ computed client-side:
 Everything upstream is unchanged: the query travels as a plan, the engine
 executes it, and the client renders what comes back.
 
+### Engine authentication
+
+An engine may require a bearer token. Nothing about that is assumed: capabilities is
+public and carries `authRequired`, and only `POST /v1/login` and
+`GET /v1/capabilities` are reachable without a token.
+
+- **Feature-detected, not guessed.** `authRequired: true` makes the connect dialog
+  show a sign-in gate before it lists cubes or fires any data request; `false` means
+  development mode (`--allow-anonymous`); an ABSENT field (an older engine) is read
+  as `false`, so a Plateau build keeps working across the upgrade.
+- **The token stays on the Plateau server.** The browser never receives it: login
+  goes through `POST /api/engine/login`, the token is held in memory keyed by engine
+  URL, and the transport resolves it per request — so a re-login is picked up by
+  already-registered datasets without re-registering them.
+- **Wrong user and wrong password are one message** ("Invalid user name or
+  password."), by the engine's design, and Plateau shows it verbatim.
+- **A dead session asks for a sign-in, once.** Any 401 — expiry, engine restart,
+  revocation — drops the stored token and opens a re-sign-in dialog aimed at that
+  dataset's engine; signing in retries the failed query exactly once. There is no
+  automatic retry loop.
+- **Roles are shown, not enforced.** They are informational until the engine's
+  permissions work lands; users are created with the engine CLI
+  (`serve.exe --add-user alice --role reader`), never through Plateau.
+- **The engine's SQL console is not linked**: its page has no token field yet, so
+  `POST /v1/sql` would 401.
+
+![Signing in to an engine from the connect dialog](docs/screenshots/62-engine-auth.png)
+
+Development without auth: start the engine with `-Anonymous` (or
+`serve.exe --allow-anonymous`) and `authRequired` reports `false`. A browser
+speaking to the engine directly also needs CORS (`-Cors`), because the `Authorization`
+header triggers a preflight the engine must allow.
+
 ### The remote backend, piece by piece
 
 - `src/core/protocol.ts` — versioned contract, validation, typed errors
@@ -812,7 +852,11 @@ executes it, and the client renders what comes back.
    connect dialog. The per-scope filter report is implemented client-side but the
    reference engine does not send it yet, so that negotiation is untested against
    the real engine. `maxRows` and `supportsInlineDomain` are now consulted.
-4. **Then** the higher-value analytics gaps: sets and groups, bins, reference lines,
+4. **Roles are informational.** Authentication works end to end, but the engine's
+   permissions work (its S2) is not here: every signed-in user sees the same data,
+   and Plateau only displays the role list. A token-revoke endpoint and a token field
+   on the engine's SQL console are also engine-side.
+5. **Then** the higher-value analytics gaps: sets and groups, bins, reference lines,
    forecasting. Ranked in *Known limitations*.
 
 ### A note on calculated fields
@@ -843,6 +887,10 @@ Deliberately out of scope for this build, and the honest next steps:
 - **Joins are structural, not arbitrary.** One join per dataset, LEFT only, keyed on a
   conformed dimension; no arbitrary predicates, no data blending across sources, no
   cross-source calculation.
+- **Engine sessions live in the Plateau server's memory.** A Plateau restart, or an
+  engine restart, means signing in again; there is no refresh token and no
+  server-side logout endpoint yet (dropping the token is the whole sign-out). Signed-in
+  users all see the same data until the engine's role permissions land.
 - **Calculated fields on a remote engine are aggregate-only**, one aggregation per
   field, and only when the engine advertises an expression evaluator. Row-level and
   LOD formulas are refused with an explanation; the engine exposes no rows for them

@@ -25,7 +25,9 @@ const SUITES = [
   ['workbook file format (round trip, hand-authored, refusals)', '../src/web/__tests__/workbookFile.test.ts'],
   ['null cells (absence is not zero, in every mark)', '../src/web/__tests__/nullCells.test.ts'],
   ['mark inference (a scatter needs a measure on each axis)', '../src/web/__tests__/markInference.test.ts'],
-  ['axis nesting (line, heat map and treemap show every dimension)', '../src/web/__tests__/axisNesting.test.ts'],  ['attribute joins (schema, gating, capability refusal)', '../src/server/__tests__/join.test.ts'],
+  ['axis nesting (line, heat map and treemap show every dimension)', '../src/web/__tests__/axisNesting.test.ts'],
+  ['attribute joins (schema, gating, capability refusal)', '../src/server/__tests__/join.test.ts'],
+  ['engine authentication (login, bearer tokens, 401)', '../src/server/__tests__/engineAuth.test.ts'],
 ];
 
 const failures = [];

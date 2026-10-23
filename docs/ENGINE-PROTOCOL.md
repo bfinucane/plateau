@@ -23,6 +23,7 @@ Transport is deliberately unspecified. The reference client speaks HTTP/JSON:
 | `sample` | `GET /v1/{dataset}/sample?limit=N&offset=M` |
 | `query` | `POST /v1/{dataset}/query` |
 | `capabilities` | `GET /v1/capabilities` |
+| `login` | `POST /v1/login` |
 
 Any binding is acceptable — HTTP, a Unix socket, an in-process FFI call. Only the
 JSON shapes below are normative.
@@ -31,6 +32,66 @@ The reference engine also exposes a **read-only SQL console** (`GET /sql` and
 `POST /v1/sql`) for debugging the engine by hand. It is explicitly **not part of
 this contract** and Plateau does not use it: SQL is not the client's language, and a
 SQL surface belongs wherever the parser lives.
+
+### Authentication (protocol v1, additive)
+
+Authentication is **optional and feature-detected**, never assumed. An engine that
+implements it protects every route except two:
+
+| Public route | Why |
+| --- | --- |
+| `POST /v1/login` | it issues the token |
+| `GET /v1/capabilities` | it is how a client discovers that a token is needed |
+
+Protecting capabilities would hide the answer exactly when it matters, so it
+reports feature flags only and never data. Every other route — `/v1/datasets`,
+`/v1/{dataset}`, `/v1/{dataset}/sample`, `/v1/{dataset}/query`, `POST /v1/sql` —
+requires `Authorization: Bearer <token>`.
+
+`GET /v1/capabilities` gains `"authRequired": boolean`:
+
+- `true` — a client must log in **before any other call**, and must not fire a burst
+  of data requests that would all 401;
+- `false` — the engine is in development mode (`--allow-anonymous`); behave as before;
+- absent — an older engine; treat as `false`, so a client build that ships before the
+  engine upgrade keeps working.
+
+**Login**
+
+```
+POST /v1/login
+Content-Type: application/json
+{"user": "alice", "password": "..."}
+
+200 {"token": "<64 hex chars>", "user": "alice", "roles": ["reader"], "expiresAt": 1792805349}
+401 {"error": "Invalid user name or password.", "code": "unauthorized"}
+400 {"error": "...", "code": "invalid_argument"}
+```
+
+`expiresAt` is a **Unix timestamp in seconds**. A wrong password and an unknown user
+return the **same** 401 body by design; a client must not try to distinguish them.
+`roles` is informational until permissions attach to roles. Sessions live in memory:
+a restart logs everyone out. There is no refresh endpoint — re-login is the refresh.
+
+**Unauthorised responses.** Any protected route without a valid token:
+
+```
+401 {"error": "Authentication required. POST /v1/login to obtain a bearer token.",
+     "code": "unauthorized"}
+```
+
+Missing, malformed, unknown and expired tokens are deliberately one message. Auth is
+checked before routing, so an unauthenticated request to an unknown path is also 401:
+it cannot be used to probe which datasets exist. Any 401 during a session means the
+session is gone — drop the token, show a login screen, and do **not** retry in a loop.
+
+**CORS.** A browser client sending `Authorization` triggers a preflight; the engine
+must allow it: `Access-Control-Allow-Headers: Content-Type, Authorization`.
+
+**Client architecture note.** In Plateau the browser never talks to the engine:
+Plateau's *server* is the engine's client, so the token is obtained and kept
+server-side and never enters the browser. The rules above still apply to that server,
+which is the component sending the header.
 
 ### Errors
 
@@ -44,13 +105,15 @@ A non-2xx response carries:
 
 ```
 unknown_dataset | unsupported_aggregation | unsupported_filter
-unsupported_expression | invalid_argument | engine_error | version_mismatch
+unsupported_expression | row_limit | unauthorized | invalid_argument
+engine_error | version_mismatch
 ```
 
 The distinction matters: `invalid_argument` and the `unsupported_*` codes are the
 **client's** fault and are a bug in Plateau. `engine_error` is the engine's, and
-is worth retrying or reporting. Do not return `engine_error` for a bad request —
-the client cannot tell a bug from a fault.
+is worth retrying or reporting. `unauthorized` is a session problem, not a request
+problem: re-authenticate rather than changing the query. Do not return `engine_error`
+for a bad request — the client cannot tell a bug from a fault.
 
 ---
 
@@ -343,6 +406,7 @@ converting it to zero is a decision only the formula author may make
   "supportsLod": false,
   "supportsJoin": true,
   "expressionFunctions": ["ZN", "IFNULL"],
+  "authRequired": true,
   "supportsInlineDomain": true,
   "maxRows": 100000
 }
@@ -393,6 +457,11 @@ The list fields are what make the client honest, so say exactly what you impleme
   chart, it is a truncated **materialisation**: a client-side LOD computed over
   half a dataset returns plausible numbers that are not the answer, so Plateau
   refuses a partial table with `row_limit` instead of computing it.
+- **`authRequired`** — *optional*, and absent must be read as `false`. When `true`,
+  a client logs in first (see [Authentication](#authentication-protocol-v1-additive))
+  and sends the bearer token on every protected route. Plateau answers this by
+  keeping sessions server-side, one per engine URL, and attaching the token per
+  request so a re-login is picked up by already-registered datasets.
 
 An **empty** `expressionFunctions` list is a meaningful answer: "this engine has no
 expression evaluator". Plateau then refuses to push a calculated field down at all,

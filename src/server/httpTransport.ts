@@ -22,6 +22,8 @@ import {
   type Capabilities,
   type CatalogResponse,
   type EngineTransport,
+  type LoginRequest,
+  type LoginResponse,
   type ProtocolErrorCode,
   type QueryRequest,
   type QueryResponse,
@@ -34,7 +36,26 @@ export interface HttpTransportOptions {
   baseUrl: string;
   /** Per-request timeout in milliseconds. Default 30s. */
   timeoutMs?: number;
-  /** Extra headers, e.g. an auth token. */
+  /**
+   * Resolves the bearer token for the CURRENT request.
+   *
+   * A function rather than a fixed header because a session can be renewed while
+   * the transport lives: an already-registered dataset must start sending the new
+   * token after a re-login, without being rebuilt. Returning `undefined` sends no
+   * `Authorization` header, which is what a public route or an expired session
+   * needs.
+   */
+  getToken?: () => string | undefined;
+  /**
+   * Called when the engine answers 401.
+   *
+   * The token is dead — expired, revoked, or invalidated by an engine restart — and
+   * keeping it would make "am I signed in?" keep answering yes. Dropping the session
+   * here is what makes a probe (or the session endpoint) tell the truth after the
+   * first refused request.
+   */
+  onUnauthorized?: () => void;
+  /** Extra headers, e.g. a fixed trace header. */
   headers?: Record<string, string>;
   /** Injectable for tests. Defaults to the global `fetch`. */
   fetchImpl?: typeof fetch;
@@ -46,6 +67,8 @@ const ERROR_CODES: ProtocolErrorCode[] = [
   'unsupported_aggregation',
   'unsupported_filter',
   'unsupported_expression',
+  'row_limit',
+  'unauthorized',
   'invalid_argument',
   'engine_error',
   'version_mismatch',
@@ -68,12 +91,16 @@ function asErrorCode(value: unknown): ProtocolErrorCode {
 export class HttpEngineTransport implements EngineTransport {
   private base: string;
   private timeoutMs: number;
+  private getToken?: () => string | undefined;
+  private onUnauthorized?: () => void;
   private headers: Record<string, string>;
   private fetchImpl: typeof fetch;
 
   constructor(options: HttpTransportOptions) {
     this.base = normaliseBase(options.baseUrl);
     this.timeoutMs = options.timeoutMs ?? 30_000;
+    this.getToken = options.getToken;
+    this.onUnauthorized = options.onUnauthorized;
     this.headers = options.headers ?? {};
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
 
@@ -82,8 +109,23 @@ export class HttpEngineTransport implements EngineTransport {
     }
   }
 
+  /** The base URL this transport talks to, normalised. */
+  get baseUrl(): string {
+    return this.base;
+  }
+
   async capabilities(): Promise<Capabilities> {
     return this.send<Capabilities>('GET', '/v1/capabilities');
+  }
+
+  /**
+   * Exchanges credentials for a token.
+   *
+   * No `Authorization` header is attached: login is how a client gets one. The
+   * token is stored by the caller (`engineAuth.ts`), not by the transport.
+   */
+  async login(request: LoginRequest): Promise<LoginResponse> {
+    return this.send<LoginResponse>('POST', '/v1/login', request);
   }
 
   async describe(dataset: string): Promise<CatalogResponse> {
@@ -125,15 +167,24 @@ export class HttpEngineTransport implements EngineTransport {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
+    /*
+     * Resolve the token per request, so a session renewed after this transport was
+     * created is used by the next call. The header is added only when a token
+     * exists; a public route (capabilities) must work without one.
+     */
+    const token = this.getToken?.();
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      ...this.headers,
+    };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
         method,
-        headers: {
-          Accept: 'application/json',
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-          ...this.headers,
-        },
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       });
@@ -154,6 +205,12 @@ export class HttpEngineTransport implements EngineTransport {
     }
 
     if (!response.ok) {
+      /*
+       * A 401 means the token is dead, whatever the engine thinks the expiry is: it
+       * may have restarted, or revoked it. Drop the session so the next probe and the
+       * session endpoint stop claiming a sign-in, and the UI can ask for a new one.
+       */
+      if (response.status === 401) this.onUnauthorized?.();
       throw await this.decodeError(response);
     }
 
