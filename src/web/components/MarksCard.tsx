@@ -2,8 +2,15 @@
  * The Marks card: mark type plus the visual encoding drop targets.
  */
 
+import { useState } from 'react';
 import { getDragPayload, hasDragPayload, type DragPayload } from '../dnd';
-import { MARK_TYPES, type Encoding, type MarkType, type ShelfId } from '../viewModel';
+import {
+  MARK_TYPES,
+  type Encoding,
+  type MarkType,
+  type ReferenceLine,
+  type ShelfId,
+} from '../viewModel';
 import { Pill } from './Shelf';
 
 interface MarksCardProps {
@@ -19,7 +26,16 @@ interface MarksCardProps {
   /** One pane per measure, for a text table. */
   splitMeasures?: boolean;
   onMeasureSplitChange: (split: boolean) => void;
+  /** Constant lines on the value axis. Only offered for marks that have one. */
+  referenceLines: ReferenceLine[];
+  onAddReferenceLine: (value: number, label?: string) => void;
+  onRemoveReferenceLine: (id: string) => void;
+  canReferenceLine: boolean;
 }
+
+/** Formatting for the reference-line list; the chart formats its own labels. */
+const formatLineValue = (value: number): string =>
+  value.toLocaleString('en-US', { maximumFractionDigits: 2 });
 
 /** The encodings that live on the Marks card, in Tableau's order. */
 const MARK_SHELVES: { id: ShelfId; label: string; hint: string }[] = [
@@ -41,7 +57,13 @@ export function MarksCard({
   onPaneChange,
   splitMeasures,
   onMeasureSplitChange,
+  referenceLines,
+  onAddReferenceLine,
+  onRemoveReferenceLine,
+  canReferenceLine,
 }: MarksCardProps) {
+  const [lineValue, setLineValue] = useState('');
+  const [lineLabel, setLineLabel] = useState('');
   /**
    * Dimensions that could be split by.
    *
@@ -128,6 +150,72 @@ export function MarksCard({
             />
             <span>One pane per measure</span>
           </label>
+        </div>
+      )}
+
+      {canReferenceLine && (
+        <div className="marks-reflines">
+          <span className="marks-reflines-title">Reference lines</span>
+
+          {referenceLines.length > 0 && (
+            <ul className="refline-list">
+              {referenceLines.map((line) => (
+                <li key={line.id} className="refline-item">
+                  <span className="refline-name">
+                    {line.label?.trim() ? line.label.trim() : formatLineValue(line.value)}
+                  </span>
+                  {line.label?.trim() && (
+                    <span className="refline-value">{formatLineValue(line.value)}</span>
+                  )}
+                  <button
+                    type="button"
+                    className="refline-remove"
+                    title={`Remove reference line at ${formatLineValue(line.value)}`}
+                    onClick={() => onRemoveReferenceLine(line.id)}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <form
+            className="refline-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const value = Number(lineValue);
+              if (!lineValue.trim() || !Number.isFinite(value)) return;
+              onAddReferenceLine(value, lineLabel.trim() || undefined);
+              setLineValue('');
+              setLineLabel('');
+            }}
+          >
+            <input
+              type="number"
+              step="any"
+              className="refline-value-input"
+              placeholder="Value"
+              value={lineValue}
+              onChange={(event) => setLineValue(event.target.value)}
+              aria-label="Reference line value"
+            />
+            <input
+              type="text"
+              className="refline-label-input"
+              placeholder="Label (optional)"
+              value={lineLabel}
+              onChange={(event) => setLineLabel(event.target.value)}
+              aria-label="Reference line label"
+            />
+            <button
+              type="submit"
+              className="refline-add"
+              disabled={!lineValue.trim() || !Number.isFinite(Number(lineValue))}
+            >
+              Add
+            </button>
+          </form>
         </div>
       )}
 

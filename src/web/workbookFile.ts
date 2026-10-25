@@ -32,6 +32,7 @@ import {
   type DashboardPanel,
   type Encoding,
   type MarkType,
+  type ReferenceLine,
   type Sheet,
   type ShelfId,
   type WorkbookState,
@@ -321,7 +322,61 @@ function normaliseSheet(
     sheet.palette = value.palette;
   }
 
+  const referenceLines = normaliseReferenceLines(value.referenceLines, name, warnings);
+  if (referenceLines.length > 0) sheet.referenceLines = referenceLines;
+
   return sheet;
+}
+
+/**
+ * Constant lines on the value axis.
+ *
+ * A hand-authored line needs only `{ "value": 1000 }`; the id is generated so it can
+ * be removed in the UI, and a label is optional (the formatted value is shown when
+ * there is none). An entry without a finite numeric value is dropped and reported —
+ * a line at `NaN` would silently never draw.
+ */
+function normaliseReferenceLines(
+  value: unknown,
+  sheetName: string,
+  warnings: string[],
+): ReferenceLine[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    warnings.push(
+      `Sheet "${sheetName}" had reference lines that are not a list; they were ignored.`,
+    );
+    return [];
+  }
+
+  const lines: ReferenceLine[] = [];
+  const ids = new Set<string>();
+  value.forEach((entry, index) => {
+    if (!isRecord(entry)) {
+      warnings.push(
+        `Sheet "${sheetName}" reference line ${index + 1} is not an object; it was ignored.`,
+      );
+      return;
+    }
+    const lineValue = typeof entry.value === 'number' ? entry.value : Number(entry.value);
+    if (!Number.isFinite(lineValue)) {
+      warnings.push(
+        `Sheet "${sheetName}" reference line ${index + 1} has no finite value; it was ignored.`,
+      );
+      return;
+    }
+    let id =
+      typeof entry.id === 'string' && entry.id.trim()
+        ? entry.id.trim()
+        : `refline-file-${index + 1}`;
+    if (ids.has(id)) id = `${id}-${index + 1}`;
+    ids.add(id);
+
+    const line: ReferenceLine = { id, value: lineValue };
+    if (typeof entry.label === 'string' && entry.label.trim()) line.label = entry.label.trim();
+    lines.push(line);
+  });
+  return lines;
 }
 
 function normaliseEncodings(

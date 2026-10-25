@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, fifteen session commits on top of `0e252ab`. Every number
+Written on branch `main`, sixteen session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,12 +13,12 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 37 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
-| Source | 61 files in `src/`, ~23,800 lines |
-| Unit tests | **657 checks**, 19 suites, all passing |
-| Browser tests | **470 checks**, 16 harnesses, all passing |
-| Screenshots | 54, in `docs/screenshots/` |
-| Bundle | `dist/web/assets/index-Syl6emqg.js` (built this session) |
+| Commits | 38 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Source | 62 files in `src/`, ~27,200 lines |
+| Unit tests | **675 checks**, 20 suites, all passing |
+| Browser tests | **481 checks**, 16 harnesses, all passing |
+| Screenshots | 55, in `docs/screenshots/` |
+| Bundle | `dist/web/assets/index-CzWdu0jM.js` (built this session) |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -270,7 +270,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Fifteen commits on top of `0e252ab` — eight features, a wire follow-up, two design
+Sixteen commits on top of `0e252ab` — nine features, a wire follow-up, two design
 decisions and two notes on verification hygiene. The commit messages have the detail;
 the shape:
 
@@ -298,19 +298,20 @@ the shape:
 | An auth-enabled engine would have met a burst of 401s, a dead token would have lingered, and there was no login UI at all | `authRequired` is feature-detected from public capabilities, a sign-in gate comes first, one server-held token rides every request, and any 401 drops the session and asks for a re-login before one retry |
 | "Plateau calculations could replace Infor rules" looked like the obvious model store, and a fixture tried to fake Profit = Revenue − Cost with signed hierarchy weights | Rules are parked: cross-dimensional member semantics and the missing authoring/write path are engine-owned and undecided. The idea is written down as a **reserved, unimplemented** contract section, not built |
 | The engine forgets formulas and the server kept them in memory only, so every calculated field vanished on a server restart while sheets survived | Calculation definitions are saved in the workbook as explicit local drafts and re-registered on dataset activation; the browser harness restarts its server and proves the field comes back exactly once |
+| A target, budget or average line could not be drawn on a chart at all | Reference lines: constant lines on the value axis for the bar family, line and area; the line moves to x for horizontal bars, the control is not offered where a mark has no value axis, and definitions persist in the workbook |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (29),
-`capabilityGating.test.ts` (43), `workbookFile.test.ts` (53),
-`calculationDrafts.test.ts` (23), `nullCells.test.ts` (22),
-`markInference.test.ts` (7), `axisNesting.test.ts` (20) and `engineAuth.test.ts` (30).
-`verify-ui` grew from 25 to 43 checks, `verify-connect` from 26 to 80, and
-`verify-auth.mjs` is new (45 checks, with two stub engines: one requiring auth and one
-anonymous). `verify-workbook.mjs` (48 checks, own server and data directory; now also
-restarts the server to prove calculation drafts are re-registered) and
-`verify-test-set.mjs` (28 checks, data-driven from the workbook file) are new.
-Screenshots added: `51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`60`
-for the workbook, test-set and tab-strip work, `61-null-cells.png` and
-`62-engine-auth.png`.
+`capabilityGating.test.ts` (43), `workbookFile.test.ts` (60),
+`calculationDrafts.test.ts` (23), `referenceLines.test.ts` (11),
+`nullCells.test.ts` (22), `markInference.test.ts` (7), `axisNesting.test.ts` (20) and
+`engineAuth.test.ts` (30). `verify-ui` grew from 25 to 43 checks, `verify-marks` from
+18 to 29, `verify-connect` from 26 to 80, and `verify-auth.mjs` is new (45 checks, with
+two stub engines: one requiring auth and one anonymous). `verify-workbook.mjs`
+(48 checks, own server and data directory; now also restarts the server to prove
+calculation drafts are re-registered) and `verify-test-set.mjs` (28 checks, data-driven
+from the workbook file) are new. Screenshots added: `51-three-dimensions.png`,
+`52-connect-calculated.png`, `53`–`60` for the workbook, test-set and tab-strip work,
+`61-null-cells.png`, `62-engine-auth.png` and `63-reference-lines.png`.
 
 The engine-side stub in `verify-connect.mjs` answers a query by **echoing its shape**
 rather than returning one canned response, and returns one `null` measure cell. A
@@ -447,10 +448,11 @@ The project is Plateau. The rename is blocked only because the user's browser an
 running processes hold the directory open; it is a `git mv` plus a `start.cmd` check.
 
 ### 8.6 Not built at all, versus Tableau
-Sets and groups, bins, hierarchies, reference lines, forecasting, parameters,
-tooltips configuration, cross-source blending, pivot (the engine even has a `Pivot`
-cube), image/PDF export, stories, RLS. Maps are **deliberately absent** — an earlier
-request removed them.
+Sets and groups, bins, hierarchies, forecasting, parameters, tooltips configuration,
+cross-source blending, pivot (the engine even has a `Pivot` cube), image/PDF export,
+stories, RLS. Maps are **deliberately absent** — an earlier request removed them.
+Reference lines exist but only as value-axis annotations (bar family, line, area);
+scatter's two value axes and marks with no value axis are not offered.
 
 ### 8.7 Test gaps
 - **No CI.** `e2e/*.mjs` need a Chrome path and the wider sandbox passed in.
@@ -645,17 +647,17 @@ when fixtures are regenerated.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 657 unit checks
+node scripts/test.mjs                                   # 675 unit checks
 node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 ```
 
 Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset` 38,
 `queryValidation` 17, `capabilityGating` 43, `tableCalcs` 51, `workbookBackup` 14,
-`split` 35, `axisSelection` 34, `aggregationMenu` 29, `workbookFile` 53,
-`calculationDrafts` 23, `nullCells` 22, `markInference` 7, `axisNesting` 20,
-`engineAuth` 30, `join` 28.
+`split` 35, `axisSelection` 34, `aggregationMenu` 29, `workbookFile` 60,
+`calculationDrafts` 23, `referenceLines` 11, `nullCells` 22, `markInference` 7,
+`axisNesting` 20, `engineAuth` 30, `join` 28.
 
-Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 18, `verify-viz`
+Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 29, `verify-viz`
 27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 80,
 `verify-tablecalc` 14, `verify-split` 16, `verify-measuresplit` 26, `verify-retry` 13,
 `verify-workbook` 48, `verify-test-set` 28, `verify-auth` 45, `verify-join` 38 (needs
@@ -671,7 +673,7 @@ is worth showing.
 
 ## 11. Provenance
 
-37 commits, `55482d0` … HEAD. The last fifteen are this session; the 14 before them
+38 commits, `55482d0` … HEAD. The last sixteen are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

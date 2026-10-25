@@ -42,6 +42,7 @@ import {
   type Dashboard,
   type Encoding,
   type MarkType,
+  type ReferenceLine,
   type ShelfId,
   type Sheet,
   type WorkbookState,
@@ -76,6 +77,7 @@ type Action =
   | { type: 'sheet/mark'; sheetId: string; mark: MarkType }
   | { type: 'sheet/paneSplit'; sheetId: string; paneBy?: string }
   | { type: 'sheet/measureSplit'; sheetId: string; splitMeasures: boolean }
+  | { type: 'sheet/referenceLines'; sheetId: string; referenceLines: ReferenceLine[] }
   | { type: 'sheet/encodingAdded'; sheetId: string; shelf: ShelfId; encoding: Encoding }
   | { type: 'sheet/encodingRemoved'; sheetId: string; shelf: ShelfId; encodingId: string }
   | { type: 'sheet/encodingUpdated'; sheetId: string; encodingId: string; patch: Partial<Encoding> }
@@ -282,6 +284,16 @@ function reducer(state: State, action: Action): State {
           return rest;
         }
         return { ...sheet, splitMeasures: true };
+      });
+
+    case 'sheet/referenceLines':
+      return mapSheet(state, action.sheetId, (sheet) => {
+        // Drop the key when the last line goes, so the saved workbook stays clean.
+        if (action.referenceLines.length === 0) {
+          const { referenceLines: _dropped, ...rest } = sheet;
+          return rest;
+        }
+        return { ...sheet, referenceLines: action.referenceLines };
       });
 
     case 'sheet/encodingAdded':

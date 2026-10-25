@@ -338,19 +338,20 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 657 unit checks, 19 suites
+npm test         # 675 unit checks, 20 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
 
-`npm test` runs nineteen suites: `engine.test.ts` (expressions, CSV, inference, query
+`npm test` runs twenty suites: `engine.test.ts` (expressions, CSV, inference, query
 execution, calculated fields), `lod.test.ts` (parsing, dimension resolution, filter
 ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport`,
 `remoteDataset`, `queryValidation` (unknown field names are refused),
 `capabilityGating` (filter operators, scopes and formula vocabulary),
 `workbookBackup`, `tableCalcs`, `split`, `axisSelection`, `aggregationMenu`,
 `workbookFile`, `calculationDrafts` (calculation identity, dataset binding,
-re-registration), `nullCells` (absence is not zero, in every mark), `markInference`,
+re-registration), `referenceLines` (value axis, orientation, marks without one),
+`nullCells` (absence is not zero, in every mark), `markInference`,
 `axisNesting` (line, heat map and treemap show every placed dimension),
 `engineAuth` (login, bearer tokens, 401) and `join`. LOD and engine tests use a small
 hand-computable fixture so every expected number can be checked by arithmetic rather
@@ -367,7 +368,7 @@ The other harnesses, each of which prints `N passed, M failed`:
 
 ```bash
 node e2e/verify-lod.mjs        # 14 checks: LOD fields through the real UI, incl. filter ordering
-node e2e/verify-marks.mjs      # 18 checks: Color / Size / Label channels and bar stacking
+node e2e/verify-marks.mjs      # 29 checks: Color / Size / Label channels, bar stacking, reference lines
 node e2e/verify-viz.mjs        # 27 checks: scatter axes, trend-line fit, heat map orientation
 node e2e/verify-sort.mjs       # 15 checks: Sort control reaches the engine; axis orientation
 node e2e/verify-treemap.mjs    # 16 checks: treemap hierarchy, tooltip paths, Detail guard
@@ -384,7 +385,7 @@ node e2e/verify-auth.mjs       # 45 checks: authRequired gate, login, bearer on 
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **1127 checks** — 657 unit, 470 browser.
+Total: **1156 checks** — 675 unit, 481 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -400,8 +401,9 @@ Total: **1127 checks** — 657 unit, 470 browser.
 | split | 35 | partitioning, ordering, refusals |
 | axis selection | 34 | dimensions beat measures; nesting to any depth |
 | capability menus | 29 | aggregations, filter operators and per-scope lists, never lying about the current value |
-| workbook file | 53 | round trip, hand-authored files, refusals, repairs, calculation drafts |
+| workbook file | 60 | round trip, hand-authored files, refusals, repairs, calculation drafts, reference lines |
 | calculation drafts | 23 | identity, dataset binding, missing-on-server planning |
+| reference lines | 11 | value axis, horizontal orientation, marks without a value axis |
 | null cells | 22 | absence is not zero, in every mark |
 | mark inference | 7 | a scatter needs a measure on each axis |
 | axis nesting | 20 | line, heat map and treemap show every placed dimension |
@@ -699,9 +701,12 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   saved alongside the sheets and re-registered when a dataset is activated — a server
   restart no longer loses calculated fields. They remain explicitly local drafts, not
   shared model objects.
+- **Reference lines** annotate a chart's value axis (a target, budget or average)
+  without changing the query: bar family, line and area, with the line moving to x
+  for horizontal bars and the control hidden where a mark has no value axis.
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1127 checks green (657 unit, 470 browser)
+- 1156 checks green (675 unit, 481 browser)
 
 ### Connecting to an engine
 
@@ -863,8 +868,8 @@ header triggers a preflight the engine must allow.
    permissions work (its S2) is not here: every signed-in user sees the same data,
    and Plateau only displays the role list. A token-revoke endpoint and a token field
    on the engine's SQL console are also engine-side.
-5. **Then** the higher-value analytics gaps: sets and groups, bins, reference lines,
-   forecasting. Ranked in *Known limitations*.
+5. **Then** the higher-value analytics gaps: sets and groups, bins, forecasting.
+   Ranked in *Known limitations*.
 
 ### A note on calculated fields
 

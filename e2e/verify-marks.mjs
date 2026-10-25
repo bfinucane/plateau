@@ -323,6 +323,87 @@ try {
 
   await screenshot('16-bar-colored.png');
 
+  // ── Reference lines annotate the value axis ───────────────────────────
+  console.log('\nReference lines');
+
+  const setReferenceInputs = (value, label = '') => evaluate(`(() => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    const valueInput = document.querySelector('.refline-value-input');
+    const labelInput = document.querySelector('.refline-label-input');
+    if (!valueInput) return 'no value input';
+    setter.call(valueInput, ${JSON.stringify(String(value))});
+    valueInput.dispatchEvent(new Event('input', { bubbles: true }));
+    if (labelInput) {
+      setter.call(labelInput, ${JSON.stringify(label)});
+      labelInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    return 'ok';
+  })()`);
+
+  const referenceLineData = () => evaluate(`(() => {
+    const echarts = window.__ECHARTS__;
+    const inst = echarts.getInstanceByDom(document.querySelector('.chart-canvas'));
+    const data = ((inst.getOption().series ?? [])[0]?.markLine?.data) ?? [];
+    return data.map((point) => ({
+      xAxis: point.xAxis, yAxis: point.yAxis, name: point.name,
+    }));
+  })()`);
+
+  check('the control is offered for a bar chart',
+    (await evaluate(`Boolean(document.querySelector('.refline-value-input'))`)) === true);
+  check('no reference lines to begin with', (await referenceLineData()).length === 0);
+
+  check('a labelled value is entered', (await setReferenceInputs(1000000, 'Target')) === 'ok');
+  await sleep(150);
+  await evaluate(`document.querySelector('.refline-add').click(); true`);
+  await sleep(1200);
+  const firstLine = await referenceLineData();
+  check('the line is drawn on the y value axis',
+    firstLine.length === 1 && firstLine[0].yAxis === 1000000,
+    JSON.stringify(firstLine));
+  check('its label reaches the chart', firstLine[0]?.name === 'Target', JSON.stringify(firstLine));
+
+  check('a second, unlabelled value is entered', (await setReferenceInputs(2000000)) === 'ok');
+  await sleep(150);
+  await evaluate(`document.querySelector('.refline-add').click(); true`);
+  await sleep(1200);
+  const twoLines = await referenceLineData();
+  check('both lines are drawn', twoLines.length === 2, JSON.stringify(twoLines));
+  check('an unlabelled line is named by its formatted value',
+    twoLines[1]?.name === '2,000,000', JSON.stringify(twoLines));
+
+  await screenshot('63-reference-lines.png');
+
+  await evaluate(`document.querySelector('.refline-remove').click(); true`);
+  await sleep(1200);
+  const remaining = await referenceLineData();
+  check('removing a line leaves the other one',
+    remaining.length === 1 && remaining[0].yAxis === 2000000, JSON.stringify(remaining));
+
+  // Horizontal bars read the value axis on x, so the line has to move with it.
+  await evaluate(`(() => {
+    const s = document.querySelector('.mark-select');
+    s.value = 'bar';
+    s.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await sleep(1800);
+  const horizontalLine = await referenceLineData();
+  check('a horizontal bar puts the line on the x axis',
+    horizontalLine[0]?.xAxis === 2000000 && horizontalLine[0]?.yAxis === undefined,
+    JSON.stringify(horizontalLine));
+
+  // A mark with no value axis must not offer the control at all.
+  await evaluate(`(() => {
+    const s = document.querySelector('.mark-select');
+    s.value = 'pie';
+    s.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await sleep(1800);
+  check('a pie chart does not offer reference lines',
+    (await evaluate(`Boolean(document.querySelector('.marks-reflines'))`)) === false);
+
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 2).join(' | '));
 
   const failed = results.filter((r) => !r.ok);

@@ -54,6 +54,16 @@ export const MARK_TYPES: { id: MarkType; label: string; hint: string }[] = [
   { id: 'histogram', label: 'Histogram', hint: 'Distribution of a single measure' },
 ];
 
+/** A horizontal or vertical line drawn across a chart at a constant value. */
+export interface ReferenceLine {
+  /** Stable id, so a line can be removed without matching on its value. */
+  id: string;
+  /** Where the line sits on the value axis. */
+  value: number;
+  /** Optional label; the formatted value is used when absent. */
+  label?: string;
+}
+
 /** One field placed on a shelf, with its encoding options. */
 export interface Encoding {
   /** Stable id so the same field can appear on two shelves. */
@@ -99,6 +109,14 @@ export interface Sheet {
    * differ in the value shown.
    */
   splitMeasures?: boolean;
+  /**
+   * Constant lines drawn across the value axis (a target, a budget, an average).
+   *
+   * They annotate the result: no query changes. Marks with one value axis can show
+   * them (the bar family, line, area); marks without a value axis — pie, treemap,
+   * heat map, text — cannot, and the control is not offered for them.
+   */
+  referenceLines?: ReferenceLine[];
 }
 
 /**
@@ -507,6 +525,24 @@ export function inferMark(sheet: Sheet): Exclude<MarkType, 'automatic'> {
 /** Resolves the mark actually used, applying automatic inference. */
 export function effectiveMark(sheet: Sheet): Exclude<MarkType, 'automatic'> {
   return sheet.mark === 'automatic' ? inferMark(sheet) : sheet.mark;
+}
+
+/**
+ * Whether a mark has exactly one value axis for a reference line to cross.
+ *
+ * Bar-like marks, line and area do. Pie/treemap/text have no value axis, heat map
+ * encodes the measure as colour, and a scatter has two value axes — a line there
+ * would need an axis choice, so it is deliberately not offered.
+ */
+export function markHasValueAxis(mark: Exclude<MarkType, 'automatic'>): boolean {
+  return (
+    mark === 'column' ||
+    mark === 'bar' ||
+    mark === 'circle' ||
+    mark === 'square' ||
+    mark === 'line' ||
+    mark === 'area'
+  );
 }
 
 /** A compact description of the generated query, shown in the UI. */

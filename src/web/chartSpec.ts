@@ -96,6 +96,39 @@ export function formatFull(value: number | null): string {
   return value.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
+/**
+ * A constant line across the chart's value axis (a target, a budget, an average).
+ *
+ * Reference lines annotate the result; they never change the query. They are drawn
+ * as an ECharts `markLine` on the first series, which is why only marks with a
+ * single value axis offer them — `axis` says whether that axis is x (horizontal
+ * bars) or y (everything else).
+ */
+function referenceLineMark(
+  sheet: Sheet | undefined,
+  axis: 'x' | 'y',
+): Record<string, unknown> | undefined {
+  const lines = sheet?.referenceLines ?? [];
+  if (lines.length === 0) return undefined;
+  return {
+    symbol: 'none',
+    silent: true,
+    animation: false,
+    lineStyle: { type: 'dashed', color: '#8a94a3', width: 1.2 },
+    label: {
+      show: true,
+      position: 'insideEndTop',
+      color: '#5b6472',
+      fontSize: 10,
+      formatter: (params: { name?: string }) => params.name ?? '',
+    },
+    data: lines.map((line) => ({
+      [axis === 'x' ? 'xAxis' : 'yAxis']: line.value,
+      name: line.label && line.label.trim() ? line.label.trim() : formatFull(line.value),
+    })),
+  };
+}
+
 /** Formats a date-ish string for display, e.g. 2024-03-01 -> Mar 2024. */
 export function formatDateLabel(value: CellValue): string {
   const text = toText(value);
@@ -706,7 +739,7 @@ function buildBarLike(
         yAxis: { type: 'value', splitLine: GRID_SPLIT_STYLE, axisLabel: AXIS_LABEL_STYLE },
         // `value` may be null: ECharts draws no bar, which is the honest picture of
         // an absent total, and the label reads as an em dash rather than "0".
-        series: [{ type: 'bar', data: [value], barMaxWidth: 120, label: { show: true, position: 'top', formatter: () => formatFull(value) } }],
+        series: [{ type: 'bar', data: [value], barMaxWidth: 120, markLine: referenceLineMark(sheet, 'y'), label: { show: true, position: 'top', formatter: () => formatFull(value) } }],
         legend: { show: false },
       },
     };
@@ -883,6 +916,12 @@ function buildBarLike(
   const descends = sheet ? sortDirection(sheet) === 'desc' : false;
   const categoryAxisOrientation = horizontal && descends ? { inverse: true } : {};
 
+  // One line set on the value axis; horizontal bars put that axis on x.
+  const referenceLines = referenceLineMark(sheet, horizontal ? 'x' : 'y');
+  if (referenceLines && series.length > 0) {
+    (series[0] as Record<string, unknown>).markLine = referenceLines;
+  }
+
   return {
     option: {
       ...baseOption(),
@@ -910,7 +949,7 @@ function buildLineLike(
   const measureName = plan.measureNames[0] ?? 'Value';
 
   if (dimensionIndex === undefined) {
-    return buildBarLike(result, plan, 'column');
+    return buildBarLike(result, plan, 'column', undefined, sheet, columns);
   }
 
   const isDate = plan.isTemporal[plan.dimensionIndices.indexOf(dimensionIndex)];
@@ -952,6 +991,7 @@ function buildLineLike(
     ),
   ]);
   const categories = axis.labels;
+  const referenceLines = referenceLineMark(sheet, 'y');
 
   if (seriesDimensionIndex === undefined) {
     return {
@@ -982,6 +1022,7 @@ function buildLineLike(
             data: result.rows.map((row) => toNumber(row[measureIndex])),
             areaStyle: stacked ? { opacity: 0.22 } : undefined,
             lineStyle: { width: 2.4 },
+            markLine: referenceLines,
           },
         ],
         legend: { show: false },
@@ -1017,6 +1058,9 @@ function buildLineLike(
     lineStyle: { width: 2.2 },
     emphasis: { focus: 'series' },
   }));
+  if (referenceLines && series.length > 0) {
+    (series[0] as Record<string, unknown>).markLine = referenceLines;
+  }
 
   return {
     option: {

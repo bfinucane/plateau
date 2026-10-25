@@ -2056,6 +2056,101 @@ textarea {
   font-size: 11px;
 }
 
+/* Reference lines: a target line on the value axis, no query change. */
+.marks-reflines {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.marks-reflines-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+.refline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.refline-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  font-size: 11px;
+}
+
+.refline-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.refline-value {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.refline-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.refline-remove:hover {
+  color: var(--text);
+}
+
+.refline-form {
+  display: grid;
+  grid-template-columns: 66px 1fr auto;
+  gap: 4px;
+}
+
+.refline-form input {
+  width: 100%;
+  padding: 3px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: 11px;
+  min-width: 0;
+}
+
+.refline-add {
+  padding: 3px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.refline-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ------------------------------------------------------------------ narrow */
 
 @media (max-width: 1200px) {

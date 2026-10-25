@@ -69,6 +69,10 @@ function fixture(): WorkbookState {
     },
   ];
   sheet.paneBy = 'Region';
+  sheet.referenceLines = [
+    { id: 'target', value: 1000, label: 'Target' },
+    { id: 'average', value: 750 },
+  ];
 
   const second = createSheet('Trend');
   second.mark = 'line';
@@ -171,6 +175,11 @@ section('A round trip loses nothing');
         calculation.dataset === 'Sample - Superstore' && calculation.origin === 'local',
     ),
     JSON.stringify(workbook.calculations));
+  check('reference lines survive with their labels',
+    workbook.sheets[0].referenceLines?.length === 2 &&
+      workbook.sheets[0].referenceLines[0].label === 'Target' &&
+      workbook.sheets[0].referenceLines[1].label === undefined,
+    JSON.stringify(workbook.sheets[0].referenceLines));
 }
 
 section('Calculation drafts are forgiving to load');
@@ -229,6 +238,48 @@ section('Calculation drafts are forgiving to load');
   );
   check('a non-list calculations field is ignored with a warning',
     workbook.calculations.length === 0 &&
+      warnings.some((warning) => /not a list/.test(warning)),
+    JSON.stringify(warnings));
+}
+
+section('Reference lines are forgiving to load');
+
+{
+  const raw = {
+    sheets: [
+      {
+        name: 'Lines',
+        referenceLines: [
+          { value: 10 },
+          { value: '20', label: ' Twenty ' },
+          { value: 'not a number' },
+          'nope',
+          { value: 30, id: 'dup' },
+          { value: 40, id: 'dup' },
+        ],
+      },
+    ],
+  };
+  const { workbook, warnings } = parseWorkbookFile(JSON.stringify(raw));
+  const lines = workbook.sheets[0].referenceLines ?? [];
+  check('valid lines are kept, however hand-authored', lines.length === 4,
+    JSON.stringify(lines));
+  check('a numeric string is accepted and the label trimmed',
+    lines[1]?.value === 20 && lines[1]?.label === 'Twenty', JSON.stringify(lines[1]));
+  check('a missing id is generated', Boolean(lines[0]?.id), JSON.stringify(lines[0]));
+  check('a duplicate id is made unique',
+    new Set(lines.map((line) => line.id)).size === lines.length, JSON.stringify(lines));
+  check('invalid entries are reported rather than silently dropped',
+    warnings.filter((warning) => /reference line/.test(warning)).length === 2,
+    JSON.stringify(warnings));
+}
+
+{
+  const { workbook, warnings } = parseWorkbookFile(
+    JSON.stringify({ sheets: [{ name: 'S', referenceLines: 'twenty' }] }),
+  );
+  check('a non-list referenceLines field is ignored with a warning',
+    (workbook.sheets[0].referenceLines ?? []).length === 0 &&
       warnings.some((warning) => /not a list/.test(warning)),
     JSON.stringify(warnings));
 }

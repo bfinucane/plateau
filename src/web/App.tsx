@@ -21,9 +21,12 @@ import { parseWorkbookFile, serialiseWorkbookFile } from './workbookFile';
 import {
   ENCODING_SHELVES,
   describeQuery,
+  effectiveMark,
   isSheetEmpty,
   makeEncoding,
+  markHasValueAxis,
   type Encoding,
+  type ReferenceLine,
   type ShelfId,
   type WorkbookState,
 } from './viewModel';
@@ -974,6 +977,29 @@ export function App() {
                 splitMeasures={activeSheet.splitMeasures}
                 onMeasureSplitChange={(splitMeasures) =>
                   dispatch({ type: 'sheet/measureSplit', sheetId: activeSheet.id, splitMeasures })
+                }
+                referenceLines={activeSheet.referenceLines ?? []}
+                canReferenceLine={markHasValueAxis(effectiveMark(activeSheet))}
+                onAddReferenceLine={(value, label) => {
+                  const line: ReferenceLine = {
+                    id: `refline-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+                    value,
+                    ...(label ? { label } : {}),
+                  };
+                  dispatch({
+                    type: 'sheet/referenceLines',
+                    sheetId: activeSheet.id,
+                    referenceLines: [...(activeSheet.referenceLines ?? []), line],
+                  });
+                }}
+                onRemoveReferenceLine={(lineId) =>
+                  dispatch({
+                    type: 'sheet/referenceLines',
+                    sheetId: activeSheet.id,
+                    referenceLines: (activeSheet.referenceLines ?? []).filter(
+                      (line) => line.id !== lineId,
+                    ),
+                  })
                 }
               />
             )}
