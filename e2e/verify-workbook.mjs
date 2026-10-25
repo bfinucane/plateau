@@ -682,7 +682,113 @@ try {
     JSON.stringify(restoredFields.fields));
 
   // =====================================================================
-  //  8. No saved workbook is said plainly, not silently ignored
+  //  8. Bins are a derived dimension with the formula shown up front
+  // =====================================================================
+  console.log('\nCreating bins');
+
+  const setNativeValue = (selector, value) => evaluate(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return 'not found';
+    const proto = el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, ${JSON.stringify(value)});
+    el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+    return 'ok';
+  })()`);
+
+  const binsButton = (action) => evaluate(`(() => {
+    const button = [...document.querySelectorAll('button')]
+      .find((candidate) => candidate.textContent.trim() === 'Create bins');
+    if (!button) return 'missing';
+    if (${JSON.stringify(action)} === 'click') button.click();
+    return button.disabled ? 'disabled' : 'enabled';
+  })()`);
+
+  check('Create bins is offered on a local dataset', (await binsButton('check')) === 'enabled');
+  check('the bins dialog opens', (await binsButton('click')) === 'enabled');
+  await sleep(600);
+
+  const binsPreview = () => evaluate(
+    `document.querySelector('.bins-formula')?.textContent?.trim() ?? ''`,
+  );
+  check('the dialog previews the formula before creating anything',
+    (await binsPreview()).startsWith('FLOOR('), await binsPreview());
+
+  check('Sales can be chosen', (await setNativeValue('.bins-field-select', 'Sales')) === 'ok');
+  check('a bin width is entered', (await setNativeValue('.bins-width-input', '1000')) === 'ok');
+  await sleep(300);
+  check('the preview is the exact arithmetic that will be created',
+    (await binsPreview()) === 'FLOOR([Sales] / 1000) * 1000', await binsPreview());
+  const binsRange = await evaluate(
+    `document.querySelector('.bins-range')?.textContent ?? ''`,
+  );
+  console.log('  bins range:', JSON.stringify(binsRange));
+  check('the dialog says what the bins will span and that they are zero-anchored',
+    /bins? from/.test(binsRange) && /anchored at zero/.test(binsRange), binsRange);
+
+  await screenshot('64-bins.png');
+
+  check('a name is entered', (await setNativeValue('.bins-name-input', 'Sales Bins')) === 'ok');
+  await sleep(200);
+  check('Create bins is pressed', (await evaluate(`(() => {
+    const button = document.querySelector('.bins-submit');
+    if (!button) return 'missing';
+    button.click();
+    return 'ok';
+  })()`)) === 'ok');
+  await sleep(2000);
+
+  check('the bins field appears in the data pane',
+    (await fieldNames()).includes('Sales Bins'), JSON.stringify(await fieldNames()));
+  const binsStatus = await statusMessage();
+  check('its creation is confirmed', /Created bins "Sales Bins"/.test(binsStatus), binsStatus);
+
+  let workbookWithBins = null;
+  for (let attempt = 0; attempt < 24 && !workbookWithBins; attempt++) {
+    const saved = await getWorkbook();
+    if ((saved?.calculations ?? []).some((entry) => entry.name === 'Sales Bins')) {
+      workbookWithBins = saved;
+      break;
+    }
+    await sleep(250);
+  }
+  const binsDraft = (workbookWithBins?.calculations ?? []).find(
+    (entry) => entry.name === 'Sales Bins',
+  );
+  check('the bins formula is saved in the workbook as a draft',
+    (binsDraft?.formula ?? '').replace(/\s+/g, ' ') === 'FLOOR([Sales] / 1000) * 1000',
+    JSON.stringify(binsDraft));
+  check('bins are recorded as a dimension draft', binsDraft?.kind === 'dimension',
+    JSON.stringify(binsDraft));
+
+  // The point of a derived dimension is that queries can group by it; prove the
+  // server evaluated it per row rather than only registering metadata.
+  const binsDataset = (await (await fetch(`${APP_URL}api/datasets`)).json()).datasets
+    ?.find((dataset) => /Superstore/.test(dataset.name));
+  const binsPreviewRows = binsDataset
+    ? await (await fetch(`${APP_URL}api/datasets/${binsDataset.id}/preview?limit=25`)).json()
+    : { columns: [], rows: [] };
+  const binsIndex = (binsPreviewRows.columns ?? []).indexOf('Sales Bins');
+  const salesIndex = (binsPreviewRows.columns ?? []).indexOf('Sales');
+  const binsValues = (binsPreviewRows.rows ?? []).map((row) => row[binsIndex]);
+  const salesValues = (binsPreviewRows.rows ?? []).map((row) => row[salesIndex]);
+  console.log('  first bins:', JSON.stringify(binsValues.slice(0, 5)));
+  check('the derived column is returned by the server',
+    binsIndex >= 0 && salesIndex >= 0 && binsValues.length > 0,
+    JSON.stringify(binsPreviewRows.columns ?? null));
+  check('every value is a lower bin edge',
+    binsValues.every((value) => typeof value === 'number' && value % 1000 === 0),
+    JSON.stringify(binsValues.slice(0, 8)));
+  check('the edge matches FLOOR([Sales] / 1000) * 1000',
+    binsValues.every(
+      (value, row) =>
+        typeof value !== 'number' ||
+        typeof salesValues[row] !== 'number' ||
+        value === Math.floor(salesValues[row] / 1000) * 1000,
+    ),
+    JSON.stringify(binsValues.slice(0, 8)));
+
+  // =====================================================================
+  //  9. No saved workbook is said plainly, not silently ignored
   // =====================================================================
   console.log('\nOpen with nothing saved says so');
 

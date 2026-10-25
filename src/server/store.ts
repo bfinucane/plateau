@@ -439,7 +439,7 @@ export async function addCalculatedField(
     cells = new Array(table.rowCount).fill(null);
   } else {
     // Row-level measure or dimension: evaluate once per row.
-    const evaluated = evaluatePerRow(table, ast, trimmedName, trimmedFormula);
+    const evaluated = evaluatePerRow(table, ast, trimmedName, trimmedFormula, requestedKind);
     column = evaluated.schema;
     cells = evaluated.cells;
   }
@@ -664,6 +664,7 @@ function evaluatePerRow(
   ast: ReturnType<typeof parseFormula>,
   name: string,
   formula: string,
+  requestedKind?: 'dimension' | 'measure',
 ): { cells: CellValue[]; schema: ColumnSchema } {
   const cells: CellValue[] = new Array(table.rowCount);
   let numericCount = 0;
@@ -730,6 +731,19 @@ function evaluatePerRow(
     isCalculated: true,
     formula,
   };
+
+  /*
+   * A numeric row-level formula is inferred as a measure, which is right for
+   * `[Profit] / [Sales]` but wrong for a BIN: `FLOOR([Sales] / 1000) * 1000` is a
+   * numeric DIMENSION — you group by it, you do not aggregate it. The caller can say
+   * so, and that explicit request wins for dimensions only. A declared MEASURE is
+   * still not forced onto a text formula, where aggregating would be meaningless;
+   * the inferred shape wins there.
+   */
+  if (requestedKind === 'dimension' && schema.kind === 'measure') {
+    schema.kind = 'dimension';
+    schema.role = 'discrete';
+  }
 
   return { cells, schema };
 }

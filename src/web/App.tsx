@@ -17,6 +17,7 @@ import {
 } from './api';
 import type { DragPayload } from './dnd';
 import { useAppState } from './useAppState';
+import { binnableColumns } from './bins';
 import { parseWorkbookFile, serialiseWorkbookFile } from './workbookFile';
 import {
   ENCODING_SHELVES,
@@ -31,6 +32,7 @@ import {
   type WorkbookState,
 } from './viewModel';
 import { ChartView } from './components/ChartView';
+import { BinsDialog } from './components/BinsDialog';
 import { CalculatedFieldDialog } from './components/CalculatedFieldDialog';
 import { ConnectDialog } from './components/ConnectDialog';
 import { EngineLoginForm } from './components/EngineLoginForm';
@@ -70,6 +72,7 @@ export function App() {
 
   const [search, setSearch] = useState('');
   const [calcDialog, setCalcDialog] = useState<{ name?: string; formula?: string; editing?: boolean } | null>(null);
+  const [binsOpen, setBinsOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<'values' | 'query'>('values');
   const [inspectedField, setInspectedField] = useState<ColumnInfo | null>(null);
@@ -142,6 +145,20 @@ export function App() {
     !engineCapabilities ||
     !Array.isArray(engineCapabilities.expressionFunctions) ||
     engineCapabilities.expressionFunctions.length > 0;
+
+  /**
+   * Bins are a row-level calculated dimension, so they need a dataset whose rows are
+   * in this process. A remote engine does not expose its rows (that is why row-level
+   * calculated fields are refused there), and a dataset with no numeric measure has
+   * nothing to bin. Both cases disable the control with the reason in its title.
+   */
+  const binOptions = binnableColumns(columns);
+  const binsAvailable = Boolean(state.dataset && !state.dataset.engineUrl) && binOptions.length > 0;
+  const binsUnavailableReason = !state.dataset
+    ? 'Select a dataset first.'
+    : state.dataset.engineUrl
+      ? 'Bins need row-level evaluation, which a remote engine does not expose. Connect a local dataset to bin its measures.'
+      : 'This dataset has no numeric measure to bin.';
 
   // --- restore / persist the workbook -----------------------------------
   /**
@@ -671,6 +688,16 @@ export function App() {
           }
         >
           New calculated field
+        </button>
+
+        <button
+          type="button"
+          className="button-secondary"
+          onClick={() => setBinsOpen(true)}
+          disabled={!binsAvailable}
+          title={binsAvailable ? 'Group a numeric measure into equal-width bins' : binsUnavailableReason}
+        >
+          Create bins
         </button>
 
         <div className="command-spacer" />
@@ -1239,6 +1266,17 @@ export function App() {
           onSubmit={async (name, formula, kind) => {
             await app.createCalculated(name, formula, kind);
             showStatus(`Created calculated field "${name}"`);
+          }}
+        />
+      )}
+
+      {binsOpen && (
+        <BinsDialog
+          columns={columns}
+          onClose={() => setBinsOpen(false)}
+          onSubmit={async (name, formula) => {
+            await app.createCalculated(name, formula, 'dimension');
+            showStatus(`Created bins "${name}"`);
           }}
         />
       )}

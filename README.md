@@ -338,12 +338,12 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 675 unit checks, 20 suites
+npm test         # 705 unit checks, 21 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
 
-`npm test` runs twenty suites: `engine.test.ts` (expressions, CSV, inference, query
+`npm test` runs twenty-one suites: `engine.test.ts` (expressions, CSV, inference, query
 execution, calculated fields), `lod.test.ts` (parsing, dimension resolution, filter
 ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport`,
 `remoteDataset`, `queryValidation` (unknown field names are refused),
@@ -351,6 +351,7 @@ ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport
 `workbookBackup`, `tableCalcs`, `split`, `axisSelection`, `aggregationMenu`,
 `workbookFile`, `calculationDrafts` (calculation identity, dataset binding,
 re-registration), `referenceLines` (value axis, orientation, marks without one),
+`bins` (bin arithmetic, validation, suggestions, offered fields),
 `nullCells` (absence is not zero, in every mark), `markInference`,
 `axisNesting` (line, heat map and treemap show every placed dimension),
 `engineAuth` (login, bearer tokens, 401) and `join`. LOD and engine tests use a small
@@ -378,14 +379,14 @@ node e2e/verify-tablecalc.mjs  # 14 checks: table calculations in the real UI
 node e2e/verify-split.mjs      # 16 checks: split panes
 node e2e/verify-measuresplit.mjs # 26 checks: one pane per measure
 node e2e/verify-retry.mjs      # 13 checks: a failed query is recoverable
-node e2e/verify-workbook.mjs   # 48 checks: save, start-up restore, menu, JSON files, calculation drafts across a server restart
+node e2e/verify-workbook.mjs   # 64 checks: save, start-up restore, menu, JSON files, calculation drafts across a restart, bins
 node e2e/verify-test-set.mjs   # 28 checks: opens workbooks/test-set.json, renders every sheet, checks the tab strip
 node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips without it
 node e2e/verify-auth.mjs       # 45 checks: authRequired gate, login, bearer on every call, expiry re-sign-in, no token in the browser
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **1156 checks** — 675 unit, 481 browser.
+Total: **1202 checks** — 705 unit, 497 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -404,6 +405,7 @@ Total: **1156 checks** — 675 unit, 481 browser.
 | workbook file | 60 | round trip, hand-authored files, refusals, repairs, calculation drafts, reference lines |
 | calculation drafts | 23 | identity, dataset binding, missing-on-server planning |
 | reference lines | 11 | value axis, horizontal orientation, marks without a value axis |
+| bins | 30 | bin arithmetic evaluated per row, width validation, suggestions, offered fields |
 | null cells | 22 | absence is not zero, in every mark |
 | mark inference | 7 | a scatter needs a measure on each axis |
 | axis nesting | 20 | line, heat map and treemap show every placed dimension |
@@ -704,9 +706,13 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
 - **Reference lines** annotate a chart's value axis (a target, budget or average)
   without changing the query: bar family, line and area, with the line moving to x
   for horizontal bars and the control hidden where a mark has no value axis.
+- **Bins** group a numeric measure into equal-width ranges through a small dialog that
+  writes an ordinary calculated dimension (`FLOOR([Sales] / 1000) * 1000`) and shows
+  the formula and range before creating it. Local datasets only: a remote engine does
+  not expose the rows a row-level formula needs.
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1156 checks green (675 unit, 481 browser)
+- 1202 checks green (705 unit, 497 browser)
 
 ### Connecting to an engine
 
@@ -855,7 +861,8 @@ header triggers a preflight the engine must allow.
    exposes no rows. What it needs is an engine-side row-expression evaluation, or
    `sample()` plus client-side materialisation with the formula appended as a real
    column (the local path already does the second half). Until then both are refused
-   with a typed error rather than registered as columns that evaluate to null.
+   with a typed error rather than registered as columns that evaluate to null, and
+   **bins** — which are a row-level calculated dimension — remain local-only.
 2. **Only one aggregation per field** is allowed inside a pushed-down expression by
    the engine. The client refuses the second one with an explanation, but a
    higher-order expression (e.g. a ratio of two aggregates of the same column) still
@@ -868,7 +875,7 @@ header triggers a preflight the engine must allow.
    permissions work (its S2) is not here: every signed-in user sees the same data,
    and Plateau only displays the role list. A token-revoke endpoint and a token field
    on the engine's SQL console are also engine-side.
-5. **Then** the higher-value analytics gaps: sets and groups, bins, forecasting.
+5. **Then** the higher-value analytics gaps: sets and groups, forecasting.
    Ranked in *Known limitations*.
 
 ### A note on calculated fields
@@ -906,7 +913,9 @@ Deliberately out of scope for this build, and the honest next steps:
 - **Calculated fields on a remote engine are aggregate-only**, one aggregation per
   field, and only when the engine advertises an expression evaluator. Row-level and
   LOD formulas are refused with an explanation; the engine exposes no rows for them
-  to run against.
+  to run against. **Bins are a row-level calculated dimension, so they are local-only
+  for the same reason** — on a remote dataset the control is disabled with that
+  explanation rather than producing a field that would evaluate to null.
 - **Calculations are client-side conveniences, not model objects.** Plateau authors
   them, pushes the AST per query, and the engine forgets it afterwards. The formula is
   kept as a **workbook draft** and re-registered after a server restart (the server's
