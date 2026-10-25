@@ -557,6 +557,16 @@ form. The open questions are engine-owned:
   them to stored model objects needs identity (engine URL + cube + name), revision
   and conflict handling that does not exist yet.
 
+**Plateau-side status (Phase A only).** The client now stores its calculation
+*definitions* in the workbook as drafts (`src/web/calculations.ts`):
+`origin: 'local'`, Plateau-dialect source text, bound to the dataset by name (+ engine
+URL). On dataset activation any draft the server does not hold is registered again, so
+a server restart no longer loses calculated fields. This is a client-side
+convenience — it is **not** this contract: the definitions are invisible to any other
+front-end, no engine parses them as stored objects, and the canonical AST is still
+derived per query. Phase B (engine storage/evaluation) and Phase C (authoring) remain
+unbuilt, deliberately.
+
 Until those are settled, the correct position is the current one: Plateau's
 calculations are client-side conveniences, explicitly not model, and not shared with
 other front-ends.

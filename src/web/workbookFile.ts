@@ -21,6 +21,7 @@
  */
 
 import type { Aggregation, CellValue, Filter } from './api';
+import { calculationKey, type WorkbookCalculation } from './calculations';
 import type { TableCalculation, TableCalcSpec } from './tableCalcs';
 import { TABLE_CALC_META } from './tableCalcs';
 import {
@@ -168,6 +169,7 @@ export function parseWorkbookFile(text: string): ParsedWorkbookFile {
   if (sheets.length === 0) throw new WorkbookFileError('The file has no usable sheets.');
 
   const dashboards = normaliseDashboards(source?.dashboards, sheets, warnings);
+  const calculations = normaliseCalculations(source?.calculations, warnings);
 
   const requestedSheetId = typeof source?.activeSheetId === 'string' ? source.activeSheetId : null;
   const activeSheetId = sheets.some((sheet) => sheet.id === requestedSheetId)
@@ -190,9 +192,84 @@ export function parseWorkbookFile(text: string): ParsedWorkbookFile {
       dashboards,
       view: wantsDashboard ? 'dashboard' : 'sheet',
       activeDashboardId,
+      calculations,
     },
     warnings,
   };
+}
+
+/**
+ * Calculation drafts carried by a workbook.
+ *
+ * Forgiving like the rest of the format: a missing list is simply empty (older
+ * files, and hand-authored sheets), a malformed entry is dropped with a warning, and
+ * a draft from a future/foreign origin is refused rather than silently treated as a
+ * local one — the whole point of `origin` is that a shared calculation must not be
+ * mistaken for a private draft.
+ */
+function normaliseCalculations(
+  value: unknown,
+  warnings: string[],
+): WorkbookCalculation[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    warnings.push('"calculations" is not a list, so it was ignored.');
+    return [];
+  }
+
+  const calculations: WorkbookCalculation[] = [];
+  const seen = new Set<string>();
+  value.forEach((entry, index) => {
+    if (!isRecord(entry)) {
+      warnings.push(`Calculation ${index + 1} is not an object, so it was ignored.`);
+      return;
+    }
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    const formula = typeof entry.formula === 'string' ? entry.formula : '';
+    const dataset = typeof entry.dataset === 'string' ? entry.dataset.trim() : '';
+    if (!name || !formula.trim() || !dataset) {
+      warnings.push(
+        `Calculation ${index + 1} is missing a name, formula or dataset, so it was ignored.`,
+      );
+      return;
+    }
+    if (entry.origin !== undefined && entry.origin !== 'local') {
+      warnings.push(
+        `Calculation "${name}" came from a source this build cannot load, so it was ignored.`,
+      );
+      return;
+    }
+
+    let kind: WorkbookCalculation['kind'] = 'measure';
+    if (entry.kind === 'dimension' || entry.kind === 'measure') {
+      kind = entry.kind;
+    } else if (entry.kind !== undefined) {
+      warnings.push(`Calculation "${name}" had an unknown kind, so it was treated as a measure.`);
+    }
+
+    const engineUrl =
+      typeof entry.engineUrl === 'string' && entry.engineUrl.trim()
+        ? entry.engineUrl.trim()
+        : undefined;
+
+    const calculation: WorkbookCalculation = {
+      name,
+      kind,
+      formula,
+      dataset,
+      engineUrl,
+      origin: 'local',
+    };
+    const key = calculationKey(calculation);
+    if (seen.has(key)) {
+      warnings.push(`Calculation "${name}" appears more than once; the duplicate was ignored.`);
+      return;
+    }
+    seen.add(key);
+    calculations.push(calculation);
+  });
+
+  return calculations;
 }
 
 function normaliseSheet(

@@ -412,6 +412,20 @@ export async function fetchDomain(id: string, field: string): Promise<CellValue[
   return data.values;
 }
 
+/** A calculation registered on the server for a dataset. */
+export interface CalculatedFieldInfo {
+  name: string;
+  formula: string;
+}
+
+/** The calculated fields the server currently holds for a dataset. */
+export async function fetchCalculatedFields(datasetId: string): Promise<CalculatedFieldInfo[]> {
+  const data = await request<{ fields: CalculatedFieldInfo[] }>(
+    `/datasets/${datasetId}/calculated`,
+  );
+  return data.fields ?? [];
+}
+
 export async function addCalculatedField(
   datasetId: string,
   name: string,

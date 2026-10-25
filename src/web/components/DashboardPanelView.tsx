@@ -137,7 +137,7 @@ export function DashboardPanelView({
             title="Remove from dashboard"
             onClick={() => onRemove(panel.id)}
           >
-            Ã—
+            ×
           </button>
         </div>
       </header>
@@ -176,6 +176,6 @@ export function DashboardPanelView({
 
 /** Compact grid geometry used by the layout hint. */
 export function panelGeometry(panel: DashboardPanel): string {
-  return `${panel.w}Ã—${panel.h} at column ${panel.x + 1}, row ${panel.y + 1}`;
+  return `${panel.w}×${panel.h} at column ${panel.x + 1}, row ${panel.y + 1}`;
 }
 

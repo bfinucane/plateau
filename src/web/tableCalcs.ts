@@ -12,9 +12,9 @@
  * Tableau's "compute using" has two parts, and getting them confused is the usual
  * source of wrong numbers:
  *
- *   - **Partition** â€” the calculation restarts for each distinct value of these
+ *   - **Partition** — the calculation restarts for each distinct value of these
  *     dimensions. `RUNNING_SUM` per Region restarts at the first row of each region.
- *   - **Address** â€” the order the accumulation walks *within* a partition.
+ *   - **Address** — the order the accumulation walks *within* a partition.
  *
  * Both index into the returned rows. This module addresses the `(partition,
  * address)` pair explicitly rather than guessing from shelf order, because a
@@ -93,7 +93,7 @@ export const TABLE_CALC_META: TableCalcDisplay[] = [
  *
  * `partitionBy` and `orderBy` name **dimension columns**. Omitted `orderBy` means
  * "the order the query returned", which is the natural reading when the view is
- * already sorted â€” and is why sorting interacts correctly with running totals.
+ * already sorted — and is why sorting interacts correctly with running totals.
  */
 export interface TableCalcSpec {
   calculation: TableCalculation;
@@ -118,7 +118,7 @@ export interface TableCalcColumn {
  * Normalises a cell to a number, or null.
  *
  * Result cells arrive as numbers, numeric strings, or null. A string with a
- * locale decimal comma is accepted â€” a remote engine may format values that way â€”
+ * locale decimal comma is accepted — a remote engine may format values that way —
  * but only when the reading is unambiguous:
  *
  *   "6436941,57" -> 6436941.57   two decimals, clearly European notation
@@ -126,7 +126,7 @@ export interface TableCalcColumn {
  *   "1,234,567"  -> null         thousands grouping
  *
  * Refusing the ambiguous case matters more than parsing it. Guessing wrong turns
- * 1,234 into 1.234 â€” off by a factor of a thousand, and plausible enough that
+ * 1,234 into 1.234 — off by a factor of a thousand, and plausible enough that
  * nobody notices.
  */
 export function toTableNumber(value: TableCellValue): number | null {

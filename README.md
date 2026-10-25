@@ -338,18 +338,19 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 624 unit checks, 18 suites
+npm test         # 657 unit checks, 19 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
 
-`npm test` runs eighteen suites: `engine.test.ts` (expressions, CSV, inference, query
+`npm test` runs nineteen suites: `engine.test.ts` (expressions, CSV, inference, query
 execution, calculated fields), `lod.test.ts` (parsing, dimension resolution, filter
 ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport`,
 `remoteDataset`, `queryValidation` (unknown field names are refused),
 `capabilityGating` (filter operators, scopes and formula vocabulary),
 `workbookBackup`, `tableCalcs`, `split`, `axisSelection`, `aggregationMenu`,
-`workbookFile`, `nullCells` (absence is not zero, in every mark), `markInference`,
+`workbookFile`, `calculationDrafts` (calculation identity, dataset binding,
+re-registration), `nullCells` (absence is not zero, in every mark), `markInference`,
 `axisNesting` (line, heat map and treemap show every placed dimension),
 `engineAuth` (login, bearer tokens, 401) and `join`. LOD and engine tests use a small
 hand-computable fixture so every expected number can be checked by arithmetic rather
@@ -376,14 +377,14 @@ node e2e/verify-tablecalc.mjs  # 14 checks: table calculations in the real UI
 node e2e/verify-split.mjs      # 16 checks: split panes
 node e2e/verify-measuresplit.mjs # 26 checks: one pane per measure
 node e2e/verify-retry.mjs      # 13 checks: a failed query is recoverable
-node e2e/verify-workbook.mjs   # 36 checks: save, start-up restore, menu, JSON files, backup safety
+node e2e/verify-workbook.mjs   # 48 checks: save, start-up restore, menu, JSON files, calculation drafts across a server restart
 node e2e/verify-test-set.mjs   # 28 checks: opens workbooks/test-set.json, renders every sheet, checks the tab strip
 node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips without it
 node e2e/verify-auth.mjs       # 45 checks: authRequired gate, login, bearer on every call, expiry re-sign-in, no token in the browser
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **1082 checks** — 624 unit, 458 browser.
+Total: **1127 checks** — 657 unit, 470 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -399,7 +400,8 @@ Total: **1082 checks** — 624 unit, 458 browser.
 | split | 35 | partitioning, ordering, refusals |
 | axis selection | 34 | dimensions beat measures; nesting to any depth |
 | capability menus | 29 | aggregations, filter operators and per-scope lists, never lying about the current value |
-| workbook file | 43 | round trip, hand-authored files, refusals, repairs |
+| workbook file | 53 | round trip, hand-authored files, refusals, repairs, calculation drafts |
+| calculation drafts | 23 | identity, dataset binding, missing-on-server planning |
 | null cells | 22 | absence is not zero, in every mark |
 | mark inference | 7 | a scatter needs a measure on each axis |
 | axis nesting | 20 | line, heat map and treemap show every placed dimension |
@@ -692,9 +694,14 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   asks for a sign-in and retries once instead of storming
 - Workbook autosave with a restorable previous generation, and portable JSON
   workbook files for keeping, sharing or hand-authoring test sheets
+- **Calculation drafts live in the workbook.** The engine evaluates formulas but stores
+  nothing, and the Plateau server keeps them only in memory, so the definitions are
+  saved alongside the sheets and re-registered when a dataset is activated — a server
+  restart no longer loses calculated fields. They remain explicitly local drafts, not
+  shared model objects.
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1082 checks green (624 unit, 458 browser)
+- 1127 checks green (657 unit, 470 browser)
 
 ### Connecting to an engine
 
@@ -896,12 +903,14 @@ Deliberately out of scope for this build, and the honest next steps:
   LOD formulas are refused with an explanation; the engine exposes no rows for them
   to run against.
 - **Calculations are client-side conveniences, not model objects.** Plateau authors
-  them, pushes the AST per query, and the engine forgets it afterwards. Plateau keeps
-  the formula only in the server process's memory — not in the workbook file — so a
-  server restart loses it, and another front-end cannot see it. Stored calculations are
-  a *reserved, unimplemented* contract in
-  [`docs/ENGINE-PROTOCOL.md`](docs/ENGINE-PROTOCOL.md); the blockers are engine-owned
-  (cross-dimensional reference semantics, measure vs member, and a write path).
+  them, pushes the AST per query, and the engine forgets it afterwards. The formula is
+  kept as a **workbook draft** and re-registered after a server restart (the server's
+  own copy is in-memory only), but it is not in the engine, so another front-end cannot
+  see it, and it belongs to the active workbook/dataset — switching datasets starts a
+  fresh workbook, as the sheets do. Stored calculations are a *reserved, unimplemented*
+  contract in [`docs/ENGINE-PROTOCOL.md`](docs/ENGINE-PROTOCOL.md); the blockers are
+  engine-owned (cross-dimensional reference semantics, measure vs member, and a write
+  path).
 - **Absent values cannot be distinguished from absent values on a remote engine
   only by chance.** The engine reports a group with no cells as `null`; Plateau never
   turns that into zero, but it also cannot show a null in a pie slice or a treemap

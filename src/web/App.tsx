@@ -192,6 +192,8 @@ export function App() {
           dashboards: saved.dashboards ?? [],
           view: saved.view === 'dashboard' && (saved.dashboards?.length ?? 0) > 0 ? 'dashboard' : 'sheet',
           activeDashboardId: saved.activeDashboardId ?? saved.dashboards?.[0]?.id ?? null,
+          // An older saved workbook predates calculation drafts.
+          calculations: saved.calculations ?? [],
         },
       });
       // The resulting state is only known after the reducer runs, so the effect

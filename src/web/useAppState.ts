@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import {
   ApiError,
   addCalculatedField as apiAddCalculatedField,
+  fetchCalculatedFields,
   fetchDataset,
   fetchDatasets,
   removeCalculatedField as apiRemoveCalculatedField,
@@ -21,6 +22,13 @@ import {
   type Filter,
   type QueryResponse,
 } from './api';
+import {
+  calculationMatchesDataset,
+  planCalculationSync,
+  removeCalculation,
+  upsertCalculation,
+  type WorkbookCalculation,
+} from './calculations';
 import {
   DASHBOARD_COLUMNS,
   buildQuery,
@@ -54,6 +62,13 @@ type Action =
   | { type: 'dataset/rebound'; dataset: DatasetMeta; datasetId: string }
   | { type: 'dataset/updated'; dataset: DatasetMeta }
   | { type: 'workbook/loaded'; workbook: WorkbookState | null }
+  | { type: 'calculation/added'; calculation: WorkbookCalculation }
+  | {
+      type: 'calculation/removed';
+      name: string;
+      dataset: string;
+      engineUrl?: string;
+    }
   | { type: 'sheet/added' }
   | { type: 'sheet/removed'; sheetId: string }
   | { type: 'sheet/selected'; sheetId: string }
@@ -88,6 +103,9 @@ function createInitialWorkbook(): WorkbookState {
     dashboards: [],
     view: 'sheet',
     activeDashboardId: null,
+    // Drafts are workbook-owned: the engine stores nothing, so this is what makes a
+    // server restart survivable (see the sync effect in `useAppState`).
+    calculations: [],
   };
 }
 
@@ -172,7 +190,39 @@ function reducer(state: State, action: Action): State {
       };
 
     case 'workbook/loaded':
-      return action.workbook ? { ...state, workbook: action.workbook } : state;
+      return action.workbook
+        ? {
+            ...state,
+            // An older saved workbook has no `calculations` key; default it rather
+            // than making the type lie about what is there.
+            workbook: {
+              ...action.workbook,
+              calculations: action.workbook.calculations ?? [],
+            },
+          }
+        : state;
+
+    case 'calculation/added':
+      return {
+        ...state,
+        workbook: {
+          ...state.workbook,
+          calculations: upsertCalculation(state.workbook.calculations, action.calculation),
+        },
+      };
+
+    case 'calculation/removed':
+      return {
+        ...state,
+        workbook: {
+          ...state.workbook,
+          calculations: removeCalculation(state.workbook.calculations, {
+            name: action.name,
+            dataset: action.dataset,
+            engineUrl: action.engineUrl,
+          }),
+        },
+      };
 
     case 'sheet/added': {
       const sheet = createSheet(`Sheet ${state.workbook.sheets.length + 1}`);
@@ -657,9 +707,27 @@ export function useAppState() {
       const dataset = await fetchDataset(state.activeDatasetId);
       dispatch({ type: 'dataset/updated', dataset });
       dispatch({ type: 'datasets/loaded', datasets: await fetchDatasets() });
+      /*
+       * Record the definition in the workbook. The engine forgets formulas, so this
+       * is what lets it be restored after a server restart — and what would later be
+       * promoted to an engine-stored calculation.
+       */
+      if (state.dataset) {
+        dispatch({
+          type: 'calculation/added',
+          calculation: {
+            name: result.column.name,
+            kind: result.column.kind,
+            formula,
+            dataset: state.dataset.name,
+            engineUrl: state.dataset.engineUrl,
+            origin: 'local',
+          },
+        });
+      }
       return result.column;
     },
-    [state.activeDatasetId],
+    [state.activeDatasetId, state.dataset],
   );
 
   const deleteCalculated = useCallback(
@@ -668,9 +736,82 @@ export function useAppState() {
       await apiRemoveCalculatedField(state.activeDatasetId, name);
       const dataset = await fetchDataset(state.activeDatasetId);
       dispatch({ type: 'dataset/updated', dataset });
+      if (state.dataset) {
+        dispatch({
+          type: 'calculation/removed',
+          name,
+          dataset: state.dataset.name,
+          engineUrl: state.dataset.engineUrl,
+        });
+      }
     },
-    [state.activeDatasetId],
+    [state.activeDatasetId, state.dataset],
   );
+
+  /**
+   * Registers workbook calculation drafts the server does not currently hold.
+   *
+   * The formula text lives only in the workbook and in the server's memory, so a
+   * server restart loses every calculated field while the sheets that reference them
+   * survive. On dataset activation, re-create whatever is missing. The engine is
+   * asked only for drafts bound to THIS dataset (by name + engine URL); a failed
+   * creation is reported without discarding the draft, so the next change retries.
+   */
+  const calculationSyncRef = useRef<string | null>(null);
+  useEffect(() => {
+    const dataset = state.dataset;
+    if (!dataset) return;
+    const drafts = state.workbook.calculations.filter((calculation) =>
+      calculationMatchesDataset(calculation, dataset),
+    );
+    if (drafts.length === 0) return;
+
+    const syncKey = [
+      dataset.id,
+      dataset.name.toLowerCase(),
+      dataset.engineUrl ?? '',
+      ...drafts.map((draft) => `${draft.name.toLowerCase()}=${draft.formula}`),
+    ].join('|');
+    if (calculationSyncRef.current === syncKey) return;
+    calculationSyncRef.current = syncKey;
+
+    void (async () => {
+      try {
+        const registered = await fetchCalculatedFields(dataset.id);
+        const missing = planCalculationSync(
+          drafts,
+          registered.map((field) => field.name),
+        );
+        if (missing.length === 0) return;
+
+        const failures: string[] = [];
+        for (const draft of missing) {
+          try {
+            await apiAddCalculatedField(dataset.id, draft.name, draft.formula, draft.kind);
+          } catch (error) {
+            failures.push(
+              `"${draft.name}" (${error instanceof Error ? error.message : 'registration failed'})`,
+            );
+          }
+        }
+
+        // Refresh the column list WITHOUT `dataset/selected`: that resets the
+        // workbook, and losing every sheet to restore one field would be worse.
+        dispatch({ type: 'dataset/updated', dataset: await fetchDataset(dataset.id) });
+        if (failures.length > 0) {
+          calculationSyncRef.current = null;
+          dispatch({
+            type: 'error',
+            message: `Could not restore calculated field drafts: ${failures.join(', ')}`,
+          });
+        }
+      } catch {
+        // The list could not be read (a restart in progress, perhaps). Keep the
+        // drafts and allow a later render to retry.
+        calculationSyncRef.current = null;
+      }
+    })();
+  }, [state.dataset, state.workbook.calculations]);
 
   // --- dashboard helpers -------------------------------------------------
   const activeDashboard = useMemo(

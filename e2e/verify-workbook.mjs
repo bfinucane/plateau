@@ -574,7 +574,115 @@ try {
     (await sheetTabs()).join(',') === importedTabs.join(','));
 
   // =====================================================================
-  //  7. No saved workbook is said plainly, not silently ignored
+  //  7. Calculation drafts are workbook state, and survive a server restart
+  // =====================================================================
+  //
+  // A calculation is a client artefact: the engine evaluates the AST per query and
+  // stores nothing, and the Plateau server keeps formulas only in memory. So a
+  // restart loses them while the sheets that reference them survive. The fix under
+  // test: the workbook carries calculation definitions as drafts, and dataset
+  // activation re-registers whatever the server is missing.
+  console.log('\nCalculation drafts survive losing the server copy');
+
+  const setCalcName = (value) => evaluate(`(() => {
+    const field = [...document.querySelectorAll('.calc-main .calc-field')]
+      .find((label) => label.querySelector('span')?.textContent.trim() === 'Name');
+    const input = field?.querySelector('input');
+    if (!input) return 'no input';
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, ${JSON.stringify(value)});
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return 'ok';
+  })()`);
+
+  const setCalcFormula = (value) => evaluate(`(() => {
+    const el = document.getElementById('calc-formula');
+    if (!el) return 'no input';
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(el, ${JSON.stringify(value)});
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return 'ok';
+  })()`);
+
+  const fieldNames = () => evaluate(
+    `[...document.querySelectorAll('.field-row .field-name')].map((e) => e.textContent.trim())`,
+  );
+
+  check('New calculated field is available on the local dataset',
+    (await clickButton('New calculated field')) === 'ok');
+  await sleep(700);
+  check('a name is entered', (await setCalcName('Draft Margin')) === 'ok');
+  check('a formula is entered',
+    (await setCalcFormula('SUM([Profit]) / SUM([Sales])')) === 'ok');
+  await sleep(250);
+  check('Create field is pressed', (await clickButton('Create field')) === 'ok');
+  await sleep(2000);
+  check('the calculated field is registered with the server',
+    (await fieldNames()).includes('Draft Margin'), JSON.stringify(await fieldNames()));
+
+  // Autosave is debounced, so poll the server's copy rather than sleeping blindly.
+  let workbookWithDraft = null;
+  for (let attempt = 0; attempt < 24 && !workbookWithDraft; attempt++) {
+    const saved = await getWorkbook();
+    if ((saved?.calculations ?? []).some((entry) => entry.name === 'Draft Margin')) {
+      workbookWithDraft = saved;
+      break;
+    }
+    await sleep(250);
+  }
+  const draft = (workbookWithDraft?.calculations ?? []).find(
+    (entry) => entry.name === 'Draft Margin',
+  );
+  console.log('  saved draft:', JSON.stringify(draft));
+  check('the definition is saved in the workbook', Boolean(draft),
+    JSON.stringify(workbookWithDraft?.calculations ?? null));
+  check('it records the source formula', (draft?.formula ?? '').includes('SUM([Profit])'),
+    JSON.stringify(draft));
+  check('it records the owning dataset and that it is only a local draft',
+    /Superstore/.test(draft?.dataset ?? '') && draft?.origin === 'local',
+    JSON.stringify(draft));
+
+  // The portable file has to carry it too, or a hand-kept workbook loses its fields.
+  rmSync(DOWNLOAD_DIR, { recursive: true, force: true });
+  mkdirSync(DOWNLOAD_DIR, { recursive: true });
+  await enableDownloads();
+  check('Export is a menu action', (await workbookMenuAction('export')) === 'ok');
+  const draftDownload = await waitForDownload();
+  const exportedDraft = draftDownload ? JSON.parse(readFileSync(draftDownload, 'utf8')) : null;
+  check('the exported file carries calculation drafts',
+    (exportedDraft?.calculations ?? []).some((entry) => entry.name === 'Draft Margin'),
+    JSON.stringify(exportedDraft?.calculations ?? null));
+
+  // Restart the app server: the in-memory field list is gone, the workbook is not.
+  await killServer(server);
+  server = await startServer();
+  await send('Page.navigate', { url: APP_URL });
+  await sleep(3500);
+
+  let restored = false;
+  for (let attempt = 0; attempt < 40 && !restored; attempt++) {
+    restored = (await fieldNames()).includes('Draft Margin');
+    if (!restored) await sleep(300);
+  }
+  check('the draft is registered again after a server restart', restored,
+    JSON.stringify(await fieldNames()));
+
+  // A second reload must not create a second copy of the same field.
+  await send('Page.navigate', { url: APP_URL });
+  await sleep(3500);
+  const datasetList = await (await fetch(`${APP_URL}api/datasets`)).json();
+  const sampleDataset = (datasetList.datasets ?? []).find((dataset) =>
+    /Superstore/.test(dataset.name));
+  const restoredFields = sampleDataset
+    ? await (await fetch(`${APP_URL}api/datasets/${sampleDataset.id}/calculated`)).json()
+    : { fields: [] };
+  console.log('  registered calculations:', JSON.stringify(restoredFields.fields));
+  check('restoration is idempotent (no duplicate registrations)',
+    (restoredFields.fields ?? []).filter((field) => field.name === 'Draft Margin').length === 1,
+    JSON.stringify(restoredFields.fields));
+
+  // =====================================================================
+  //  8. No saved workbook is said plainly, not silently ignored
   // =====================================================================
   console.log('\nOpen with nothing saved says so');
 

@@ -7,6 +7,7 @@
  */
 
 import type { Aggregation, ColumnInfo, Filter, QueryField, QuerySpec } from './api';
+import type { WorkbookCalculation } from './calculations';
 import type { TableCalcSpec } from './tableCalcs';
 
 /** Drop targets, mirroring Tableau's shelves and the Marks card. */
@@ -140,6 +141,17 @@ export interface WorkbookState {
   /** Which surface the workspace is showing. */
   view: 'sheet' | 'dashboard';
   activeDashboardId: string | null;
+  /**
+   * Calculation drafts owned by this workbook.
+   *
+   * These are LOCAL conveniences, not model objects: the engine evaluates formulas
+   * but stores nothing, so the definitions have to live somewhere durable — the
+   * workbook is that place. They are also what makes a server restart survivable:
+   * on dataset activation any draft the server does not know is registered again.
+   *
+   * See `calculations.ts` for the shape and why the dataset is identified by name.
+   */
+  calculations: WorkbookCalculation[];
 }
 
 export const AGGREGATION_LABELS: Record<Aggregation, string> = {

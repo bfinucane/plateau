@@ -43,7 +43,7 @@ function ChartViewInner({ sheet, result, querying, error, tab, onRetry }: ChartV
   const build = useMemo(() => {
     if (!result) return null;
     // Table calculations are applied before the builder sees the result, so the
-    // renderer never needs to know a calculation happened â€” it just finds an
+    // renderer never needs to know a calculation happened — it just finds an
     // extra measure column with a derived name.
     return buildChart(applyTableCalcs(result, sheet), sheet, mark);
   }, [result, sheet, mark]);
@@ -79,7 +79,7 @@ function ChartViewInner({ sheet, result, querying, error, tab, onRetry }: ChartV
         <p>{error}</p>
         {/*
           A query only re-runs when the spec changes, so without this button a
-          failure â€” a server restart, a dropped connection â€” leaves the sheet
+          failure — a server restart, a dropped connection — leaves the sheet
           dead with no way back short of reloading the page.
         */}
         {onRetry && (
@@ -203,7 +203,7 @@ function ChartViewInner({ sheet, result, querying, error, tab, onRetry }: ChartV
           <span>
             {result.rows.length.toLocaleString()} mark{result.rows.length === 1 ? '' : 's'}
           </span>
-          <span className="dot">Â·</span>
+          <span className="dot">·</span>
           <span>
             {split.panes.length} panes by {sheet.paneBy}
           </span>
@@ -220,15 +220,15 @@ function ChartViewInner({ sheet, result, querying, error, tab, onRetry }: ChartV
         <span>
           {result.rows.length.toLocaleString()} mark{result.rows.length === 1 ? '' : 's'}
         </span>
-        <span className="dot">Â·</span>
+        <span className="dot">·</span>
         <span>
           {result.dimensionNames.length} dimension{result.dimensionNames.length === 1 ? '' : 's'},{' '}
           {result.measureNames.length} measure{result.measureNames.length === 1 ? '' : 's'}
         </span>
-        <span className="dot">Â·</span>
+        <span className="dot">·</span>
         <span>queried in {result.elapsedMs} ms</span>
         {result.truncated && <span className="view-truncated">result truncated</span>}
-        {querying && <span className="view-querying">refreshingâ€¦</span>}
+        {querying && <span className="view-querying">refreshing…</span>}
       </div>
     </div>
   );

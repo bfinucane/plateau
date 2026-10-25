@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, fourteen session commits on top of `0e252ab`. Every number
+Written on branch `main`, fifteen session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,12 +13,12 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 36 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
-| Source | 59 files in `src/`, ~23,300 lines |
-| Unit tests | **624 checks**, 18 suites, all passing |
-| Browser tests | **458 checks**, 16 harnesses, all passing |
+| Commits | 37 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Source | 61 files in `src/`, ~23,800 lines |
+| Unit tests | **657 checks**, 19 suites, all passing |
+| Browser tests | **470 checks**, 16 harnesses, all passing |
 | Screenshots | 54, in `docs/screenshots/` |
-| Bundle | `dist/web/assets/index-CpufojHM.js` (built this session) |
+| Bundle | `dist/web/assets/index-Syl6emqg.js` (built this session) |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -270,8 +270,8 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Fourteen commits on top of `0e252ab` — eight features, a wire follow-up, a design
-decision and two notes on verification hygiene. The commit messages have the detail;
+Fifteen commits on top of `0e252ab` — eight features, a wire follow-up, two design
+decisions and two notes on verification hygiene. The commit messages have the detail;
 the shape:
 
 | Was | Now |
@@ -297,17 +297,20 @@ the shape:
 | `verify-ui`'s restore check passed only because a stale backup file happened to exist | The harness makes a real change before its save, so the skip-identical rewrite cannot leave it without a generation to restore |
 | An auth-enabled engine would have met a burst of 401s, a dead token would have lingered, and there was no login UI at all | `authRequired` is feature-detected from public capabilities, a sign-in gate comes first, one server-held token rides every request, and any 401 drops the session and asks for a re-login before one retry |
 | "Plateau calculations could replace Infor rules" looked like the obvious model store, and a fixture tried to fake Profit = Revenue − Cost with signed hierarchy weights | Rules are parked: cross-dimensional member semantics and the missing authoring/write path are engine-owned and undecided. The idea is written down as a **reserved, unimplemented** contract section, not built |
+| The engine forgets formulas and the server kept them in memory only, so every calculated field vanished on a server restart while sheets survived | Calculation definitions are saved in the workbook as explicit local drafts and re-registered on dataset activation; the browser harness restarts its server and proves the field comes back exactly once |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (29),
-`capabilityGating.test.ts` (43), `workbookFile.test.ts` (43),
-`nullCells.test.ts` (22), `markInference.test.ts` (7), `axisNesting.test.ts` (20) and
-`engineAuth.test.ts` (30). `verify-ui` grew from 25 to 43 checks, `verify-connect`
-from 26 to 80, and `verify-auth.mjs` is new (45 checks, with two stub engines: one
-requiring auth and one anonymous). `verify-workbook.mjs` (36 checks, own server and
-data directory) and `verify-test-set.mjs` (28 checks, data-driven from the workbook
-file) are new. Screenshots added: `51-three-dimensions.png`,
-`52-connect-calculated.png`, `53`–`60` for the workbook, test-set and tab-strip work,
-`61-null-cells.png` and `62-engine-auth.png`.
+`capabilityGating.test.ts` (43), `workbookFile.test.ts` (53),
+`calculationDrafts.test.ts` (23), `nullCells.test.ts` (22),
+`markInference.test.ts` (7), `axisNesting.test.ts` (20) and `engineAuth.test.ts` (30).
+`verify-ui` grew from 25 to 43 checks, `verify-connect` from 26 to 80, and
+`verify-auth.mjs` is new (45 checks, with two stub engines: one requiring auth and one
+anonymous). `verify-workbook.mjs` (48 checks, own server and data directory; now also
+restarts the server to prove calculation drafts are re-registered) and
+`verify-test-set.mjs` (28 checks, data-driven from the workbook file) are new.
+Screenshots added: `51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`60`
+for the workbook, test-set and tab-strip work, `61-null-cells.png` and
+`62-engine-auth.png`.
 
 The engine-side stub in `verify-connect.mjs` answers a query by **echoing its shape**
 rather than returning one canned response, and returns one `null` measure cell. A
@@ -482,16 +485,44 @@ Authentication works end to end, but four things are deliberately not here yet:
 - A Plateau restart loses every session (they are in memory). That is the same trade as
   the engine restarting, and re-login is cheap.
 
-### 8.10 Stored calculations: parked at the contract
+### 8.10 Stored calculations: Phase A done, B/C parked
 The idea — Plateau-authored calculations stored in the engine so every front-end sees
-them, replacing Infor's internal rules — was assessed and deliberately **not built**.
-The design is recorded in `docs/ENGINE-PROTOCOL.md` under *"Reserved: stored
+them, replacing Infor's internal rules — was assessed and **not built** beyond its first
+phase. The design is recorded in `docs/ENGINE-PROTOCOL.md` under *"Reserved: stored
 calculations (NOT implemented)"*: the `Calculation` object (canonical AST, optional
 authoring text, kind `measure`/`member`, dependencies), optional discovery
 (`describe.calculations` or `#Calculations`), a `supportsStoredCalculations`
 capability, and evaluation-by-name with the engine as the only evaluator.
 
-Why parked:
+**Phase A (done): client-side drafts.** Because the engine stores nothing, the
+definitions now live where they can honestly live without engine work — the workbook:
+
+- `src/web/calculations.ts` holds the draft shape: name, kind, Plateau-dialect source
+  (`formula`), dataset name (+ `engineUrl` for remote), `origin: 'local'`. The dataset
+  is bound by NAME because a restarted server re-seeds under new ids.
+- `WorkbookState.calculations` is normalised by `workbookFile.ts` (a missing list is
+  empty; a malformed entry is dropped with a warning; a non-local origin is refused,
+  never mistaken for a draft) and therefore travels in autosave, save, export and
+  import.
+- `createCalculated`/`deleteCalculated` keep the workbook list in step; a sync effect
+  on dataset activation asks the server what it holds and re-registers anything missing
+  (idempotent, no `dataset/selected` — that resets the workbook). This is what makes a
+  server restart survivable: the engine forgets, the workbook does not.
+- Tests: `calculationDrafts.test.ts` (23 checks) for identity/binding/planning;
+  `workbookFile` round-trip and refusals (53); `verify-workbook.mjs` (48) creates a
+  field, checks the draft in the saved file and the export, restarts its own server,
+  reloads, and proves the field returns exactly once.
+
+Remaining (deliberately not started):
+
+- **Phase B — engine storage + evaluation.** The engine persists calculations, lists
+  them in `describe`, and evaluates by name; Plateau would then read them as
+  first-class instead of drafts.
+- **Phase C — authoring.** A write path (engine write API or model-file workflow) with
+  identity, revisions and permissions, so Plateau can create model objects rather than
+  request-scoped formulas.
+
+Why B/C stay parked:
 
 - **Cross-dimensional references are the hard part.** An Infor rule can name members
   across the cube's dimensions; the coordinate scope (leaf vs consolidated vs the
@@ -503,13 +534,11 @@ Why parked:
 - **No authoring path.** The HTTP server is read-only by design; "visible to other
   front-ends" needs engine storage *and* a way to write it, which is roadmap work
   (client/server + security phases) before calculations.
-- The current client-side formulas are explicitly **not model**: they live in the
-  server's memory, are lost on restart, and are invisible to other front-ends. That
-  gap is known and acceptable for now; do not fix it by inventing a private workbook
-  format that would later conflict with engine identity.
 
-Resume only when the engine session is ready to own the semantics and the write path;
-until then this section is the boundary of what may be designed.
+Known limits of the Phase A behaviour: drafts belong to the active workbook/dataset, so
+switching datasets starts a fresh workbook (as sheets already do); a remote dataset
+must be reconnected before its drafts can be registered; and none of this is visible to
+another front-end.
 
 ### 8.11 Engine fixture findings (for the OLAP session — do not edit their tree)
 The seed fixture `examples/Plateau/hierarchy-parent-child.csv` does not represent what
@@ -616,19 +645,20 @@ when fixtures are regenerated.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 624 unit checks
+node scripts/test.mjs                                   # 657 unit checks
 node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 ```
 
 Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset` 38,
 `queryValidation` 17, `capabilityGating` 43, `tableCalcs` 51, `workbookBackup` 14,
-`split` 35, `axisSelection` 34, `aggregationMenu` 29, `workbookFile` 43, `nullCells` 22,
-`markInference` 7, `axisNesting` 20, `engineAuth` 30, `join` 28.
+`split` 35, `axisSelection` 34, `aggregationMenu` 29, `workbookFile` 53,
+`calculationDrafts` 23, `nullCells` 22, `markInference` 7, `axisNesting` 20,
+`engineAuth` 30, `join` 28.
 
 Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 18, `verify-viz`
 27, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 80,
 `verify-tablecalc` 14, `verify-split` 16, `verify-measuresplit` 26, `verify-retry` 13,
-`verify-workbook` 36, `verify-test-set` 28, `verify-auth` 45, `verify-join` 38 (needs
+`verify-workbook` 48, `verify-test-set` 28, `verify-auth` 45, `verify-join` 38 (needs
 the engine). Each prints `N passed, M failed` and exits non-zero on failure.
 `verify-retry` and `verify-workbook` start their own server and take
 `[chromePath] [outDir]`; the rest need one running and take
@@ -641,7 +671,7 @@ is worth showing.
 
 ## 11. Provenance
 
-36 commits, `55482d0` … HEAD. The last fourteen are this session; the 14 before them
+37 commits, `55482d0` … HEAD. The last fifteen are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

@@ -95,6 +95,22 @@ function fixture(): WorkbookState {
     dashboards: [dashboard],
     view: 'dashboard',
     activeDashboardId: dashboard.id,
+    calculations: [
+      {
+        name: 'Margin',
+        kind: 'measure',
+        formula: 'SUM([Profit]) / SUM([Sales])',
+        dataset: 'Sample - Superstore',
+        origin: 'local',
+      },
+      {
+        name: 'Profitable',
+        kind: 'dimension',
+        formula: "IF [Profit] > 0 THEN 'Yes' ELSE 'No' END",
+        dataset: 'Sample - Superstore',
+        origin: 'local',
+      },
+    ],
   };
 }
 
@@ -144,6 +160,77 @@ section('A round trip loses nothing');
   check('the active sheet survives', workbook.activeSheetId === original.activeSheetId);
   check('the dashboard view survives',
     workbook.view === 'dashboard' && workbook.activeDashboardId === original.activeDashboardId);
+  check('calculation drafts survive with their formulas and kinds',
+    workbook.calculations.length === 2 &&
+      workbook.calculations[0].formula === 'SUM([Profit]) / SUM([Sales])' &&
+      workbook.calculations[1].kind === 'dimension',
+    JSON.stringify(workbook.calculations));
+  check('drafts keep their dataset binding and origin',
+    workbook.calculations.every(
+      (calculation) =>
+        calculation.dataset === 'Sample - Superstore' && calculation.origin === 'local',
+    ),
+    JSON.stringify(workbook.calculations));
+}
+
+section('Calculation drafts are forgiving to load');
+
+{
+  const sheetsOnly: Sheet[] = [createSheet('Only One')];
+  const { workbook, warnings } = parseWorkbookFile(JSON.stringify(sheetsOnly));
+  check('a file without calculations has none, and needs no adjustment',
+    workbook.calculations.length === 0 && warnings.length === 0, JSON.stringify(warnings));
+}
+
+{
+  const sheets = [createSheet('S')];
+  const value = {
+    sheets,
+    calculations: [
+      { name: 'Kept', kind: 'measure', formula: 'SUM([x])', dataset: 'D', engineUrl: 'http://e:1/' },
+      // Missing name.
+      { formula: 'SUM([x])', dataset: 'D' },
+      // Missing formula.
+      { name: 'NoFormula', dataset: 'D' },
+      // Missing dataset.
+      { name: 'NoDataset', formula: 'SUM([x])' },
+      // Unknown kind: treated as a measure, but reported.
+      { name: 'OddKind', kind: 'widget', formula: '1', dataset: 'D' },
+      // Not a local draft: a shared/engine-defined calculation must not be
+      // mistaken for one we may register locally.
+      { name: 'Shared', kind: 'measure', formula: '1', dataset: 'D', origin: 'engine' },
+      // Duplicate identity (same engine binding, so it must be the same draft).
+      { name: 'Kept', kind: 'measure', formula: 'SUM([y])', dataset: 'D', engineUrl: 'http://e:1/' },
+    ],
+  };
+  const { workbook, warnings } = parseWorkbookFile(JSON.stringify(value));
+  check('only the loadable drafts are kept', workbook.calculations.length === 2,
+    JSON.stringify(workbook.calculations));
+  check('an engine URL is preserved and normalised as written',
+    workbook.calculations[0].engineUrl === 'http://e:1/', JSON.stringify(workbook.calculations[0]));
+  check('an unknown kind becomes a measure and is reported',
+    workbook.calculations[1].kind === 'measure' &&
+      warnings.some((warning) => /unknown kind/.test(warning)),
+    JSON.stringify(warnings));
+  check('a non-local origin is refused rather than imported',
+    !workbook.calculations.some((calculation) => calculation.name === 'Shared') &&
+      warnings.some((warning) => /cannot load/.test(warning)),
+    JSON.stringify(warnings));
+  check('malformed entries are reported, not silently dropped',
+    warnings.filter((warning) => /missing a name, formula or dataset/.test(warning)).length === 3,
+    JSON.stringify(warnings));
+  check('a duplicate is reported and ignored',
+    warnings.some((warning) => /more than once/.test(warning)), JSON.stringify(warnings));
+}
+
+{
+  const { workbook, warnings } = parseWorkbookFile(
+    JSON.stringify({ sheets: [createSheet('S')], calculations: 'not a list' }),
+  );
+  check('a non-list calculations field is ignored with a warning',
+    workbook.calculations.length === 0 &&
+      warnings.some((warning) => /not a list/.test(warning)),
+    JSON.stringify(warnings));
 }
 
 section('Accepted shapes');
