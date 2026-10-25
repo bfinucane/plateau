@@ -895,6 +895,13 @@ Deliberately out of scope for this build, and the honest next steps:
   field, and only when the engine advertises an expression evaluator. Row-level and
   LOD formulas are refused with an explanation; the engine exposes no rows for them
   to run against.
+- **Calculations are client-side conveniences, not model objects.** Plateau authors
+  them, pushes the AST per query, and the engine forgets it afterwards. Plateau keeps
+  the formula only in the server process's memory — not in the workbook file — so a
+  server restart loses it, and another front-end cannot see it. Stored calculations are
+  a *reserved, unimplemented* contract in
+  [`docs/ENGINE-PROTOCOL.md`](docs/ENGINE-PROTOCOL.md); the blockers are engine-owned
+  (cross-dimensional reference semantics, measure vs member, and a write path).
 - **Absent values cannot be distinguished from absent values on a remote engine
   only by chance.** The engine reports a group with no cells as `null`; Plateau never
   turns that into zero, but it also cannot show a null in a pie slice or a treemap

@@ -484,6 +484,83 @@ which is correct but slower. That is a legitimate position and a fine place to
 start. Claiming support you do not have is not: it produces wrong answers the
 client has no way to detect.
 
+## Reserved: stored calculations (NOT implemented)
+
+> **Status: proposal only.** No engine implements this, Plateau does not send or
+> rely on any of it, and no UI may depend on it. It is recorded here so that when a
+> model store for calculations exists, both sides are working from one written
+> design instead of re-inventing it. Nothing below may be treated as contract until
+> `capabilities.supportsStoredCalculations` exists *and* the engine implements it.
+> Additive and optional — absent fields keep their current meaning.
+
+A calculation is currently a **client artefact**: Plateau parses a formula, pushes
+the AST per query, and the engine evaluates it and forgets it (`measures[].expr`,
+`expressions`). That is enough for one front end, but it cannot express an
+Infor-style rule, which is part of the *model*: stored once, discoverable, and the
+same for every front-end.
+
+The proposed object is deliberately the AST (§3), not formula text, because the AST
+is already the shared vocabulary:
+
+```ts
+interface Calculation {
+  name: string;
+  /** A derived measure, or a derived member of a dimension/hierarchy. */
+  kind: 'measure' | 'member';
+  /** Canonical expression AST — the same node set as §3. NORMATIVE. */
+  ast: AstNode;
+  /** Authoring text kept for round-tripping into a client's own syntax. NOT normative. */
+  source?: { dialect: string; text: string };
+  /** Other calculations referenced by name; engine resolves the DAG. */
+  dependencies?: string[];
+  description?: string;
+  /** Display hints only (format, placement); deliberately loose. */
+  display?: Record<string, unknown>;
+}
+```
+
+Sketch of the discovery and evaluation contract if it is ever implemented:
+
+- `GET /v1/{dataset}` gains an optional `calculations: Calculation[]`, and/or a
+  system cube `#Calculations(#Cube, #Calculation, #Kind, #Definition)` lists them —
+  the engine already publishes catalogue system cubes, so the second fits that
+  pattern. A separate `capabilities.supportsStoredCalculations: boolean` gates it.
+- A query may name a stored calculation where it names any measure
+  (`measures: [{ name: "Profit" }]`), or as a member in `groupBy` for the `member`
+  kind. An inline `expr` stays legal; it is the ad-hoc form of the same thing.
+- The **engine is the only evaluator**. A client must not also compute a stored
+  calculation, or the two will disagree silently.
+- Authoring is out of scope here. Definitions would enter the model the way the rest
+  of the model does today (SQL/CLI), and only later through a write API with
+  permissions and revisions.
+
+### Why this is parked, and what must be decided first
+
+The engine's existing evaluator is aggregate-measure level
+(`SUM(a) - SUM(b)`), which fits a calculated *measure* but not the general rule
+form. The open questions are engine-owned:
+
+- **Cross-dimensional references.** An Infor-style rule can name members across the
+  cube's dimensions (`['Profit'] = ['Revenue'] - ['Cost']`). What is the coordinate
+  scope of evaluation — every leaf, every consolidated cell, or the level the
+  member is used at? That answer changes both semantics and the evaluator.
+- **`measure` vs `member`.** A calculated member has to appear on axes, resolve in a
+  hierarchy, and interact with consolidation weights; a calculated measure is a
+  pill. They are different objects (the engine's roadmap lists both).
+- **Dependencies and cycles.** A DAG needs ordering, cycle detection and a rule for
+  redefinition. Today's "one aggregation per field" rule is the simple version of
+  this.
+- **Consolidation interaction.** Does a calculated member respect weighted
+  parent/child rollup, or is it evaluated after consolidation? This is where the
+  current weighted-aggregation model and a rules engine most obviously meet.
+- **Migration.** Local Plateau calculations are drafts without persistence; promoting
+  them to stored model objects needs identity (engine URL + cube + name), revision
+  and conflict handling that does not exist yet.
+
+Until those are settled, the correct position is the current one: Plateau's
+calculations are client-side conveniences, explicitly not model, and not shared with
+other front-ends.
+
 ## Versioning
 
 `protocolVersion` is in every query request. A mismatch must be rejected with

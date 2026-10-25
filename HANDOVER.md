@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, thirteen session commits on top of `0e252ab`. Every number
+Written on branch `main`, fourteen session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,7 +13,7 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 35 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 36 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 59 files in `src/`, ~23,300 lines |
 | Unit tests | **624 checks**, 18 suites, all passing |
 | Browser tests | **458 checks**, 16 harnesses, all passing |
@@ -270,8 +270,9 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Thirteen commits on top of `0e252ab` — eight features, a wire follow-up and two notes
-on verification hygiene. The commit messages have the detail; the shape:
+Fourteen commits on top of `0e252ab` — eight features, a wire follow-up, a design
+decision and two notes on verification hygiene. The commit messages have the detail;
+the shape:
 
 | Was | Now |
 |---|---|
@@ -295,6 +296,7 @@ on verification hygiene. The commit messages have the detail; the shape:
 | A third dimension vanished from line/area charts, and heat maps and treemaps stopped at two levels | Every placed dimension nests: extras after the series on line/area, per shelf on a heat map, and every level of a treemap's hierarchy |
 | `verify-ui`'s restore check passed only because a stale backup file happened to exist | The harness makes a real change before its save, so the skip-identical rewrite cannot leave it without a generation to restore |
 | An auth-enabled engine would have met a burst of 401s, a dead token would have lingered, and there was no login UI at all | `authRequired` is feature-detected from public capabilities, a sign-in gate comes first, one server-held token rides every request, and any 401 drops the session and asks for a re-login before one retry |
+| "Plateau calculations could replace Infor rules" looked like the obvious model store, and a fixture tried to fake Profit = Revenue − Cost with signed hierarchy weights | Rules are parked: cross-dimensional member semantics and the missing authoring/write path are engine-owned and undecided. The idea is written down as a **reserved, unimplemented** contract section, not built |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (29),
 `capabilityGating.test.ts` (43), `workbookFile.test.ts` (43),
@@ -480,6 +482,60 @@ Authentication works end to end, but four things are deliberately not here yet:
 - A Plateau restart loses every session (they are in memory). That is the same trade as
   the engine restarting, and re-login is cheap.
 
+### 8.10 Stored calculations: parked at the contract
+The idea — Plateau-authored calculations stored in the engine so every front-end sees
+them, replacing Infor's internal rules — was assessed and deliberately **not built**.
+The design is recorded in `docs/ENGINE-PROTOCOL.md` under *"Reserved: stored
+calculations (NOT implemented)"*: the `Calculation` object (canonical AST, optional
+authoring text, kind `measure`/`member`, dependencies), optional discovery
+(`describe.calculations` or `#Calculations`), a `supportsStoredCalculations`
+capability, and evaluation-by-name with the engine as the only evaluator.
+
+Why parked:
+
+- **Cross-dimensional references are the hard part.** An Infor rule can name members
+  across the cube's dimensions; the coordinate scope (leaf vs consolidated vs the
+  level the member is used at) is undefined, and it changes both semantics and the
+  evaluator.
+- **`measure` vs `member` are different objects.** A calculated member must appear on
+  axes and interact with consolidation weights; today's evaluator only does
+  aggregate-measure expressions.
+- **No authoring path.** The HTTP server is read-only by design; "visible to other
+  front-ends" needs engine storage *and* a way to write it, which is roadmap work
+  (client/server + security phases) before calculations.
+- The current client-side formulas are explicitly **not model**: they live in the
+  server's memory, are lost on restart, and are invisible to other front-ends. That
+  gap is known and acceptable for now; do not fix it by inventing a private workbook
+  format that would later conflict with engine identity.
+
+Resume only when the engine session is ready to own the semantics and the write path;
+until then this section is the boundary of what may be designed.
+
+### 8.11 Engine fixture findings (for the OLAP session — do not edit their tree)
+The seed fixture `examples/Plateau/hierarchy-parent-child.csv` does not represent what
+it appears to, and it is the only fixture using `.import_pc` (no engine test covers it):
+
+- **It is a cross-product printed as parent/child.** Every `Category: X` appears under
+  four regions, but `Hierarchy::link` enforces one parent and re-parents the existing
+  member. The loaded `CostCentre` tree therefore has category children only under
+  `Region: South` (last row wins), with East/West/Central demoted back to leaves — 7 of
+  the intended 16 relations survive. Confirmed with a read-only `#Edges` query.
+- **The re-parenting is silent.** `.import_pc` discards `Ok(Some(old_parent))` from
+  `add_component_in_with_warnings`; only promotion warnings are printed. A warning here
+  would have caught the fixture.
+- **The weights are all 1.0**, although the generator comment and the fixtures README
+  claim "two negations: Profit is revenue minus cost"; `CostCentre` also has
+  `rowCount: 0`, so no rollup is ever computed. Even the warning path is not exercised.
+- **No seed assertion covers it** (`seed.sql` checks Sales/Pivot/RegionAttr and
+  `.tree Cities All`, but nothing for CostCentre).
+
+Proposed (not done): make the tree unique-membered with a genuinely signed weight and
+leaf facts derived from the sample, assert the rolled-up total in the seed, and make
+promotion **erase** the orphaned leaf values (the current behaviour keeps them
+unreachable but persisted) plus warn on re-parenting. Our generator
+`scripts/export-engine-fixtures.mjs` has the same false comment and needs the same fix
+when fixtures are regenerated.
+
 ---
 
 ## 9. Traps
@@ -585,7 +641,7 @@ is worth showing.
 
 ## 11. Provenance
 
-35 commits, `55482d0` … HEAD. The last thirteen are this session; the 14 before them
+36 commits, `55482d0` … HEAD. The last fourteen are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.
