@@ -8,6 +8,7 @@
 
 import type { Aggregation, ColumnInfo, Filter, QueryField, QuerySpec } from './api';
 import type { WorkbookCalculation } from './calculations';
+import type { WorkbookSet } from './sets';
 import type { TableCalcSpec } from './tableCalcs';
 
 /** Drop targets, mirroring Tableau's shelves and the Marks card. */
@@ -170,6 +171,13 @@ export interface WorkbookState {
    * See `calculations.ts` for the shape and why the dataset is identified by name.
    */
   calculations: WorkbookCalculation[];
+  /**
+   * Named member selections owned by this workbook.
+   *
+   * A set is a saved filter definition: it belongs with the workbook, is reusable
+   * across sheets, and filters created from it are refreshed when it is edited.
+   */
+  sets: WorkbookSet[];
 }
 
 export const AGGREGATION_LABELS: Record<Aggregation, string> = {

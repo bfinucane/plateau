@@ -116,8 +116,9 @@ export function blankWorkbook() {
     dashboards: [],
     view: 'sheet',
     activeDashboardId: null,
-    // Calculation drafts are workbook state; a blank start has none.
+    // Calculation drafts and sets are workbook state; a blank start has neither.
     calculations: [],
+    sets: [],
   };
 }
 

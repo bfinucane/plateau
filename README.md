@@ -338,12 +338,12 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 705 unit checks, 21 suites
+npm test         # 739 unit checks, 22 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
 
-`npm test` runs twenty-one suites: `engine.test.ts` (expressions, CSV, inference, query
+`npm test` runs twenty-two suites: `engine.test.ts` (expressions, CSV, inference, query
 execution, calculated fields), `lod.test.ts` (parsing, dimension resolution, filter
 ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport`,
 `remoteDataset`, `queryValidation` (unknown field names are refused),
@@ -352,6 +352,7 @@ ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport
 `workbookFile`, `calculationDrafts` (calculation identity, dataset binding,
 re-registration), `referenceLines` (value axis, orientation, marks without one),
 `bins` (bin arithmetic, validation, suggestions, offered fields),
+`setsGroups` (set filter identity and refresh, group formulas, offered fields),
 `nullCells` (absence is not zero, in every mark), `markInference`,
 `axisNesting` (line, heat map and treemap show every placed dimension),
 `engineAuth` (login, bearer tokens, 401) and `join`. LOD and engine tests use a small
@@ -379,14 +380,14 @@ node e2e/verify-tablecalc.mjs  # 14 checks: table calculations in the real UI
 node e2e/verify-split.mjs      # 16 checks: split panes
 node e2e/verify-measuresplit.mjs # 26 checks: one pane per measure
 node e2e/verify-retry.mjs      # 13 checks: a failed query is recoverable
-node e2e/verify-workbook.mjs   # 64 checks: save, start-up restore, menu, JSON files, calculation drafts across a restart, bins
+node e2e/verify-workbook.mjs   # 97 checks: save, start-up restore, menu, JSON files, calculation drafts across a restart, bins, sets and groups
 node e2e/verify-test-set.mjs   # 28 checks: opens workbooks/test-set.json, renders every sheet, checks the tab strip
 node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips without it
 node e2e/verify-auth.mjs       # 45 checks: authRequired gate, login, bearer on every call, expiry re-sign-in, no token in the browser
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **1202 checks** — 705 unit, 497 browser.
+Total: **1269 checks** — 739 unit, 530 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -402,10 +403,11 @@ Total: **1202 checks** — 705 unit, 497 browser.
 | split | 35 | partitioning, ordering, refusals |
 | axis selection | 34 | dimensions beat measures; nesting to any depth |
 | capability menus | 29 | aggregations, filter operators and per-scope lists, never lying about the current value |
-| workbook file | 60 | round trip, hand-authored files, refusals, repairs, calculation drafts, reference lines |
+| workbook file | 67 | round trip, hand-authored files, refusals, repairs, calculation drafts, reference lines, sets |
 | calculation drafts | 23 | identity, dataset binding, missing-on-server planning |
 | reference lines | 11 | value axis, horizontal orientation, marks without a value axis |
 | bins | 30 | bin arithmetic evaluated per row, width validation, suggestions, offered fields |
+| sets and groups | 27 | filter identity and refresh, group formulas evaluated, offered fields |
 | null cells | 22 | absence is not zero, in every mark |
 | mark inference | 7 | a scatter needs a measure on each axis |
 | axis nesting | 20 | line, heat map and treemap show every placed dimension |
@@ -710,9 +712,14 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   writes an ordinary calculated dimension (`FLOOR([Sales] / 1000) * 1000`) and shows
   the formula and range before creating it. Local datasets only: a remote engine does
   not expose the rows a row-level formula needs.
+- **Sets** are named member selections saved in the workbook and applied as ordinary
+  dimension filters ("In" / "Out"), so they work on remote data too, and filters that
+  came from a set follow its membership when it is edited. **Groups** combine selected
+  members into a derived dimension, produced as a row-level calculated field with the
+  IF formula shown up front (local-only, like any row-level field).
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1202 checks green (705 unit, 497 browser)
+- 1269 checks green (739 unit, 530 browser)
 
 ### Connecting to an engine
 
@@ -875,8 +882,8 @@ header triggers a preflight the engine must allow.
    permissions work (its S2) is not here: every signed-in user sees the same data,
    and Plateau only displays the role list. A token-revoke endpoint and a token field
    on the engine's SQL console are also engine-side.
-5. **Then** the higher-value analytics gaps: sets and groups, forecasting.
-   Ranked in *Known limitations*.
+5. **Then** forecasting, the remaining higher-value analytics gap. Ranked in
+   *Known limitations*.
 
 ### A note on calculated fields
 
@@ -913,9 +920,15 @@ Deliberately out of scope for this build, and the honest next steps:
 - **Calculated fields on a remote engine are aggregate-only**, one aggregation per
   field, and only when the engine advertises an expression evaluator. Row-level and
   LOD formulas are refused with an explanation; the engine exposes no rows for them
-  to run against. **Bins are a row-level calculated dimension, so they are local-only
-  for the same reason** — on a remote dataset the control is disabled with that
-  explanation rather than producing a field that would evaluate to null.
+  to run against. **Bins and groups are row-level calculated dimensions, so they are
+  local-only for the same reason** — on a remote dataset the controls are disabled
+  with that explanation rather than producing fields that would evaluate to null.
+- **Sets are saved filters, not a shelf member.** Applying one adds an ordinary `in` or
+  `notIn` dimension filter, so there is no "IN/OUT of set" pill to colour by and no set
+  actions; a filter that came from a set follows the set's membership when it is edited,
+  but keeps working if the set is later deleted (the values are copied). **Groups are a
+  generated calculated field**: they cannot be re-edited through the group dialog; edit
+  the formula instead.
 - **Calculations are client-side conveniences, not model objects.** Plateau authors
   them, pushes the AST per query, and the engine forgets it afterwards. The formula is
   kept as a **workbook draft** and re-registered after a server restart (the server's

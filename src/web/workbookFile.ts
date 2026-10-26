@@ -22,6 +22,7 @@
 
 import type { Aggregation, CellValue, Filter } from './api';
 import { calculationKey, type WorkbookCalculation } from './calculations';
+import type { WorkbookSet } from './sets';
 import type { TableCalculation, TableCalcSpec } from './tableCalcs';
 import { TABLE_CALC_META } from './tableCalcs';
 import {
@@ -171,6 +172,7 @@ export function parseWorkbookFile(text: string): ParsedWorkbookFile {
 
   const dashboards = normaliseDashboards(source?.dashboards, sheets, warnings);
   const calculations = normaliseCalculations(source?.calculations, warnings);
+  const sets = normaliseSets(source?.sets, warnings);
 
   const requestedSheetId = typeof source?.activeSheetId === 'string' ? source.activeSheetId : null;
   const activeSheetId = sheets.some((sheet) => sheet.id === requestedSheetId)
@@ -194,6 +196,7 @@ export function parseWorkbookFile(text: string): ParsedWorkbookFile {
       view: wantsDashboard ? 'dashboard' : 'sheet',
       activeDashboardId,
       calculations,
+      sets,
     },
     warnings,
   };
@@ -336,6 +339,60 @@ function normaliseSheet(
  * there is none). An entry without a finite numeric value is dropped and reported —
  * a line at `NaN` would silently never draw.
  */
+/**
+ * Named member selections ("sets") carried by a workbook.
+ *
+ * A set is reusable filter definition, so a malformed one is dropped with a warning
+ * rather than half-loaded. A set with no members would filter everything out and is
+ * refused for the same reason an empty member list is refused in the dialog.
+ */
+function normaliseSets(value: unknown, warnings: string[]): WorkbookSet[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    warnings.push('"sets" is not a list, so it was ignored.');
+    return [];
+  }
+
+  const sets: WorkbookSet[] = [];
+  const ids = new Set<string>();
+  value.forEach((entry, index) => {
+    if (!isRecord(entry)) {
+      warnings.push(`Set ${index + 1} is not an object, so it was ignored.`);
+      return;
+    }
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    const field = typeof entry.field === 'string' ? entry.field.trim() : '';
+    if (!name || !field) {
+      warnings.push(`Set ${index + 1} is missing a name or a field, so it was ignored.`);
+      return;
+    }
+
+    const members = Array.isArray(entry.members)
+      ? [
+          ...new Set(
+            entry.members
+              .filter((member): member is string | number | boolean =>
+                typeof member === 'string' || typeof member === 'number' || typeof member === 'boolean',
+              )
+              .map((member) => String(member)),
+          ),
+        ]
+      : [];
+    if (members.length === 0) {
+      warnings.push(`Set "${name}" has no members, so it was ignored.`);
+      return;
+    }
+
+    let id =
+      typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : `set-file-${index + 1}`;
+    if (ids.has(id)) id = `${id}-${index + 1}`;
+    ids.add(id);
+    sets.push({ id, name, field, members });
+  });
+
+  return sets;
+}
+
 function normaliseReferenceLines(
   value: unknown,
   sheetName: string,

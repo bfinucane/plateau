@@ -129,6 +129,15 @@ export interface Filter {
   min?: CellValue;
   max?: CellValue;
   limit?: number;
+  /**
+   * The named set this filter came from, when it did.
+   *
+   * Purely display and bookkeeping: the query uses `field`/`operator`/`values`, so a
+   * filter keeps working if the set is renamed or deleted. Editing the set refreshes
+   * the values of every filter that still carries its id.
+   */
+  setId?: string;
+  setLabel?: string;
 }
 
 export interface QuerySpec {

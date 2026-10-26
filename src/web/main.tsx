@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import * as echarts from 'echarts';
 import App from './App';
 import './styles.css';
+import './sets.css';
 
 // Exposed for the headless verification harnesses, which need to probe map
 // registration. Harmless in production and useful when debugging in devtools.

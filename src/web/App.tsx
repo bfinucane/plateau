@@ -18,6 +18,7 @@ import {
 import type { DragPayload } from './dnd';
 import { useAppState } from './useAppState';
 import { binnableColumns } from './bins';
+import type { WorkbookSet } from './sets';
 import { parseWorkbookFile, serialiseWorkbookFile } from './workbookFile';
 import {
   ENCODING_SHELVES,
@@ -34,6 +35,7 @@ import {
 import { ChartView } from './components/ChartView';
 import { BinsDialog } from './components/BinsDialog';
 import { CalculatedFieldDialog } from './components/CalculatedFieldDialog';
+import { GroupDialog, SetDialog } from './components/SetsGroupsDialogs';
 import { ConnectDialog } from './components/ConnectDialog';
 import { EngineLoginForm } from './components/EngineLoginForm';
 import { DashboardView } from './components/DashboardView';
@@ -73,6 +75,8 @@ export function App() {
   const [search, setSearch] = useState('');
   const [calcDialog, setCalcDialog] = useState<{ name?: string; formula?: string; editing?: boolean } | null>(null);
   const [binsOpen, setBinsOpen] = useState(false);
+  const [setDialog, setSetDialog] = useState<{ field?: string; editing?: WorkbookSet } | null>(null);
+  const [groupDialog, setGroupDialog] = useState<{ field?: string } | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<'values' | 'query'>('values');
   const [inspectedField, setInspectedField] = useState<ColumnInfo | null>(null);
@@ -160,6 +164,12 @@ export function App() {
       ? 'Bins need row-level evaluation, which a remote engine does not expose. Connect a local dataset to bin its measures.'
       : 'This dataset has no numeric measure to bin.';
 
+  /** Groups are a row-level calculated dimension, so they are local-only too. */
+  const groupsAvailable = Boolean(state.dataset && !state.dataset.engineUrl);
+  const groupsUnavailableReason = !state.dataset
+    ? 'Select a dataset first.'
+    : 'Groups need row-level evaluation, which a remote engine does not expose. Connect a local dataset to group its dimension members.';
+
   // --- restore / persist the workbook -----------------------------------
   /**
    * Whether it is safe to autosave.
@@ -212,8 +222,9 @@ export function App() {
           dashboards: saved.dashboards ?? [],
           view: saved.view === 'dashboard' && (saved.dashboards?.length ?? 0) > 0 ? 'dashboard' : 'sheet',
           activeDashboardId: saved.activeDashboardId ?? saved.dashboards?.[0]?.id ?? null,
-          // An older saved workbook predates calculation drafts.
+          // An older saved workbook predates calculation drafts and sets.
           calculations: saved.calculations ?? [],
+          sets: saved.sets ?? [],
         },
       });
       // The resulting state is only known after the reducer runs, so the effect
@@ -917,6 +928,14 @@ export function App() {
               setInspectorTab('values');
             }}
             onFieldClick={handleFieldClick}
+            sets={state.workbook.sets}
+            onNewSet={(field) => setSetDialog({ field })}
+            onEditSet={(set) => setSetDialog({ editing: set })}
+            onDeleteSet={(setId) => app.deleteSet(setId)}
+            onApplySet={(set, operator) => app.applySet(set, operator)}
+            onCreateGroup={(field) => setGroupDialog({ field })}
+            canGroup={groupsAvailable}
+            groupUnavailableReason={groupsUnavailableReason}
           />
         )}
 
@@ -1277,6 +1296,35 @@ export function App() {
           onSubmit={async (name, formula) => {
             await app.createCalculated(name, formula, 'dimension');
             showStatus(`Created bins "${name}"`);
+          }}
+        />
+      )}
+
+      {setDialog && (
+        <SetDialog
+          datasetId={state.activeDatasetId ?? ''}
+          columns={columns}
+          sets={state.workbook.sets}
+          initialField={setDialog.field}
+          editing={setDialog.editing}
+          onClose={() => setSetDialog(null)}
+          onSubmit={(set, applyAsFilter) => {
+            app.saveSet(set);
+            if (applyAsFilter) app.applySet(set, 'in');
+            showStatus(`Saved set "${set.name}" (${set.members.length} members)`);
+          }}
+        />
+      )}
+
+      {groupDialog && (
+        <GroupDialog
+          datasetId={state.activeDatasetId ?? ''}
+          columns={columns}
+          initialField={groupDialog.field}
+          onClose={() => setGroupDialog(null)}
+          onSubmit={async (name, formula) => {
+            await app.createCalculated(name, formula, 'dimension');
+            showStatus(`Created group field "${name}"`);
           }}
         />
       )}

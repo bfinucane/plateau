@@ -121,7 +121,12 @@ export function FiltersPanel({
         {filters.map((filter) => (
           <li key={filter.id} className="filter-chip">
             <div className="filter-chip-text">
-              <span className="filter-field">{filter.field}</span>
+              <span
+                className="filter-field"
+                title={filter.setLabel ? `${filter.field} (from set "${filter.setLabel}")` : undefined}
+              >
+                {filter.setLabel ?? filter.field}
+              </span>
               <span className="filter-desc">
                 {describe(filter)}
                 {!supportsFilterOperator(operatorsFor(filter.scope), filter.operator) && (

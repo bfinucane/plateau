@@ -1,0 +1,100 @@
+/**
+ * Sets dialog and member picker: shared control styles.
+ *
+ * Reuses the calculation dialog's layout; only the member list needs its own sizing so
+ * a dimension with thousands of values stays usable.
+ */
+
+.calc-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.member-picker {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+
+.member-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.member-toolbar .member-search {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.member-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.member-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.member-option {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-weight: 500 !important;
+}
+
+.member-option:hover {
+  background: var(--bg);
+}
+
+.member-list .empty-note {
+  padding: 8px 10px;
+}
+
+/* Sets list in the data pane. */
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.set-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.set-actions .link-button {
+  padding: 0 3px;
+  font-size: 11px;
+}
+
+.set-new {
+  margin: 4px 0 2px 8px;
+  font-size: 11px;
+}
+
+.set-apply {
+  margin: 2px 0 10px;
+}

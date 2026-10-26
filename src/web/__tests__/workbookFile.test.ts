@@ -115,6 +115,10 @@ function fixture(): WorkbookState {
         origin: 'local',
       },
     ],
+    sets: [
+      { id: 'set-furniture', name: 'Furniture only', field: 'Category', members: ['Furniture'] },
+      { id: 'set-west', name: 'West and South', field: 'Region', members: ['West', 'South'] },
+    ],
   };
 }
 
@@ -180,6 +184,12 @@ section('A round trip loses nothing');
       workbook.sheets[0].referenceLines[0].label === 'Target' &&
       workbook.sheets[0].referenceLines[1].label === undefined,
     JSON.stringify(workbook.sheets[0].referenceLines));
+  check('sets survive with their field and members',
+    workbook.sets.length === 2 &&
+      workbook.sets[0].name === 'Furniture only' &&
+      workbook.sets[0].members.join(',') === 'Furniture' &&
+      workbook.sets[1].members.join(',') === 'West,South',
+    JSON.stringify(workbook.sets));
 }
 
 section('Calculation drafts are forgiving to load');
@@ -281,6 +291,48 @@ section('Reference lines are forgiving to load');
   check('a non-list referenceLines field is ignored with a warning',
     (workbook.sheets[0].referenceLines ?? []).length === 0 &&
       warnings.some((warning) => /not a list/.test(warning)),
+    JSON.stringify(warnings));
+}
+
+section('Sets are forgiving to load');
+
+{
+  const raw = {
+    sheets: [createSheet('S')],
+    sets: [
+      { name: 'Kept', field: 'Category', members: ['Furniture', 'Furniture', 'Technology'] },
+      { name: 'Generated id', field: 'Region', members: ['West'] },
+      // Missing name / field.
+      { field: 'Category', members: ['x'] },
+      { name: 'NoField', members: ['x'] },
+      // No members: would filter everything out, so it is refused.
+      { name: 'Empty', field: 'Category', members: [] },
+      // Duplicate id.
+      { id: 'dup', name: 'First', field: 'Category', members: ['a'] },
+      { id: 'dup', name: 'Second', field: 'Category', members: ['b'] },
+    ],
+  };
+  const { workbook, warnings } = parseWorkbookFile(JSON.stringify(raw));
+  const sets = workbook.sets;
+  check('valid sets are kept', sets.length === 4, JSON.stringify(sets));
+  check('duplicate members are removed',
+    sets[0]?.members.join(',') === 'Furniture,Technology', JSON.stringify(sets[0]));
+  check('a missing id is generated', Boolean(sets[1]?.id) && sets[1].id !== sets[0].id,
+    JSON.stringify(sets.map((set) => set.id)));
+  check('a duplicate id is made unique',
+    new Set(sets.map((set) => set.id)).size === sets.length,
+    JSON.stringify(sets.map((set) => set.id)));
+  check('invalid sets are reported rather than silently dropped',
+    warnings.filter((warning) => /Set /.test(warning)).length === 3,
+    JSON.stringify(warnings));
+}
+
+{
+  const { workbook, warnings } = parseWorkbookFile(
+    JSON.stringify({ sheets: [createSheet('S')], sets: 'none' }),
+  );
+  check('a non-list sets field is ignored with a warning',
+    workbook.sets.length === 0 && warnings.some((warning) => /not a list/.test(warning)),
     JSON.stringify(warnings));
 }
 

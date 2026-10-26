@@ -6,6 +6,7 @@
 import { Fragment, useMemo, useState } from 'react';
 import type { ColumnInfo } from './../api';
 import { setDragPayload } from './../dnd';
+import { memberColumns, type WorkbookSet } from '../sets';
 
 interface DataPaneProps {
   columns: ColumnInfo[];
@@ -18,6 +19,16 @@ interface DataPaneProps {
   onPreview: (column: ColumnInfo) => void;
   /** Adds the field to the most appropriate shelf. */
   onFieldClick: (column: ColumnInfo) => void;
+  /** Named member selections defined in this workbook. */
+  sets: WorkbookSet[];
+  onNewSet: (field?: string) => void;
+  onEditSet: (set: WorkbookSet) => void;
+  onDeleteSet: (setId: string) => void;
+  onApplySet: (set: WorkbookSet, operator: 'in' | 'notIn') => void;
+  /** Opens the group dialog for a dimension. Groups are local-only. */
+  onCreateGroup: (field: string) => void;
+  canGroup: boolean;
+  groupUnavailableReason?: string;
 }
 
 /** Icon glyph hinting at the field's type, mirroring Tableau's field icons. */
@@ -57,10 +68,19 @@ export function DataPane({
   onRemoveCalculatedField,
   onPreview,
   onFieldClick,
+  sets,
+  onNewSet,
+  onEditSet,
+  onDeleteSet,
+  onApplySet,
+  onCreateGroup,
+  canGroup,
+  groupUnavailableReason,
 }: DataPaneProps) {
   const [showDimensions, setShowDimensions] = useState(true);
   const [showMeasures, setShowMeasures] = useState(true);
   const [showAttributes, setShowAttributes] = useState(true);
+  const [showSets, setShowSets] = useState(true);
   const [contextColumn, setContextColumn] = useState<ColumnInfo | null>(null);
 
   const { dimensions, measures, attributesByKey, orphanAttributes } = useMemo(() => {
@@ -147,12 +167,32 @@ export function DataPane({
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              onClick={() => { onEditCalculatedField(column); setContextColumn(null); }}
-            >
-              Create calculated field from this
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => { onEditCalculatedField(column); setContextColumn(null); }}
+              >
+                Create calculated field from this
+              </button>
+              {memberColumns([column]).length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => { onNewSet(column.name); setContextColumn(null); }}
+                  >
+                    Create set from this field
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canGroup}
+                    title={canGroup ? undefined : groupUnavailableReason}
+                    onClick={() => { onCreateGroup(column.name); setContextColumn(null); }}
+                  >
+                    Create group from this field
+                  </button>
+                </>
+              )}
+            </>
           )}
         </div>
       )}
@@ -241,6 +281,83 @@ export function DataPane({
           </section>
         )}
 
+        {/*
+          Sets are saved member selections, not fields of the dataset: they are listed
+          separately so they are reusable across sheets and never mistaken for columns.
+        */}
+        <section className="data-section data-section-sets">
+          <button
+            type="button"
+            className="section-toggle"
+            onClick={() => setShowSets((v) => !v)}
+            aria-expanded={showSets}
+          >
+            <span className="caret">{showSets ? '▾' : '▸'}</span>
+            Sets
+            <span className="count">{sets.length}</span>
+          </button>
+          {showSets && (
+            <>
+              <ul className="field-list">
+                {sets.length === 0 && (
+                  <li className="empty-note">
+                    Right-click a dimension to create a set, or use New set.
+                  </li>
+                )}
+                {sets.map((set) => (
+                  <li key={set.id}>
+                    <div
+                      className="field-row set-row"
+                      title={`${set.field} · ${set.members.length} member(s)`}
+                    >
+                      <span className="field-icon">⊂</span>
+                      <span className="field-name">{set.name}</span>
+                      <span className="field-badge">{set.members.length}</span>
+                      <span className="set-actions">
+                        <button
+                          type="button"
+                          className="link-button set-apply-in"
+                          title="Filter this sheet to the members in the set"
+                          onClick={() => onApplySet(set, 'in')}
+                        >
+                          In
+                        </button>
+                        <button
+                          type="button"
+                          className="link-button set-apply-out"
+                          title="Exclude the members in the set"
+                          onClick={() => onApplySet(set, 'notIn')}
+                        >
+                          Out
+                        </button>
+                        <button
+                          type="button"
+                          className="link-button"
+                          title="Edit set"
+                          onClick={() => onEditSet(set)}
+                        >
+                          ✎
+                        </button>
+                        <button
+                          type="button"
+                          className="link-button danger"
+                          title="Delete set"
+                          onClick={() => onDeleteSet(set.id)}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <button type="button" className="link-button set-new" onClick={() => onNewSet()}>
+                + New set
+              </button>
+            </>
+          )}
+        </section>
+
         <section className="data-section">
           <button
             type="button"
@@ -262,7 +379,8 @@ export function DataPane({
       </div>
 
       <footer className="data-pane-footer">
-        Drag a field onto Columns, Rows, or the Marks card.
+        Drag a field onto Columns, Rows, or the Marks card. Right-click a dimension for
+        sets and groups.
       </footer>
     </aside>
   );

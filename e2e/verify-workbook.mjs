@@ -788,7 +788,208 @@ try {
     JSON.stringify(binsValues.slice(0, 8)));
 
   // =====================================================================
-  //  9. No saved workbook is said plainly, not silently ignored
+  //  9. Sets are saved filters; groups are calculated dimensions
+  // =====================================================================
+  console.log('\nSets and groups');
+
+  const waitForSelector = async (selector, timeoutMs = 5000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (await evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`)) {
+        return true;
+      }
+      await sleep(150);
+    }
+    return false;
+  };
+
+  const openFieldMenu = (fieldName) => evaluate(`(() => {
+    const row = [...document.querySelectorAll('.field-row')]
+      .find((candidate) => candidate.querySelector('.field-name')?.textContent.trim() === ${JSON.stringify(fieldName)});
+    if (!row) return 'not found';
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    return 'ok';
+  })()`);
+
+  const clickFieldMenu = (label) => evaluate(`(() => {
+    const button = [...document.querySelectorAll('.field-menu button')]
+      .find((candidate) => candidate.textContent.trim() === ${JSON.stringify(label)});
+    if (!button) return 'not found';
+    if (button.disabled) return 'disabled';
+    button.click();
+    return 'ok';
+  })()`);
+
+  const toggleMember = (member) => evaluate(`(() => {
+    const label = [...document.querySelectorAll('.member-option')]
+      .find((candidate) => candidate.querySelector('span')?.textContent.trim() === ${JSON.stringify(member)});
+    if (!label) return 'not found';
+    label.querySelector('input[type=checkbox]')?.click();
+    return 'ok';
+  })()`);
+
+  const clickSelector = (selector) => evaluate(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element) return 'missing';
+    if (element.disabled) return 'disabled';
+    element.click();
+    return 'ok';
+  })()`);
+
+  check('the Category field menu opens', (await openFieldMenu('Category')) === 'ok');
+  check('Create set is offered on a dimension',
+    (await clickFieldMenu('Create set from this field')) === 'ok');
+  check('the set dialog opens with the field chosen',
+    await waitForSelector('.set-field-select'));
+  check('the member list loads',
+    await waitForSelector('.member-option'), 'domain did not load');
+
+  check('a set name is entered',
+    (await setNativeValue('.set-name-input', 'Furniture only')) === 'ok');
+  check('Furniture is selected', (await toggleMember('Furniture')) === 'ok');
+  await sleep(150);
+  check('the set is created', (await clickSelector('.set-submit')) === 'ok');
+  await sleep(1800);
+
+  const setStatus = await statusMessage();
+  check('a set is a saved member selection, not a field',
+    /Saved set "Furniture only"/.test(setStatus), setStatus);
+  const setFilterField = await evaluate(
+    `document.querySelector('.filter-chip .filter-field')?.textContent?.trim() ?? ''`,
+  );
+  check('applying the set adds a filter named after it',
+    setFilterField === 'Furniture only', JSON.stringify(setFilterField));
+
+  const setSaved = await (async () => {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const saved = await getWorkbook();
+      if ((saved?.sets ?? []).some((set) => set.name === 'Furniture only')) return saved;
+      await sleep(250);
+    }
+    return getWorkbook();
+  })();
+  const savedSet = (setSaved?.sets ?? []).find((set) => set.name === 'Furniture only');
+  check('the set definition is saved in the workbook', Boolean(savedSet),
+    JSON.stringify(setSaved?.sets ?? null));
+  check('it remembers its field and members',
+    savedSet?.field === 'Category' && savedSet?.members?.join(',') === 'Furniture',
+    JSON.stringify(savedSet));
+  const setFilterSaved = (setSaved?.sheets?.[0]?.filters ?? []).find(
+    (filter) => filter.setId === savedSet?.id,
+  );
+  check('the filter remembers the set it came from',
+    Boolean(setFilterSaved) && setFilterSaved?.values?.join(',') === 'Furniture',
+    JSON.stringify(setFilterSaved));
+
+  // Editing the set must move the filters that came from it.
+  check('the set can be edited',
+    (await evaluate(`(() => {
+      const row = [...document.querySelectorAll('.set-row')]
+        .find((candidate) => candidate.querySelector('.field-name')?.textContent.trim() === 'Furniture only');
+      const button = row?.querySelector('button[title="Edit set"]');
+      if (!button) return 'missing';
+      button.click();
+      return 'ok';
+    })()`)) === 'ok');
+  check('the edit dialog restores the current members',
+    await waitForSelector('.member-list'));
+  check('Technology is added to the set', (await toggleMember('Technology')) === 'ok');
+  await sleep(150);
+  check('the edited set is saved', (await clickSelector('.set-submit')) === 'ok');
+  await sleep(1800);
+
+  const editedSaved = await (async () => {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const saved = await getWorkbook();
+      const set = (saved?.sets ?? []).find((entry) => entry.name === 'Furniture only');
+      if (set?.members?.length === 2) return saved;
+      await sleep(250);
+    }
+    return getWorkbook();
+  })();
+  const editedSet = (editedSaved?.sets ?? []).find((entry) => entry.name === 'Furniture only');
+  check('the set membership is updated',
+    editedSet?.members?.join(',') === 'Furniture,Technology', JSON.stringify(editedSet));
+  const refreshedFilter = (editedSaved?.sheets?.[0]?.filters ?? []).find(
+    (filter) => filter.setId === editedSet?.id,
+  );
+  check('filters that came from the set follow its new membership',
+    refreshedFilter?.values?.join(',') === 'Furniture,Technology',
+    JSON.stringify(refreshedFilter));
+
+  // A group is a calculated dimension, so it can be used like any other field.
+  check('the Category field menu opens again', (await openFieldMenu('Category')) === 'ok');
+  check('Create group is offered on a dimension',
+    (await clickFieldMenu('Create group from this field')) === 'ok');
+  check('the group dialog opens with the field chosen',
+    await waitForSelector('.group-field-select'));
+  check('the group member list loads', await waitForSelector('.member-option'));
+
+  check('a group name is entered',
+    (await setNativeValue('.group-name-input', 'Office and Tech')) === 'ok');
+  check('Office Supplies is selected', (await toggleMember('Office Supplies')) === 'ok');
+  check('Technology is selected too', (await toggleMember('Technology')) === 'ok');
+  await sleep(250);
+  const groupPreview = await evaluate(
+    `document.querySelector('.dialog .bins-formula')?.textContent?.trim() ?? ''`,
+  );
+  check('the group shows the formula it will create',
+    groupPreview.startsWith('IF [Category] = ') && /Office and Tech/.test(groupPreview),
+    groupPreview);
+  await screenshot('65-sets-groups.png');
+
+  check('the group is created', (await clickSelector('.group-submit')) === 'ok');
+  await sleep(2000);
+  check('the group field appears in the data pane',
+    (await fieldNames()).includes('Category (group)'), JSON.stringify(await fieldNames()));
+  const groupStatus = await statusMessage();
+  check('its creation is confirmed', /Created group field "Category \(group\)"/.test(groupStatus),
+    groupStatus);
+
+  const groupSaved = await (async () => {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const saved = await getWorkbook();
+      if ((saved?.calculations ?? []).some((entry) => entry.name === 'Category (group)')) {
+        return saved;
+      }
+      await sleep(250);
+    }
+    return getWorkbook();
+  })();
+  const groupDraft = (groupSaved?.calculations ?? []).find(
+    (entry) => entry.name === 'Category (group)',
+  );
+  check('the group is saved as a calculation draft',
+    (groupDraft?.formula ?? '').startsWith('IF [Category] = ') &&
+      (groupDraft?.formula ?? '').endsWith('ELSE [Category] END'),
+    JSON.stringify(groupDraft));
+  check('the group is a dimension draft', groupDraft?.kind === 'dimension',
+    JSON.stringify(groupDraft));
+
+  const groupDataset = (await (await fetch(`${APP_URL}api/datasets`)).json()).datasets
+    ?.find((dataset) => /Superstore/.test(dataset.name));
+  const groupPreviewRows = groupDataset
+    ? await (await fetch(`${APP_URL}api/datasets/${groupDataset.id}/preview?limit=25`)).json()
+    : { columns: [], rows: [] };
+  const groupIndex = (groupPreviewRows.columns ?? []).indexOf('Category (group)');
+  const categoryIndex = (groupPreviewRows.columns ?? []).indexOf('Category');
+  const groupValues = (groupPreviewRows.rows ?? []).map((row) => row[groupIndex]);
+  const categoryValues = (groupPreviewRows.rows ?? []).map((row) => row[categoryIndex]);
+  console.log('  first groups:', JSON.stringify(groupValues.slice(0, 5)));
+  check('the derived group column is returned by the server',
+    groupIndex >= 0 && groupValues.length > 0,
+    JSON.stringify(groupPreviewRows.columns ?? null));
+  check('selected members become the group name and others are unchanged',
+    groupValues.every(
+      (value, row) =>
+        (categoryValues[row] === 'Office Supplies' || categoryValues[row] === 'Technology')
+          ? value === 'Office and Tech'
+          : value === categoryValues[row],
+    ),
+    JSON.stringify(groupValues.slice(0, 8)));
+
+  // =====================================================================
+  //  10. No saved workbook is said plainly, not silently ignored
   // =====================================================================
   console.log('\nOpen with nothing saved says so');
 

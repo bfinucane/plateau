@@ -30,6 +30,13 @@ import {
   type WorkbookCalculation,
 } from './calculations';
 import {
+  refreshSetFilters,
+  removeSet,
+  setFilter,
+  upsertSet,
+  type WorkbookSet,
+} from './sets';
+import {
   DASHBOARD_COLUMNS,
   buildQuery,
   createDashboard,
@@ -70,6 +77,8 @@ type Action =
       dataset: string;
       engineUrl?: string;
     }
+  | { type: 'set/saved'; set: WorkbookSet }
+  | { type: 'set/removed'; setId: string }
   | { type: 'sheet/added' }
   | { type: 'sheet/removed'; sheetId: string }
   | { type: 'sheet/selected'; sheetId: string }
@@ -108,6 +117,8 @@ function createInitialWorkbook(): WorkbookState {
     // Drafts are workbook-owned: the engine stores nothing, so this is what makes a
     // server restart survivable (see the sync effect in `useAppState`).
     calculations: [],
+    // Sets are saved filter definitions; groups are calculated fields, not sets.
+    sets: [],
   };
 }
 
@@ -200,6 +211,7 @@ function reducer(state: State, action: Action): State {
             workbook: {
               ...action.workbook,
               calculations: action.workbook.calculations ?? [],
+              sets: action.workbook.sets ?? [],
             },
           }
         : state;
@@ -223,6 +235,33 @@ function reducer(state: State, action: Action): State {
             dataset: action.dataset,
             engineUrl: action.engineUrl,
           }),
+        },
+      };
+
+    case 'set/saved':
+      return {
+        ...state,
+        workbook: {
+          ...state.workbook,
+          sets: upsertSet(state.workbook.sets, action.set),
+          /*
+           * Filters that came FROM this set follow it. A named set's whole point is
+           * that "in the set" means the current membership, not the list it happened
+           * to have when the filter was added.
+           */
+          sheets: state.workbook.sheets.map((sheet) => ({
+            ...sheet,
+            filters: refreshSetFilters(sheet.filters, action.set),
+          })),
+        },
+      };
+
+    case 'set/removed':
+      return {
+        ...state,
+        workbook: {
+          ...state.workbook,
+          sets: removeSet(state.workbook.sets, action.setId),
         },
       };
 
@@ -825,6 +864,41 @@ export function useAppState() {
     })();
   }, [state.dataset, state.workbook.calculations]);
 
+  /**
+   * Saves a set definition.
+   *
+   * This is the whole edit path: creating and editing a set both land here, and the
+   * reducer refreshes every filter that references it.
+   */
+  const saveSet = useCallback(
+    (set: WorkbookSet) => dispatch({ type: 'set/saved', set }),
+    [],
+  );
+
+  const deleteSet = useCallback(
+    (setId: string) => dispatch({ type: 'set/removed', setId }),
+    [],
+  );
+
+  /**
+   * Applies a set to the active sheet as a dimension filter.
+   *
+   * "In" and "out of" the set are the two useful directions; the filter is an
+   * ordinary `in`/`notIn`, so this works on remote engines too.
+   */
+  const applySet = useCallback(
+    (set: WorkbookSet, operator: 'in' | 'notIn') => {
+      const sheetId = state.workbook.activeSheetId;
+      if (!sheetId) return;
+      dispatch({
+        type: 'sheet/filterAdded',
+        sheetId,
+        filter: setFilter(set, operator, `filter-${Math.random().toString(36).slice(2, 9)}`),
+      });
+    },
+    [state.workbook.activeSheetId],
+  );
+
   // --- dashboard helpers -------------------------------------------------
   const activeDashboard = useMemo(
     () =>
@@ -914,6 +988,9 @@ export function useAppState() {
     addFieldToShelf,
     createCalculated,
     deleteCalculated,
+    saveSet,
+    deleteSet,
+    applySet,
     /** Output column name for an encoding, exported for the renderer. */
     columnFor: outputColumnName,
   };
