@@ -34,7 +34,6 @@ import {
   type JoinRequest,
   type MeasureRef,
   type QueryRequest,
-  type QueryResponse,
   type SampleResponse,
 } from '../core/protocol.js';
 

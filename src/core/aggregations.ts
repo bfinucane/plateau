@@ -211,8 +211,6 @@ export function aggregateMany(names: Aggregation[], values: CellValue[]): CellVa
   let sumSeen = false;
   let numericCount = 0;
   let nonNullCount = 0;
-  let minNum = Infinity;
-  let maxNum = -Infinity;
   let minCell: CellValue = null;
   let maxCell: CellValue = null;
   let minKey: number | string | null = null;

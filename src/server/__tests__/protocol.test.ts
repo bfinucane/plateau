@@ -590,7 +590,6 @@ async function main(): Promise<void> {
     //
     // The stub engine below records whether a query reached it, so "did the
     // client fall back?" is observable rather than inferred.
-    const table = buildFixture();
     const { RemoteBackend: RB } = await import('../dataSource.js');
 
     /** Counts queries that actually reach the engine. */

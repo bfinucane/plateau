@@ -759,7 +759,7 @@ export function createServer() {
   });
 
   /** Restores the previous generation, rotating the current one aside first. */
-  app.post('/api/workbook/restore', (req, res) => {
+  app.post('/api/workbook/restore', (_req, res) => {
     if (!existsSync(WORKBOOK_BACKUP_PATH)) {
       res.status(404).json({ error: 'No backup to restore' });
       return;

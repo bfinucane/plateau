@@ -20,7 +20,7 @@
 import type { Aggregation, CellValue, LogicalType } from '../core/types.js';
 import type { Filter } from '../core/filters.js';
 import type { AstNode } from '../core/expression.js';
-import type { QueryResult, QuerySpec } from '../core/engine.js';
+import type { QueryResult } from '../core/engine.js';
 
 /**
  * Protocol version. Bump only on a breaking change, and say so in the changelog;

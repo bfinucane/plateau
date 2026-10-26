@@ -389,9 +389,6 @@ export function outputColumnName(encoding: Encoding): string {
   return encoding.field;
 }
 
-/** Channel roles, used to decide what the engine must group by. */
-const MEASURE_CHANNELS: ShelfId[] = ['size'];
-
 /** All shelves that contribute encodings to the query, in a stable order. */
 export const ENCODING_SHELVES: ShelfId[] = ['columns', 'rows', 'color', 'size', 'detail', 'label', 'tooltip'];
 

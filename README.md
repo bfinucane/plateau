@@ -272,11 +272,6 @@ at 21M — the *stacked* Technology total — rather than the 5.6M of a single r
 
 ![Stacked coloured bars](docs/screenshots/16-bar-colored.png)
 
-If the Map mark is chosen but the US geometry cannot be fetched, the view degrades to
-a treemap with an explanation instead of failing:
-
-![Map fallback](docs/screenshots/17-map-fallback.png)
-
 ### Dashboards
 
 A dashboard composes worksheets onto a shared canvas. Create one with the ▤ button
@@ -386,9 +381,20 @@ node e2e/verify-test-set.mjs   # 28 checks: opens workbooks/test-set.json, rende
 node e2e/verify-join.mjs       # 38 checks: joins against the real engine; skips without it
 node e2e/verify-auth.mjs       # 45 checks: authRequired gate, login, bearer on every call, expiry re-sign-in, no token in the browser
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
+# Real-engine smoke test: read-only wire checks against a running engine
+node scripts/verify-engine.mjs http://127.0.0.1:8080
 ```
 
-Total: **1318 checks** — 775 unit, 543 browser.
+The engine smoke test is deliberately outside the counts above: it tests the other
+side of the wire, against whatever engine is actually running. It checks the public
+capabilities, dataset discovery, describe, a grouped SUM query, a dimension filter,
+the row limit, unknown-cube/unknown-field refusals, and the expression semantics
+(`SUM` evaluated by the engine, division by zero as `null`). It needs no fixtures and
+writes nothing. If the engine requires authentication it checks the 401 first, then
+skips the protected checks unless `PLATEAU_ENGINE_USER` and `PLATEAU_ENGINE_PASSWORD`
+are set — a skip is reported, never counted as a pass.
+
+Total: **1318 checks** — 775 unit, 543 browser, plus 27 real-engine wire checks.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |

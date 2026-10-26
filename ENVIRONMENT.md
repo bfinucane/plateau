@@ -28,6 +28,12 @@ Also note pnpm v11 **ignores** the `pnpm` field in `package.json` and most
 If you regenerate the lockfile and packages become junctions again, the linker
 setting is not being read.
 
+`allowBuilds: { esbuild: true }` is still required even though the project no longer
+lists esbuild in its own devDependencies: Vite depends on it transitively and its
+postinstall needs to run. The root-level `esbuild` and `tsx` entries were removed in
+the maintenance pass — `tsx` cannot run in this sandbox anyway (see below), and the
+script runner uses plain Node.
+
 ## TypeScript execution: plain Node, not tsx
 
 `tsx` **cannot run here**. It drives esbuild, which spawns a child process using

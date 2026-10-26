@@ -8,7 +8,6 @@
 
 import type { CellValue, QueryResponse } from './api';
 import {
-  outputColumnName,
   pillLabel,
   sortDirection,
   ENCODING_SHELVES,

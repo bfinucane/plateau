@@ -23,7 +23,7 @@ import { computeLodValues, resolveLodDimensions } from '../lod.js';
 import { addCalculatedField } from '../../server/store.js';
 import { LocalBackend } from '../../server/dataSource.js';
 import type { Dataset } from '../../server/store.js';
-import type { CellValue, DataTable } from '../types.js';
+import type { DataTable } from '../types.js';
 
 let passed = 0;
 let failed = 0;
@@ -40,10 +40,6 @@ function check(name: string, condition: boolean, detail = ''): void {
 
 function section(title: string): void {
   console.log(`\n${title}`);
-}
-
-function near(a: CellValue, b: number, tolerance = 1e-9): boolean {
-  return typeof a === 'number' && Math.abs(a - b) <= tolerance;
 }
 
 /**
@@ -106,12 +102,6 @@ async function withField(table: DataTable, name: string, formula: string): Promi
   const dataset = makeDataset(table, `test-${name}`);
   await addCalculatedField(dataset, name, formula);
   return (dataset.backend as LocalBackend).table();
-}
-
-/** Reads a measure column out of a query result. */
-function measureOf(result: ReturnType<typeof executeQuery>, column: string): CellValue {
-  const index = result.table.schema.findIndex((c) => c.name === column);
-  return index === -1 ? null : result.table.columns[index][0];
 }
 
 // ------------------------------------------------------------------- parsing

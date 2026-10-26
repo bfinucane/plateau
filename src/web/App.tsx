@@ -887,19 +887,6 @@ export function App() {
                 sheetId,
               })
             }
-            onMovePanel={(panelId, x, y) => {
-              // Free positioning: moving a panel onto an occupied slot swaps.
-              const dashboard = app.activeDashboard!;
-              const target = dashboard.panels.find((p) => p.x === x && p.y === y && p.id !== panelId);
-              if (target) {
-                dispatch({
-                  type: 'dashboard/panelsSwapped',
-                  dashboardId: dashboard.id,
-                  fromPanelId: panelId,
-                  toPanelId: target.id,
-                });
-              }
-            }}
             onSwapPanels={(fromPanelId, toPanelId) =>
               dispatch({
                 type: 'dashboard/panelsSwapped',

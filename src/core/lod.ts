@@ -27,7 +27,7 @@
  * distinction per spec.
  */
 
-import type { Aggregation, CellValue, ColumnSchema, DataTable } from './types.js';
+import type { CellValue, ColumnSchema, DataTable } from './types.js';
 import { aggregateMany } from './aggregations.js';
 import {
   aggregateKeyOf,

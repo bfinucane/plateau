@@ -306,16 +306,11 @@ function collectBare(ast: AstNode): Set<string> {
   return collectBareFields(ast);
 }
 
-function capitalize(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
 /** Reads a dimension's value for a row, applying date truncation. */
 function dimensionValue(
   table: DataTable,
   dimension: PlannedDimension,
   row: number,
-  groupDimensions: PlannedDimension[],
   aggregateValues: Map<string, CellValue>,
   lodFields?: Map<string, LodField>,
 ): CellValue {
@@ -570,7 +565,7 @@ function reducePerRowValues(values: CellValue[], reducer: Aggregation | null): C
 export function executeQuery(table: DataTable, spec: QuerySpec): QueryResult {  const startedAt = Date.now();
 
   if (table.rowCount === 0) {
-    const empty = emptyResult(table, spec, startedAt);
+    const empty = emptyResult(spec, startedAt);
     return empty;
   }
 
@@ -662,7 +657,7 @@ export function executeQuery(table: DataTable, spec: QuerySpec): QueryResult {  
         const values: CellValue[] = [];
         for (const dimension of dimensionList) {
           if (dimension.ast) continue;
-          values.push(dimensionValue(table, dimension, row, dimensionList, new Map(), lodFields));
+          values.push(dimensionValue(table, dimension, row, new Map(), lodFields));
         }
         const key = groupKey(values);
         const bucket = provisional.get(key);
@@ -682,7 +677,7 @@ export function executeQuery(table: DataTable, spec: QuerySpec): QueryResult {  
         // Now evaluate every dimension (bare and calculated) per row.
         for (const row of rows) {
           const values = dimensionList.map((dimension) =>
-            dimensionValue(table, dimension, row, dimensionList, aggValues, lodFields),
+            dimensionValue(table, dimension, row, aggValues, lodFields),
           );
           const key = groupKey(values);
           const existing = groups.get(key);
@@ -693,7 +688,7 @@ export function executeQuery(table: DataTable, spec: QuerySpec): QueryResult {  
     } else {
       for (const row of survivingRows) {
         const values = dimensionList.map((dimension) =>
-          dimensionValue(table, dimension, row, dimensionList, new Map(), lodFields),
+          dimensionValue(table, dimension, row, new Map(), lodFields),
         );
         const key = groupKey(values);
         const existing = groups.get(key);
@@ -880,7 +875,7 @@ function materialize(
     };
   });
 
-  planner.measures.forEach((measure, i) => {
+  planner.measures.forEach((_measure, i) => {
     overrides[measureNames[i]] = {
       dataType: 'number',
       logicalType: 'real',
@@ -933,7 +928,7 @@ function buildDomain(
   return domain;
 }
 
-function emptyResult(table: DataTable, spec: QuerySpec, startedAt: number): QueryResult {
+function emptyResult(spec: QuerySpec, startedAt: number): QueryResult {
   const dimensionNames = spec.fields.filter((f) => f.kind === 'dimension').map((f) => f.name);
   const measureNames = spec.fields.filter((f) => f.kind === 'measure').map((f) => f.name);
   return {

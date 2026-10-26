@@ -24,7 +24,6 @@ interface DashboardViewProps {
   /** Worksheets not yet on this dashboard, offered in the palette. */
   availableSheets: Sheet[];
   onAddPanel: (sheetId: string) => void;
-  onMovePanel: (panelId: string, x: number, y: number) => void;
   onSwapPanels: (fromPanelId: string, toPanelId: string) => void;
   onResizePanel: (panelId: string, w: number, h: number) => void;
   onRemovePanel: (panelId: string) => void;
@@ -37,7 +36,6 @@ export function DashboardView({
   datasetId,
   availableSheets,
   onAddPanel,
-  onMovePanel,
   onSwapPanels,
   onResizePanel,
   onRemovePanel,

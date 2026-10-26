@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, nineteen session commits on top of `0e252ab`. Every number
+Written on branch `main`, twenty session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,12 +13,13 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 41 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
-| Source | 71 files in `src/`, ~29,800 lines |
+| Commits | 42 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Source | 71 files in `src/`, ~29,700 lines |
 | Unit tests | **775 checks**, 23 suites, all passing |
 | Browser tests | **543 checks**, 16 harnesses, all passing |
+| Engine wire | `scripts/verify-engine.mjs`: **27 checks** against the live engine |
 | Screenshots | 58, in `docs/screenshots/` |
-| Bundle | `dist/web/assets/index-Bpx8NCnb.js` (built this session) |
+| Bundle | `index-CN5F12Rd.js` (app, 156 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -270,9 +271,9 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Nineteen commits on top of `0e252ab` — twelve features, a wire follow-up, two design
-decisions and two notes on verification hygiene. The commit messages have the detail;
-the shape:
+Twenty commits on top of `0e252ab` — twelve features, a wire follow-up, a maintenance
+pass, two design decisions and two notes on verification hygiene. The commit messages
+have the detail; the shape:
 
 | Was | Now |
 |---|---|
@@ -302,6 +303,7 @@ the shape:
 | A measure could not be grouped into ranges, so histograms had to be their own mark and there was no way to build a distribution over any view | Create bins: a wizard that writes an ordinary row-level calculated DIMENSION (`FLOOR([Sales] / 1000) * 1000`), shows that formula and its range up front, and is offered only on local datasets because row access is required |
 | A dimension's members could not be saved as a reusable subset, and similar members could not be combined into one value | Sets: named member selections stored in the workbook and applied as ordinary dimension filters (works on remote data, and filters follow the set when it is edited). Groups: selected members combined into a derived dimension, created as a row-level calculated field (local-only) with the IF formula shown before creating it |
 | A time series could only show what had already happened, with no projection beyond the last period | Forecast: a linear trend fitted client-side to the displayed values, drawn as a dashed series beyond the last period with future labels stepped by the axis's own date part. Only on single-series temporal line/area views — and the UI says the engine is not forecasting |
+| An audit found dead declarations, a Vite React plugin imported but never installed, a single 1.4 MB JS bundle, two unused dev dependencies, and no check of the real engine's wire behaviour | Maintenance pass: fixed the unused code and plugin, split React/ECharts/application chunks (app is 156 kB), removed the unused dependencies and updated the lockfile, and added `scripts/verify-engine.mjs` (27 read-only checks against a live engine) |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (29),
 `capabilityGating.test.ts` (43), `workbookFile.test.ts` (73),
@@ -318,6 +320,13 @@ workbook file) are new. Screenshots added: `51-three-dimensions.png`,
 `52-connect-calculated.png`, `53`–`60` for the workbook, test-set and tab-strip work,
 `61-null-cells.png`, `62-engine-auth.png`, `63-reference-lines.png`, `64-bins.png`,
 `65-sets-groups.png` and `66-forecast.png`.
+
+The maintenance pass added `scripts/verify-engine.mjs` (27 checks, read-only): public
+capabilities, dataset discovery, describe, grouped SUM, a dimension filter, the row
+limit, unknown-cube/unknown-field refusals, an expression AST, and division by zero as
+`null`. It skips protected checks (rather than failing) when the engine requires auth and
+no credentials are supplied. It lives outside the unit/browser counts because it tests
+the other side of the wire.
 
 The engine-side stub in `verify-connect.mjs` answers a query by **echoing its shape**
 rather than returning one canned response, and returns one `null` measure cell. A
@@ -582,6 +591,47 @@ unreachable but persisted) plus warn on re-parenting. Our generator
 `scripts/export-engine-fixtures.mjs` has the same false comment and needs the same fix
 when fixtures are regenerated.
 
+### 8.12 Maintenance pass (audit results)
+Run after the analytics work, with no feature changes. What was found and fixed:
+
+- **Dead declarations.** `tsc --noUnusedLocals --noUnusedParameters` is now clean.
+  Removed: unused aggregate locals (`minNum`/`maxNum`), two unused engine helpers and
+  parameters, unused imports (`QuerySpec`, `Aggregation`, `QueryResponse`, a test
+  helper), an unused `MEASURE_CHANNELS` constant, an unused dashboard callback, and an
+  unused test helper pair. `noUnusedLocals`/`noUnusedParameters` stay OFF in
+  `tsconfig.json`: the strict run is a periodic audit, not a build gate, because test
+  code legitimately keeps helpers for readability.
+- **The Vite React plugin was imported but never installed.** The config now has
+  `plugins: [react()]`, so dev mode gets Fast Refresh instead of silently building a
+  plain esbuild JSX transform. This was invisible in every build and every browser
+  harness.
+- **One 1.4 MB bundle.** ECharts, React and application code are now separate chunks:
+  app 156 kB, React 142 kB, ECharts 1.14 MB (gzip 45 + 45 + 382 kB). An app-only change
+  no longer invalidates the chart library in a user's cache. `chunkSizeWarningLimit` is
+  1200 with a comment; ECharts is inherently large, and lazy-loading the chart engine
+  on first render is the next step if the initial parse becomes a problem.
+- **Two unused dev dependencies.** Root `esbuild` and `tsx` were removed and the lockfile
+  regenerated with `pnpm install --lockfile-only`. `tsx` cannot run in this sandbox at
+  all (see ENVIRONMENT.md); `esbuild` remains as Vite's transitive dependency, and
+  `allowBuilds` stays required. A fresh install will no longer hoist the stale copies.
+- **Nothing checked the real engine's wire.** `scripts/verify-engine.mjs` is new:
+  read-only, 27 checks (capabilities, discovery, describe, grouped SUM, dimension
+  filter, limit, unknown cube/field refusals, engine-evaluated expression, division by
+  zero as `null`). It skips protected checks without credentials rather than failing,
+  and distinguishes "engine unreachable" (exit 2) from a wire failure (exit 1). Run
+  against the live engine at 8080 (anonymous): **27 passed, 0 failed, 0 skipped**. It
+  also confirmed the engine's catalog still calls the column hint `suggestedKind`; the
+  script accepts both that and the response `kind`.
+- **Docs hygiene.** All local links in README/HANDOVER/ENVIRONMENT/ENGINE-PROTOCOL
+  resolve (30 checked, one stale `17-map-fallback.png` reference removed along with the
+  paragraph describing a Map mark that is deliberately absent). No TODO/FIXME markers
+  remain in source, tests or scripts.
+
+Left deliberately: no CI (harnesses need Chrome and the wider sandbox), the ECharts
+chunk is not lazy, and the auth-protected branch of the engine smoke test has not been
+run against a real auth-enabled engine (no credentials in this session; the unit suite
+covers the client side with stubs).
+
 ---
 
 ## 9. Traps
@@ -664,6 +714,7 @@ when fixtures are regenerated.
 cd tableau-clone
 node scripts/test.mjs                                   # 775 unit checks
 node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
+node scripts/verify-engine.mjs http://127.0.0.1:8080     # 27 wire checks against a live engine
 ```
 
 Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset` 38,
@@ -688,7 +739,7 @@ is worth showing.
 
 ## 11. Provenance
 
-41 commits, `55482d0` … HEAD. The last nineteen are this session; the 14 before them
+42 commits, `55482d0` … HEAD. The last twenty are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

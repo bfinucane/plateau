@@ -17,7 +17,6 @@
 import { createDashboard, createSheet, type WorkbookState } from '../viewModel.js';
 import {
   WORKBOOK_FILE_FORMAT_VERSION,
-  WorkbookFileError,
   parseWorkbookFile,
   serialiseWorkbookFile,
 } from '../workbookFile.js';
