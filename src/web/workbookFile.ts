@@ -328,6 +328,22 @@ function normaliseSheet(
   const referenceLines = normaliseReferenceLines(value.referenceLines, name, warnings);
   if (referenceLines.length > 0) sheet.referenceLines = referenceLines;
 
+  if (value.forecast !== undefined) {
+    const periods = isRecord(value.forecast) ? value.forecast.periods : undefined;
+    if (
+      typeof periods === 'number' &&
+      Number.isInteger(periods) &&
+      periods >= 1 &&
+      periods <= 24
+    ) {
+      sheet.forecast = { periods };
+    } else {
+      warnings.push(
+        `Sheet "${name}" had a forecast that is not 1–24 whole periods; it was ignored.`,
+      );
+    }
+  }
+
   return sheet;
 }
 

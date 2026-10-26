@@ -87,6 +87,7 @@ type Action =
   | { type: 'sheet/paneSplit'; sheetId: string; paneBy?: string }
   | { type: 'sheet/measureSplit'; sheetId: string; splitMeasures: boolean }
   | { type: 'sheet/referenceLines'; sheetId: string; referenceLines: ReferenceLine[] }
+  | { type: 'sheet/forecast'; sheetId: string; periods?: number }
   | { type: 'sheet/encodingAdded'; sheetId: string; shelf: ShelfId; encoding: Encoding }
   | { type: 'sheet/encodingRemoved'; sheetId: string; shelf: ShelfId; encodingId: string }
   | { type: 'sheet/encodingUpdated'; sheetId: string; encodingId: string; patch: Partial<Encoding> }
@@ -333,6 +334,16 @@ function reducer(state: State, action: Action): State {
           return rest;
         }
         return { ...sheet, referenceLines: action.referenceLines };
+      });
+
+    case 'sheet/forecast':
+      return mapSheet(state, action.sheetId, (sheet) => {
+        // Drop the key when the forecast is off, so a saved workbook stays clean.
+        if (!action.periods) {
+          const { forecast: _dropped, ...rest } = sheet;
+          return rest;
+        }
+        return { ...sheet, forecast: { periods: action.periods } };
       });
 
     case 'sheet/encodingAdded':

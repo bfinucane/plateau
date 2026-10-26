@@ -405,6 +405,133 @@ try {
 
   await screenshot('23-scatter-colored-trend.png');
 
+  // ── Forecast: a projection beyond the observed months ────────────────
+  console.log('\nForecast');
+
+  await evaluate(`(() => {
+    const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Clear sheet');
+    if (b) b.click();
+    return true;
+  })()`);
+  await sleep(800);
+  await setMark('line');
+  await dropOnAxis('Order Date', 'columns');
+  await sleep(1300);
+
+  // A date field is placed continuous by default; forecast needs a period to step.
+  const datePartOpened = await evaluate(`(() => {
+    const pill = [...document.querySelectorAll('.pill')]
+      .find((candidate) => candidate.textContent.includes('Order Date'));
+    if (!pill) return 'no pill';
+    pill.click();
+    return 'ok';
+  })()`);
+  await sleep(400);
+  const datePartSet = await evaluate(`(() => {
+    const selects = [...document.querySelectorAll('.pill-editor select')];
+    const select = selects.find((candidate) =>
+      [...candidate.options].some((option) => option.value === 'month'));
+    if (!select) return 'no select';
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, 'month');
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'ok';
+  })()`);
+  await sleep(1300);
+  await dropOnAxis('Sales', 'rows');
+  await sleep(1900);
+  console.log('  date part:', JSON.stringify({ datePartOpened, datePartSet }));
+
+  const readForecastOption = () => evaluate(`(() => {
+    const echarts = window.__ECHARTS__;
+    const inst = echarts.getInstanceByDom(document.querySelector('.chart-canvas'));
+    if (!inst) return null;
+    const option = inst.getOption();
+    const xAxis = Array.isArray(option.xAxis) ? option.xAxis[0] : option.xAxis;
+    const series = option.series ?? [];
+    const lineStyleType = (value) => Array.isArray(value) ? value[0]?.type ?? null : value?.type ?? null;
+    return {
+      categories: (xAxis?.data ?? []).map(String),
+      series: series.map((entry) => ({
+        name: entry.name,
+        type: Array.isArray(entry.type) ? entry.type[0] : entry.type,
+        dashed: lineStyleType(entry.lineStyle) === 'dashed',
+        data: entry.data ?? [],
+      })),
+    };
+  })()`);
+
+  const beforeForecast = await readForecastOption();
+  console.log('  before:', JSON.stringify({
+    categories: beforeForecast?.categories?.length,
+    series: beforeForecast?.series?.length,
+  }));
+  check('the monthly line has one series', beforeForecast?.series?.length === 1,
+    JSON.stringify(beforeForecast?.series?.map((entry) => entry.name)));
+  check('the Forecast control is offered for a temporal line',
+    (await evaluate(`Boolean(document.querySelector('.forecast-toggle'))`)) === true);
+
+  check('the forecast is switched on',
+    (await evaluate(`(() => {
+      const toggle = document.querySelector('.forecast-toggle');
+      if (!toggle) return 'missing';
+      toggle.click();
+      return 'ok';
+    })()`)) === 'ok');
+  await sleep(1800);
+  const withForecast = await readForecastOption();
+  const forecastSeries = withForecast?.series?.find((entry) => /Forecast/.test(String(entry.name)));
+  console.log('  forecast series:', JSON.stringify({
+    name: forecastSeries?.name,
+    dashed: forecastSeries?.dashed,
+    categories: withForecast?.categories?.length,
+    tail: forecastSeries?.data?.slice(-6),
+  }));
+  check('the axis is extended by the default six periods',
+    withForecast?.categories?.length === (beforeForecast?.categories?.length ?? 0) + 6,
+    `${beforeForecast?.categories?.length} -> ${withForecast?.categories?.length}`);
+  check('a forecast series is added', Boolean(forecastSeries));
+  check('the forecast is dashed, so it cannot pass for observed data',
+    forecastSeries?.dashed === true, JSON.stringify(forecastSeries?.dashed));
+  const observed = beforeForecast?.categories?.length ?? 0;
+  check('the forecast starts after the observed history',
+    (forecastSeries?.data ?? []).slice(0, observed).every((value) => value === null),
+    JSON.stringify((forecastSeries?.data ?? []).slice(0, observed)));
+  check('the forecast carries six projected values',
+    (forecastSeries?.data ?? []).slice(observed).filter((value) => typeof value === 'number').length === 6,
+    JSON.stringify((forecastSeries?.data ?? []).slice(observed)));
+  check('the future labels continue beyond the last observed month',
+    withForecast?.categories?.at(-1) !== beforeForecast?.categories?.at(-1),
+    JSON.stringify(withForecast?.categories?.slice(-3)));
+
+  await screenshot('66-forecast.png');
+
+  check('the horizon can be shortened',
+    (await evaluate(`(() => {
+      const input = document.querySelector('.forecast-periods');
+      if (!input) return 'missing';
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '3');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return 'ok';
+    })()`)) === 'ok');
+  await sleep(1500);
+  const shortForecast = await readForecastOption();
+  check('three periods means three future labels',
+    shortForecast?.categories?.length === observed + 3,
+    `${observed} -> ${shortForecast?.categories?.length}`);
+
+  check('switching the forecast off restores the chart',
+    (await evaluate(`(() => {
+      const toggle = document.querySelector('.forecast-toggle');
+      if (!toggle) return 'missing';
+      toggle.click();
+      return 'ok';
+    })()`)) === 'ok');
+  await sleep(1500);
+  const offAgain = await readForecastOption();
+  check('the projection series is gone and the axis is back',
+    offAgain?.series?.length === 1 && offAgain?.categories?.length === observed,
+    JSON.stringify({ series: offAgain?.series?.length, categories: offAgain?.categories?.length }));
+
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 2).join(' | '));
 
   const failed = results.filter((r) => !r.ok);

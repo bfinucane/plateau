@@ -338,12 +338,12 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 739 unit checks, 22 suites
+npm test         # 775 unit checks, 23 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
 
-`npm test` runs twenty-two suites: `engine.test.ts` (expressions, CSV, inference, query
+`npm test` runs twenty-three suites: `engine.test.ts` (expressions, CSV, inference, query
 execution, calculated fields), `lod.test.ts` (parsing, dimension resolution, filter
 ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport`,
 `remoteDataset`, `queryValidation` (unknown field names are refused),
@@ -353,6 +353,7 @@ ordering), `protocol.test.ts` (local/remote parity, wire shapes), `httpTransport
 re-registration), `referenceLines` (value axis, orientation, marks without one),
 `bins` (bin arithmetic, validation, suggestions, offered fields),
 `setsGroups` (set filter identity and refresh, group formulas, offered fields),
+`forecast` (least-squares fit, projections, date-part labels, chart series),
 `nullCells` (absence is not zero, in every mark), `markInference`,
 `axisNesting` (line, heat map and treemap show every placed dimension),
 `engineAuth` (login, bearer tokens, 401) and `join`. LOD and engine tests use a small
@@ -371,7 +372,7 @@ The other harnesses, each of which prints `N passed, M failed`:
 ```bash
 node e2e/verify-lod.mjs        # 14 checks: LOD fields through the real UI, incl. filter ordering
 node e2e/verify-marks.mjs      # 29 checks: Color / Size / Label channels, bar stacking, reference lines
-node e2e/verify-viz.mjs        # 27 checks: scatter axes, trend-line fit, heat map orientation
+node e2e/verify-viz.mjs        # 40 checks: scatter axes, trend-line fit, heat map orientation, forecast projection
 node e2e/verify-sort.mjs       # 15 checks: Sort control reaches the engine; axis orientation
 node e2e/verify-treemap.mjs    # 16 checks: treemap hierarchy, tooltip paths, Detail guard
 node e2e/verify-dashboard.mjs  # 29 checks: panels, independent queries, resize, swap, persistence
@@ -387,7 +388,7 @@ node e2e/verify-auth.mjs       # 45 checks: authRequired gate, login, bearer on 
 node e2e/capture-marks.mjs     # regenerates heat map / waterfall / scatter screenshots
 ```
 
-Total: **1269 checks** — 739 unit, 530 browser.
+Total: **1318 checks** — 775 unit, 543 browser.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -403,11 +404,12 @@ Total: **1269 checks** — 739 unit, 530 browser.
 | split | 35 | partitioning, ordering, refusals |
 | axis selection | 34 | dimensions beat measures; nesting to any depth |
 | capability menus | 29 | aggregations, filter operators and per-scope lists, never lying about the current value |
-| workbook file | 67 | round trip, hand-authored files, refusals, repairs, calculation drafts, reference lines, sets |
+| workbook file | 73 | round trip, hand-authored files, refusals, repairs, calculation drafts, reference lines, sets, forecasts |
 | calculation drafts | 23 | identity, dataset binding, missing-on-server planning |
 | reference lines | 11 | value axis, horizontal orientation, marks without a value axis |
 | bins | 30 | bin arithmetic evaluated per row, width validation, suggestions, offered fields |
 | sets and groups | 27 | filter identity and refresh, group formulas evaluated, offered fields |
+| forecast | 30 | least-squares fit, projections, date-part labels, chart series |
 | null cells | 22 | absence is not zero, in every mark |
 | mark inference | 7 | a scatter needs a measure on each axis |
 | axis nesting | 20 | line, heat map and treemap show every placed dimension |
@@ -717,9 +719,13 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   came from a set follow its membership when it is edited. **Groups** combine selected
   members into a derived dimension, produced as a row-level calculated field with the
   IF formula shown up front (local-only, like any row-level field).
+- **Forecast** projects a single-series line or area time chart forward with a
+  least-squares trend fitted to the displayed values, drawn as a dashed series beyond
+  the last period with future labels stepped by the axis date part. It is explicitly a
+  trend projection, not a statistical model — the engine is not asked to forecast.
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1269 checks green (739 unit, 530 browser)
+- 1318 checks green (775 unit, 543 browser)
 
 ### Connecting to an engine
 
@@ -882,8 +888,8 @@ header triggers a preflight the engine must allow.
    permissions work (its S2) is not here: every signed-in user sees the same data,
    and Plateau only displays the role list. A token-revoke endpoint and a token field
    on the engine's SQL console are also engine-side.
-5. **Then** forecasting, the remaining higher-value analytics gap. Ranked in
-   *Known limitations*.
+5. **All the analytics features on the plan now exist** (reference lines, bins, sets,
+   groups, forecasts). Remaining gaps are listed under *Known limitations*.
 
 ### A note on calculated fields
 
@@ -929,6 +935,11 @@ Deliberately out of scope for this build, and the honest next steps:
   but keeps working if the set is later deleted (the values are copied). **Groups are a
   generated calculated field**: they cannot be re-edited through the group dialog; edit
   the formula instead.
+- **Forecasts are a trend projection, not a statistical model.** A least-squares line is
+  fitted to the values already on screen and extended N periods; there is no
+  seasonality, confidence interval or engine model, and it is offered only for a
+  single-series line/area view with exactly one date-part axis (no colour split, no
+  scatter, no table).
 - **Calculations are client-side conveniences, not model objects.** Plateau authors
   them, pushes the AST per query, and the engine forgets it afterwards. The formula is
   kept as a **workbook draft** and re-registered after a server restart (the server's

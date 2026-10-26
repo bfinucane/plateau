@@ -31,6 +31,11 @@ interface MarksCardProps {
   onAddReferenceLine: (value: number, label?: string) => void;
   onRemoveReferenceLine: (id: string) => void;
   canReferenceLine: boolean;
+  /** Set when a trend projection is enabled; `undefined` means off. */
+  forecastPeriods?: number;
+  onForecastChange: (periods?: number) => void;
+  /** A temporal single-series line/area view is on screen. */
+  canForecast: boolean;
 }
 
 /** Formatting for the reference-line list; the chart formats its own labels. */
@@ -61,6 +66,9 @@ export function MarksCard({
   onAddReferenceLine,
   onRemoveReferenceLine,
   canReferenceLine,
+  forecastPeriods,
+  onForecastChange,
+  canForecast,
 }: MarksCardProps) {
   const [lineValue, setLineValue] = useState('');
   const [lineLabel, setLineLabel] = useState('');
@@ -216,6 +224,45 @@ export function MarksCard({
               Add
             </button>
           </form>
+        </div>
+      )}
+
+      {canForecast && (
+        <div className="marks-reflines marks-forecast">
+          <span className="marks-reflines-title">Forecast</span>
+          <label className="marks-checkbox">
+            <input
+              type="checkbox"
+              className="forecast-toggle"
+              checked={Boolean(forecastPeriods)}
+              onChange={(event) => onForecastChange(event.target.checked ? 6 : undefined)}
+            />
+            <span>Project ahead</span>
+          </label>
+          {forecastPeriods ? (
+            <div className="refline-form">
+              <input
+                type="number"
+                min={1}
+                max={24}
+                step={1}
+                className="forecast-periods"
+                value={forecastPeriods}
+                onChange={(event) => {
+                  const periods = Number(event.target.value);
+                  if (Number.isInteger(periods) && periods >= 1 && periods <= 24) {
+                    onForecastChange(periods);
+                  }
+                }}
+                aria-label="Forecast periods"
+              />
+              <span className="forecast-suffix">periods (linear trend)</span>
+            </div>
+          ) : null}
+          <p className="refline-hint">
+            A straight-line projection over the values on screen; the engine is not asked
+            to forecast.
+          </p>
         </div>
       )}
 

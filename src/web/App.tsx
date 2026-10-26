@@ -170,6 +170,28 @@ export function App() {
     ? 'Select a dataset first.'
     : 'Groups need row-level evaluation, which a remote engine does not expose. Connect a local dataset to group its dimension members.';
 
+  /**
+   * Whether a forecast makes sense for the active sheet.
+   *
+   * A trend projection needs exactly one time axis with a date part (that is what the
+   * future labels step by), a single series (a projection per colour value would be
+   * several models pretending to be one), and at least one measure to project.
+   */
+  const canForecast = (() => {
+    if (!activeSheet) return false;
+    const mark = effectiveMark(activeSheet);
+    if (mark !== 'line' && mark !== 'area') return false;
+    const placed = [...(activeSheet.shelves.columns ?? []), ...(activeSheet.shelves.rows ?? [])];
+    const temporalAxes = placed.filter(
+      (encoding) => encoding.kind === 'dimension' && encoding.datePart !== undefined,
+    );
+    const colourDimension = (activeSheet.shelves.color ?? []).some(
+      (encoding) => encoding.kind === 'dimension',
+    );
+    const measures = placed.filter((encoding) => encoding.kind === 'measure');
+    return temporalAxes.length === 1 && !colourDimension && measures.length >= 1;
+  })();
+
   // --- restore / persist the workbook -----------------------------------
   /**
    * Whether it is safe to autosave.
@@ -1047,6 +1069,11 @@ export function App() {
                     ),
                   })
                 }
+                forecastPeriods={activeSheet.forecast?.periods}
+                onForecastChange={(periods) =>
+                  dispatch({ type: 'sheet/forecast', sheetId: activeSheet.id, periods })
+                }
+                canForecast={canForecast}
               />
             )}
 

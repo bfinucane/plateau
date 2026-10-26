@@ -69,6 +69,7 @@ function fixture(): WorkbookState {
     },
   ];
   sheet.paneBy = 'Region';
+  sheet.forecast = { periods: 6 };
   sheet.referenceLines = [
     { id: 'target', value: 1000, label: 'Target' },
     { id: 'average', value: 750 },
@@ -190,6 +191,9 @@ section('A round trip loses nothing');
       workbook.sets[0].members.join(',') === 'Furniture' &&
       workbook.sets[1].members.join(',') === 'West,South',
     JSON.stringify(workbook.sets));
+  check('a forecast horizon survives',
+    workbook.sheets[0].forecast?.periods === 6,
+    JSON.stringify(workbook.sheets[0].forecast));
 }
 
 section('Calculation drafts are forgiving to load');
@@ -334,6 +338,30 @@ section('Sets are forgiving to load');
   check('a non-list sets field is ignored with a warning',
     workbook.sets.length === 0 && warnings.some((warning) => /not a list/.test(warning)),
     JSON.stringify(warnings));
+}
+
+section('A forecast horizon is validated on load');
+
+{
+  const parsed = parseWorkbookFile(
+    JSON.stringify({ sheets: [{ name: 'F', forecast: { periods: 12 } }] }),
+  );
+  check('a whole-hour horizon is accepted', parsed.workbook.sheets[0].forecast?.periods === 12,
+    JSON.stringify(parsed.workbook.sheets[0].forecast));
+
+  const invalid = [
+    { periods: 0 },
+    { periods: 25 },
+    { periods: 2.5 },
+    {},
+  ];
+  for (const forecast of invalid) {
+    const result = parseWorkbookFile(JSON.stringify({ sheets: [{ name: 'F', forecast }] }));
+    check(`forecast ${JSON.stringify(forecast)} is refused, not guessed`,
+      result.workbook.sheets[0].forecast === undefined &&
+        result.warnings.some((warning) => /forecast/.test(warning)),
+      JSON.stringify(result.warnings));
+  }
 }
 
 section('Accepted shapes');

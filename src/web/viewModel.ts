@@ -118,6 +118,14 @@ export interface Sheet {
    * heat map, text — cannot, and the control is not offered for them.
    */
   referenceLines?: ReferenceLine[];
+  /**
+   * A straight-line projection beyond the last period on a temporal axis.
+   *
+   * Only meaningful for a single-series line/area chart with a date dimension on an
+   * axis; `periods` is how many future periods to project. Nothing is sent to the
+   * engine — the trend is fitted to the values already on screen.
+   */
+  forecast?: { periods: number };
 }
 
 /**

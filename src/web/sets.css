@@ -98,3 +98,21 @@
 .set-apply {
   margin: 2px 0 10px;
 }
+
+/* Forecast: a checkbox plus a small period count, in the Marks card. */
+.marks-forecast .refline-form {
+  grid-template-columns: 66px 1fr;
+  align-items: center;
+}
+
+.forecast-suffix {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.marks-forecast .refline-hint {
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.4;
+}

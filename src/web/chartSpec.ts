@@ -19,6 +19,12 @@ import {
   type MarkType,
 } from './viewModel';
 import { computeTableCalculation, type TableCalcSpec } from './tableCalcs';
+import {
+  forecastValues,
+  isForecastDatePart,
+  nextTemporalLabels,
+  type ForecastDatePart,
+} from './forecast';
 
 /** A printable mark type (automatic already resolved). */
 export type ResolvedMark = Exclude<MarkType, 'automatic'>;
@@ -94,6 +100,51 @@ export function formatNumber(value: number | null): string {
 export function formatFull(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return '—';
   return value.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+/**
+ * A trend projection beyond the last point of a single-series time chart.
+ *
+ * The engine is not asked to forecast: the model is a least-squares line over the
+ * values already in the result, and the future labels come from stepping the axis's
+ * own date part. The historical series keeps its data unchanged and a dashed series
+ * carries the projection, so the eye can tell which points are observed.
+ */
+function forecastExtension(
+  result: QueryResponse,
+  measureName: string,
+  measureIndex: number,
+  dimensionIndex: number,
+  datePart: ForecastDatePart,
+  categories: string[],
+  periods: number,
+): { categories: string[]; series: Record<string, unknown>[] } | null {
+  const values = result.rows.map((row) => toNumber(row[measureIndex]));
+  const fit = forecastValues(values, periods);
+  if (!fit) return null;
+
+  const lastLabel = toText(result.rows[result.rows.length - 1]?.[dimensionIndex]);
+  const futureLabels = nextTemporalLabels(lastLabel, datePart, periods);
+  if (futureLabels.length !== periods) return null;
+
+  return {
+    categories: [...categories, ...futureLabels.map((label) => formatCategory(label, true))],
+    series: [
+      {
+        name: measureName ? `Forecast (${measureName})` : 'Forecast',
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 5,
+        showSymbol: true,
+        // History stops where observation ends; the forecast starts there.
+        data: [...new Array(values.length).fill(null), ...fit.forecast],
+        lineStyle: { width: 2, type: 'dashed', color: '#8a94a3' },
+        itemStyle: { color: '#8a94a3' },
+        emphasis: { focus: 'series' },
+      },
+    ],
+  };
 }
 
 /**
@@ -990,10 +1041,53 @@ function buildLineLike(
       result.rows.map((row) => formatCategory(row[index], isTemporalColumn(result, index))),
     ),
   ]);
-  const categories = axis.labels;
+  let categories = axis.labels;
   const referenceLines = referenceLineMark(sheet, 'y');
 
   if (seriesDimensionIndex === undefined) {
+    const series: Record<string, unknown>[] = [
+      {
+        name: measureName,
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        showSymbol: result.rows.length <= 60,
+        data: result.rows.map((row) => toNumber(row[measureIndex])),
+        areaStyle: stacked ? { opacity: 0.22 } : undefined,
+        lineStyle: { width: 2.4 },
+        markLine: referenceLines,
+      },
+    ];
+
+    /*
+     * A forecast is only drawn for a temporal axis the user actually placed with a
+     * date part: the future labels are stepped by that same part, so a year axis
+     * forecasts years and a month axis forecasts months. Without it there is no
+     * honest label for "the next period".
+     */
+    const dateEncoding = [...(sheet.shelves.columns ?? []), ...(sheet.shelves.rows ?? [])].find(
+      (encoding) =>
+        encoding.kind === 'dimension' &&
+        isForecastDatePart(encoding.datePart) &&
+        columns.indexOf(encoding) === dimensionIndex,
+    );
+    if (sheet.forecast && dateEncoding && isForecastDatePart(dateEncoding.datePart)) {
+      const forecast = forecastExtension(
+        result,
+        measureName,
+        measureIndex,
+        dimensionIndex,
+        dateEncoding.datePart,
+        categories,
+        sheet.forecast.periods,
+      );
+      if (forecast) {
+        categories = forecast.categories;
+        series.push(...forecast.series);
+      }
+    }
+
     return {
       option: {
         ...baseOption(),
@@ -1011,20 +1105,7 @@ function buildLineLike(
           splitLine: GRID_SPLIT_STYLE,
           axisLabel: { ...AXIS_LABEL_STYLE, formatter: (v: number) => formatNumber(v) },
         },
-        series: [
-          {
-            name: measureName,
-            type: 'line',
-            smooth: true,
-            symbol: 'circle',
-            symbolSize: 6,
-            showSymbol: result.rows.length <= 60,
-            data: result.rows.map((row) => toNumber(row[measureIndex])),
-            areaStyle: stacked ? { opacity: 0.22 } : undefined,
-            lineStyle: { width: 2.4 },
-            markLine: referenceLines,
-          },
-        ],
+        series,
         legend: { show: false },
       },
     };

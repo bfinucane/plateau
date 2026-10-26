@@ -27,6 +27,7 @@ const SUITES = [
   ['reference lines (value axis, orientation, marks without one)', '../src/web/__tests__/referenceLines.test.ts'],
   ['bins (formula arithmetic, validation, suggestions, offered fields)', '../src/web/__tests__/bins.test.ts'],
   ['sets and groups (filter identity, refresh, group formula, offered fields)', '../src/web/__tests__/setsGroups.test.ts'],
+  ['forecast (fit, projections, date labels, chart series)', '../src/web/__tests__/forecast.test.ts'],
   ['null cells (absence is not zero, in every mark)', '../src/web/__tests__/nullCells.test.ts'],
   ['mark inference (a scatter needs a measure on each axis)', '../src/web/__tests__/markInference.test.ts'],
   ['axis nesting (line, heat map and treemap show every dimension)', '../src/web/__tests__/axisNesting.test.ts'],
