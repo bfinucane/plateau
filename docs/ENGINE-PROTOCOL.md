@@ -1,17 +1,30 @@
-# Plateau engine protocol — wire format v1
+# Plateau engine protocol — pinned mirror of suite contract v1
 
 The contract between Plateau and a native analytics engine. The client sends a
 **plan**, never SQL; the engine owns every physical decision.
 
-- **Status:** v1, `PROTOCOL_VERSION = 1`
-- **Normative source:** `src/core/protocol.ts`. Where this document and the code
-  disagree, the code wins — but they must not disagree.
+- **Status:** pinned mirror of **suite contract v1** (`PROTOCOL_VERSION = 1`), pinned
+  2026-10-28, verified against engine `Patricia/olap_engine` commit **`d6b02e0`**.
+- **Normative text:** [`contract/PROTOCOL.md`](../../contract/PROTOCOL.md) — owned by the
+  contract-owner session. This document is a **mirror for Plateau's convenience**: it
+  must agree with the contract, and where they disagree the contract wins and the
+  disagreement is a **bug to report**, not a local ruling. The expected capabilities
+  payload is [`contract/capabilities.v1.json`](../../contract/capabilities.v1.json); the
+  history is [`contract/CHANGELOG.md`](../../contract/CHANGELOG.md).
+- **Conformance declaration:** Plateau claims **Tier T2** (T0 transport/discovery,
+  T1 read, T2 auth). **Tier T4 (writeback) is NOT adopted** — Plateau is a read-only
+  analytics client in v1. Evidence and the ledger row live in
+  [`contract/STATUS.md`](../../contract/STATUS.md); the adoption handoff is
+  [`contract/handoffs/001-plateau-contract-v1.md`](../../contract/handoffs/001-plateau-contract-v1.md).
+- **Implementation convention:** `src/core/protocol.ts` is the client's code view of
+  these shapes; `src/server/httpTransport.ts` is the receipt/validation point. Code
+  and this mirror must agree, and both must agree with the contract.
 - **Reference implementation:** `FakeEngine` in
   `src/server/__tests__/protocol.test.ts` shows every request and response
   populated with real values. Read it if any shape below is ambiguous.
-- **Engine changelog:** `Patricia/olap_engine/WIRE-CHANGES.md` announces wire
-  changes from the engine side, with paste-ready blocks. Those blocks are merged
-  here; this document is normative, and a disagreement between the two is a bug.
+- **Wire checks against a live engine:** `npm run verify:engine` (read-only,
+  33 checks, auth-aware). The engine's own conformance checker is
+  `contract/conformance/check-engine.ps1`.
 
 ## Transport
 
@@ -19,10 +32,11 @@ Transport is deliberately unspecified. The reference client speaks HTTP/JSON:
 
 | Operation | Method and path |
 | --- | --- |
+| `capabilities` | `GET /v1/capabilities` |
+| `datasets` | `GET /v1/datasets` |
 | `describe` | `GET /v1/{dataset}` |
 | `sample` | `GET /v1/{dataset}/sample?limit=N&offset=M` |
 | `query` | `POST /v1/{dataset}/query` |
-| `capabilities` | `GET /v1/capabilities` |
 | `login` | `POST /v1/login` |
 
 Any binding is acceptable — HTTP, a Unix socket, an in-process FFI call. Only the
@@ -101,19 +115,27 @@ A non-2xx response carries:
 { "error": "human readable", "code": "unsupported_aggregation" }
 ```
 
-`code` is one of:
+`code` is one of (contract §9):
 
 ```
-unknown_dataset | unsupported_aggregation | unsupported_filter
-unsupported_expression | row_limit | unauthorized | invalid_argument
-engine_error | version_mismatch
+invalid_argument | unsupported_aggregation | unsupported_filter
+unsupported_expression | version_mismatch | unknown_member
+consolidated_write | unauthorized | forbidden | unknown_dataset
+method_not_allowed | save_failed
 ```
+
+Reserved, not emitted by the reference engine: `engine_error` (any unrecognised code
+or a transport failure is mapped to it), `row_limit` (client-side materialisation
+refusal in v1). Plateau accepts all thirteen code names and preserves their identity;
+an unknown code collapses to `engine_error` rather than being misfiled as a client bug.
 
 The distinction matters: `invalid_argument` and the `unsupported_*` codes are the
 **client's** fault and are a bug in Plateau. `engine_error` is the engine's, and
 is worth retrying or reporting. `unauthorized` is a session problem, not a request
-problem: re-authenticate rather than changing the query. Do not return `engine_error`
-for a bad request — the client cannot tell a bug from a fault.
+problem: re-authenticate rather than changing the query. `forbidden` (403) is a
+permission problem; `method_not_allowed` (405) belongs to `POST /v1/login` only. Do
+not return `engine_error` for a bad request — the client cannot tell a bug from a
+fault.
 
 ---
 
@@ -126,6 +148,7 @@ for a bad request — the client cannot tell a bug from a fault.
   "primaryKey": "Row ID",
   "measureDimension": null,
   "isAttributeTable": false,
+  "isSystem": false,
   "columns": [
     {
       "name": "Region",
@@ -153,10 +176,18 @@ for a bad request — the client cannot tell a bug from a fault.
 | `suggestedKind` | no | `dimension` \| `measure` — **a hint only** |
 | `measureDimension` | no | The cube's measure dimension. For an attribute cube this names the column whose **members** are the attachable attribute names |
 | `isAttributeTable` | no | This cube is an attribute source, not a measure cube |
+| `isSystem` | no | `true` for engine-maintained metadata cubes (`#` prefix, contract §10.3). Always present in contract v1; an absent value must be read as `false` |
 
-The last two exist for **join discovery**: they are how a client can tell that a cube
+The middle two exist for **join discovery**: they are how a client can tell that a cube
 holds attribute values meant to be attached to another cube, rather than measures to
 be queried directly. See `capabilities.supportsJoin` and the `join` block in §3.
+
+**System cubes are not datasets.** `/v1/datasets` deliberately includes `#`-prefixed
+cubes so one call discovers the whole database; `describe.isSystem` is how a client
+tells them apart. Plateau hides them from the dataset picker, skips them as join
+candidates, and refuses to register one (`400 invalid_argument`) because that route is
+reachable directly. A `#` prefix is also treated as system when an older engine omits
+the field.
 
 **`suggestedKind` is a hint, never authoritative.** Plateau decides what is a
 dimension and what is a measure, because that is presentation policy, not a
@@ -209,8 +240,16 @@ The only operation that computes. Request:
 ### `groupBy`
 
 A measure goes in `measures`; a dimension goes in `groupBy`. `datePart` is one of
-`year | quarter | month | week | day` and asks for truncation to that level.
-Absent means the raw value.
+`year | quarter | month | week | day` and would ask for truncation to that level.
+
+**Plateau does NOT send `datePart` (contract §11.1).** The reference engine parses the
+field but refuses any non-empty value with `400 unsupported_expression`, and there is
+no capability flag to detect that, so the contract instructs clients not to send it.
+Plateau computes the truncation client-side instead: the remote rows are materialised
+and the local engine performs the grouping, exactly like the LOD fallback. The cost is
+a row materialisation (bounded by `maxRows`, refused as `row_limit` when truncated).
+The example above therefore shows the **wire shape the engine documents**, not a
+request Plateau composes today.
 
 An empty `groupBy` with one measure is a **grand total** and must return exactly
 one row.
@@ -282,6 +321,22 @@ contains | startsWith | endsWith | isNull | notNull | top | bottom
 
 Advertise only what you implement via `capabilities.filterOperators`. Plateau
 disables the rest rather than submitting a request that fails.
+
+**Contract v1 §11.3 / D4: measure scope is unsupported unless the report says
+otherwise.** The reference engine evaluates only dimension-scope `in` / `equals` /
+`notEquals`, reports no `filterOperatorsByScope`, and refuses every measure-scope
+filter with `unsupported_filter`. A client MUST therefore treat measure scope as
+unsupported while the report has no explicit `measure` list — inferring it from the
+global list makes a Top/Bottom control that passes client validation and then 400s.
+Plateau applies that rule in both places: the filter dialogs offer no measure-scope
+modes under a global-only report, and server-side validation refuses the request
+before it reaches the engine. An explicit `measure` list (including an explicit empty
+one) is honoured as the report.
+
+**Filter `field` must be exact (contract §5.4 MUST).** A dimension-scope filter's
+`field` must name a dimension exactly as `describe` spells it, case-sensitively; a
+mismatch is `400 invalid_argument` naming field and dataset, never a silently dropped
+predicate (fixed in engine `ae5e2c9`, §11.9). Plateau sends `describe` casing.
 
 ### `orderBy`
 
@@ -400,15 +455,16 @@ converting it to zero is a decision only the formula author may make
 ```json
 {
   "protocolVersion": 1,
-  "aggregations": ["SUM", "AVG", "COUNT", "MIN", "MAX"],
-  "countDistinctExact": false,
+  "aggregations": ["SUM", "AVG", "COUNT", "MIN", "MAX", "COUNTD"],
+  "countDistinctExact": true,
   "filterOperators": ["in", "equals", "notEquals"],
   "supportsLod": false,
   "supportsJoin": true,
   "expressionFunctions": ["ZN", "IFNULL"],
   "authRequired": true,
   "supportsInlineDomain": true,
-  "maxRows": 100000
+  "maxRows": 100000,
+  "supportsWrite": true
 }
 ```
 
@@ -423,21 +479,24 @@ The list fields are what make the client honest, so say exactly what you impleme
   dialogs, and refuses a query naming any other as `unsupported_filter` **before
   sending it**. Report the operators you actually evaluate; reporting a superset
   produces failures at query time instead of at the control.
-- **`filterOperatorsByScope`** — *optional*, refines `filterOperators`. A scope
-  present here overrides the global list for that scope; an absent scope falls back
-  to the global list. The two scopes are different operations: a `dimension` filter
-  prunes rows **before** grouping, a `measure` filter ranks or compares
-  **aggregated** values after it. An engine can support `in` for dimensions and
-  nothing for measures:
+- **`filterOperatorsByScope`** — *optional, additive*, refines `filterOperators`.
+  Contract v1 does **not** send it: `filterOperators` is a global, dimension-scope
+  report and measure-scope filtering is unsupported (§11.3/D4). If a future engine
+  implements per-scope differences it must send the field, and then an explicit scope
+  list — including an explicit empty one — is the report for that scope. The two
+  scopes are different operations: a `dimension` filter prunes rows **before**
+  grouping, a `measure` filter ranks or compares **aggregated** values after it.
+  Plateau does NOT infer measure support from the global list: absent the field,
+  measure-scope filters are closed in both the dialogs and server-side validation.
 
   ```json
   "filterOperators": ["in", "equals", "between", "notNull"],
   "filterOperatorsByScope": { "measure": ["top", "bottom"] }
   ```
-
-  Additive and optional. Plateau uses it for the dialog modes (Range and "exclude
-  nulls" are dimension-scope on a dimension field; Top/Bottom are always
-  measure-scope) and for server-side `unsupported_filter` refusal.
+- **`supportsWrite`** — present in contract v1 (`true` on the reference engine). It
+  gates `POST /v1/{dataset}/write` and `POST /v1/save`. **Plateau does not read it**:
+  Tier T4 is not adopted, and the client keeps no engine write path. A future
+  authoring feature must feature-detect this first.
 - **`expressionFunctions`** — the plain function names a calculated field may
   `call`, uppercased. It does **not** include aggregates (those are
   `aggregations`) and it does **not** include `IF` (an AST node, not a function).
@@ -573,6 +632,16 @@ other front-ends.
 
 ## Versioning
 
+This mirror pins **suite contract v1** (`protocolVersion 1`), the version published by
+the contract owner on 2026-10-28 and verified against engine commit `d6b02e0`. The
+canonical versioning rules are in `contract/README.md` (additive changes stay within
+v1 when feature-detectable; anything a client cannot detect requires
+`protocolVersion 2`).
+
 `protocolVersion` is in every query request. A mismatch must be rejected with
 `version_mismatch`, never guessed at. Additive optional fields do not require a
 version bump; changing the meaning of an existing field does.
+
+When `contract/PROTOCOL.md` changes, this mirror is updated to the newly pinned
+version and the engine commit it was verified against. A disagreement between this
+mirror and the contract is reported as a contract bug, never resolved locally.

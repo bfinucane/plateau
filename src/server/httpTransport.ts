@@ -61,7 +61,14 @@ export interface HttpTransportOptions {
   fetchImpl?: typeof fetch;
 }
 
-/** The codes the engine is allowed to send, for validation on receipt. */
+/**
+ * The codes the engine is allowed to send, for validation on receipt.
+ *
+ * Mirrors `contract/PROTOCOL.md` §9. Codes outside this list are deliberately
+ * normalised to `engine_error` — an unrecognised code must not be treated as a
+ * client bug — but a known code must keep its identity so the UI can tell a 403
+ * from a 500.
+ */
 const ERROR_CODES: ProtocolErrorCode[] = [
   'unknown_dataset',
   'unsupported_aggregation',
@@ -72,6 +79,11 @@ const ERROR_CODES: ProtocolErrorCode[] = [
   'invalid_argument',
   'engine_error',
   'version_mismatch',
+  'forbidden',
+  'unknown_member',
+  'consolidated_write',
+  'save_failed',
+  'method_not_allowed',
 ];
 
 /** Normalises a base URL: strips trailing slashes so joins are predictable. */

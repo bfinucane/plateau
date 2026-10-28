@@ -74,7 +74,17 @@ export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
    */
   const loadDiscovery = async (engineUrl: string, primary: string) => {
     try {
-      setCubes(await fetchCubes(engineUrl));
+      const engineCubes = await fetchCubes(engineUrl);
+      /*
+       * Contract v1 §10.3: `#`-prefixed cubes are engine metadata
+       * (`#Cubes`, `#Members`, …). They are deliberately listed by
+       * `/v1/datasets`, but registering one as a dataset would put engine
+       * internals in the data pane. Hide them from the picker; the registration
+       * route refuses them too, because that route is reachable directly.
+       */
+      setCubes(
+        engineCubes.filter((cube) => !cube.isSystem && !cube.name.startsWith('#')),
+      );
     } catch {
       // An engine without the endpoint is fine; the field stays free text.
     }

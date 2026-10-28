@@ -259,6 +259,38 @@ async function main(): Promise<void> {
     server.close();
   }
 
+  /*
+   * Contract v1 §9 defines thirteen codes. Plateau does not call the write/login
+   * routes that emit the later five, but an engine can still return them; if the
+   * client's receipt list is stale they silently become `engine_error`, which
+   * makes a permission problem look like an engine fault.
+   */
+  {
+    const contractCodes: { code: string; status: number }[] = [
+      { code: 'forbidden', status: 403 },
+      { code: 'unknown_member', status: 400 },
+      { code: 'consolidated_write', status: 400 },
+      { code: 'save_failed', status: 500 },
+      { code: 'method_not_allowed', status: 405 },
+    ];
+    for (const { code, status } of contractCodes) {
+      const { server, port } = await startStub(() => ({
+        status,
+        body: { error: `refused: ${code}`, code },
+      }));
+      const transport = new HttpEngineTransport({ baseUrl: `http://127.0.0.1:${port}` });
+      let caught: ProtocolError | null = null;
+      try {
+        await transport.describe('sales');
+      } catch (error) {
+        caught = error as ProtocolError;
+      }
+      check(`the contract v1 code "${code}" is preserved`,
+        caught?.code === code, caught?.code);
+      server.close();
+    }
+  }
+
   {
     // An unparseable error body must not lose the status code.
     const { server, port } = await startStub(() => ({ status: 500, body: { oops: true } }));

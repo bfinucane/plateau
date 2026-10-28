@@ -360,6 +360,77 @@ async function main(): Promise<void> {
     server.close();
   }
 
+  /*
+   * Contract v1 §11.1: `groupBy[].datePart` is REFUSED by the engine and the
+   * contract tells clients MUST NOT send it. Plateau must therefore compute the
+   * truncation client-side — the same materialise-then-local-execute fallback as
+   * LOD — rather than forwarding the field and turning every monthly chart into a
+   * 400, or silently degrading to raw dates.
+   */
+  section('datePart is computed client-side, never sent (§11.1)');
+
+  {
+    const requests: string[] = [];
+    const dateCatalog = {
+      dataset: 'sales',
+      rowCount: 4,
+      columns: [
+        { name: 'Order Date', dataType: 'date', logicalType: 'date', suggestedKind: 'dimension' },
+        { name: 'Sales', dataType: 'number', logicalType: 'real', suggestedKind: 'measure' },
+      ],
+    };
+    const { server, port } = await startStub((url) => {
+      requests.push(url);
+      if (url === '/v1/capabilities') return { body: capabilities };
+      if (url === '/v1/sales') return { body: dateCatalog };
+      if (url.startsWith('/v1/sales/sample')) {
+        return {
+          body: {
+            columns: ['Order Date', 'Sales'],
+            rows: [
+              ['2024-01-05', 10],
+              ['2024-01-20', 20],
+              ['2024-02-02', 30],
+              ['2024-03-15', 40],
+            ],
+            rowCount: 4,
+          },
+        };
+      }
+      return { status: 404, body: { error: 'not found', code: 'unknown_dataset' } };
+    });
+
+    const transport = new HttpEngineTransport({ baseUrl: `http://127.0.0.1:${port}` });
+    const dataset = await createRemoteDataset({
+      name: 'Remote Dates',
+      dataset: 'sales',
+      transport,
+    });
+
+    const result = await dataset.backend.query({
+      fields: [
+        { name: 'Order Date', kind: 'dimension', datePart: 'month' },
+        { name: 'Sales', kind: 'measure', aggregation: 'SUM' },
+      ],
+    });
+
+    check('the query succeeds through the local fallback', result.table.rowCount === 3,
+      String(result.table.rowCount));
+    check('the dates are bucketed to the month',
+      result.table.columns[0].every((value) => value instanceof Date) &&
+        (result.table.columns[0][0] as Date).toISOString().slice(0, 10) === '2024-01-01',
+      JSON.stringify(result.table.columns[0]));
+    check('the aggregation respects the buckets',
+      JSON.stringify(result.table.columns[1].map((value) => Number(value))) ===
+        JSON.stringify([30, 30, 40]),
+      JSON.stringify(result.table.columns[1]));
+    check('no query with datePart reaches the engine',
+      requests.every((url) => !url.includes('/query')),
+      JSON.stringify(requests));
+
+    server.close();
+  }
+
   console.log(`\n${passed} passed, ${failed} failed\n`);
   if (failed > 0) process.exitCode = 1;
 }

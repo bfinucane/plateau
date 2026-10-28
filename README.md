@@ -333,7 +333,7 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 775 unit checks, 23 suites
+npm test         # 792 unit checks, 23 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
@@ -371,7 +371,7 @@ node e2e/verify-viz.mjs        # 40 checks: scatter axes, trend-line fit, heat m
 node e2e/verify-sort.mjs       # 15 checks: Sort control reaches the engine; axis orientation
 node e2e/verify-treemap.mjs    # 16 checks: treemap hierarchy, tooltip paths, Detail guard
 node e2e/verify-dashboard.mjs  # 29 checks: panels, independent queries, resize, swap, persistence
-node e2e/verify-connect.mjs    # 80 checks: connect dialog, capability gating, pushed-down fields, null cells, filter scopes
+node e2e/verify-connect.mjs    # 84 checks: connect dialog, capability gating, pushed-down fields, null cells, filter scopes, system cubes
 node e2e/verify-tablecalc.mjs  # 14 checks: table calculations in the real UI
 node e2e/verify-split.mjs      # 16 checks: split panes
 node e2e/verify-measuresplit.mjs # 26 checks: one pane per measure
@@ -394,22 +394,22 @@ writes nothing. If the engine requires authentication it checks the 401 first, t
 skips the protected checks unless `PLATEAU_ENGINE_USER` and `PLATEAU_ENGINE_PASSWORD`
 are set — a skip is reported, never counted as a pass.
 
-Total: **1318 checks** — 775 unit, 543 browser, plus 27 real-engine wire checks.
+Total: **1339 checks** — 792 unit, 547 browser, plus 33 real-engine wire checks.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
 | engine | 77 | expressions, CSV, type inference, query execution, calculated fields |
 | LOD | 45 | `FIXED`/`INCLUDE`/`EXCLUDE` parsing and filter ordering |
 | protocol | 56 | **local/remote parity**, wire shapes, LOD fallback, capability negotiation |
-| http transport | 35 | request encoding, error mapping, timeouts, doc/code consistency |
-| remote dataset | 38 | registration, failure modes, queries, pushed-down calculated fields |
+| http transport | 40 | request encoding, error mapping (all contract v1 codes), timeouts, doc/code consistency |
+| remote dataset | 42 | registration, failure modes, queries, pushed-down calculated fields, client-side date bucketing |
 | query validation | 17 | unknown field names are refused, local and remote |
-| capability gating | 43 | filter operators, per-scope reports, row caps, formula vocabulary |
+| capability gating | 47 | filter operators, per-scope reports (measure scope closed under contract v1), row caps, formula vocabulary |
 | table calculations | 51 | partitions, addressing, null handling |
 | workbook backup | 14 | rotation, restore, corruption |
 | split | 35 | partitioning, ordering, refusals |
 | axis selection | 34 | dimensions beat measures; nesting to any depth |
-| capability menus | 29 | aggregations, filter operators and per-scope lists, never lying about the current value |
+| capability menus | 33 | aggregations, filter operators and per-scope lists, never lying about the current value |
 | workbook file | 73 | round trip, hand-authored files, refusals, repairs, calculation drafts, reference lines, sets, forecasts |
 | calculation drafts | 23 | identity, dataset binding, missing-on-server planning |
 | reference lines | 11 | value axis, horizontal orientation, marks without a value axis |
@@ -731,12 +731,16 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   trend projection, not a statistical model — the engine is not asked to forecast.
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1318 checks green (775 unit, 543 browser)
+- 1339 checks green (792 unit, 547 browser)
 
 ### Connecting to an engine
 
-`RemoteBackend` needs a transport. `HttpEngineTransport` speaks the wire format in
-[`docs/ENGINE-PROTOCOL.md`](docs/ENGINE-PROTOCOL.md) over HTTP/JSON:
+`RemoteBackend` needs a transport. `HttpEngineTransport` speaks the wire format
+pinned in [`docs/ENGINE-PROTOCOL.md`](docs/ENGINE-PROTOCOL.md) over HTTP/JSON. That
+document is a **pinned mirror of suite contract v1**; the normative text is
+[`contract/PROTOCOL.md`](../contract/PROTOCOL.md), owned by the contract-owner
+session. A disagreement between the mirror and the contract is a contract bug, not a
+local decision.
 
 ```ts
 const transport = new HttpEngineTransport({
@@ -915,6 +919,35 @@ workbook owns it — so the store chooses a strategy per backend:
   because the engine's catalog cannot know about a field the client defined. The
   engine evaluates the AST; the client validates it against `capabilities` and does
   not evaluate it a second time.
+
+---
+
+## Contract conformance
+
+Plateau implements **suite contract v1** (`protocolVersion 1`), pinned 2026-10-28 and
+verified against `Patricia/olap_engine` commit **`d6b02e0`**:
+
+- **T0 Transport & discovery** — public `GET /v1/capabilities`, `protocolVersion`,
+  `authRequired`, feature detection before offering features; system cubes are
+  identified via `describe.isSystem` and hidden from the dataset picker.
+- **T1 Read** — `GET /v1/datasets`, describe, sample, query with dimension filters,
+  `domainFor`, `orderBy`, the row cap, documented status codes and the null/absent
+  rules. **Contract-v1 open-break obligations:** `datePart` is never sent — Plateau
+  computes date truncation client-side (§11.1); measure-scope filters are treated as
+  unsupported unless the capability report carries an explicit `measure` list (§11.3).
+- **T2 Auth** — login, bearer token held server-side (the preferred shape under
+  DECISIONS D1), one 401 → session dropped → re-sign-in prompt, no retry storm.
+- **T3 SQL tooling** — not adopted (optional tier; Plateau is not a SQL console).
+- **T4 Writeback** — **not adopted.** Plateau is a read-only analytics client in v1;
+  `capabilities.supportsWrite` is typed but deliberately not consumed. This is a
+  declared boundary, not an accident: the authoring/write path remains a design
+  question for the modelling work.
+
+Evidence: `npm test` (all unit suites), `npm run verify:engine` (read-only wire
+checks against a live engine, auth-aware), and `node e2e/verify-auth.mjs` (browser
+auth flow). The adoption ledger and handoffs live under [`contract/`](../contract/);
+[`contract/STATUS.md`](../contract/STATUS.md) records the tier and evidence, and the
+handoff is [`contract/handoffs/001-plateau-contract-v1.md`](../contract/handoffs/001-plateau-contract-v1.md).
 
 ---
 

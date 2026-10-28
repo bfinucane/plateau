@@ -172,6 +172,20 @@ const engine = createServer((req, res) => {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     if (url === '/v1/capabilities') return res.end(JSON.stringify(capabilities()));
+    // Contract v1 §10.3: the catalogue includes system cubes, flagged in describe.
+    if (url === '/v1/datasets') return res.end(JSON.stringify({ datasets: ['#Cubes', 'Sales'] }));
+    if (url === '/v1/%23Cubes' || url === '/v1/#Cubes') {
+      return res.end(
+        JSON.stringify({
+          dataset: '#Cubes',
+          rowCount: 0,
+          columns: [],
+          measureDimension: null,
+          isAttributeTable: false,
+          isSystem: true,
+        }),
+      );
+    }
     if (url.includes('/query')) {
       stubQueryCount++;
       lastQueryBody = body;
@@ -887,6 +901,37 @@ try {
   await clickButton('Cancel');
   await sleep(600);
   check('Cancel closes without connecting', !(await dialogOpen()));
+
+  // ------------------------- system cubes are hidden and cannot be registered
+  console.log('\nSystem cubes are identified, not offered as datasets');
+
+  {
+    const engineUrl = `http://127.0.0.1:${ENGINE_PORT}`;
+    const cubesResponse = await fetch(
+      `${APP_URL}api/engine/cubes?url=${encodeURIComponent(engineUrl)}`,
+    );
+    const cubesBody = await cubesResponse.json();
+    const cubes = cubesBody.cubes ?? [];
+    const systemCube = cubes.find((cube) => cube.name === '#Cubes');
+    const userCube = cubes.find((cube) => cube.name === 'Sales');
+    check('the engine catalogue is carried through', Boolean(userCube),
+      JSON.stringify(cubes.map((cube) => cube.name)));
+    check('a system cube is flagged from describe.isSystem',
+      systemCube?.isSystem === true, JSON.stringify(systemCube));
+    check('an ordinary cube is not flagged', userCube?.isSystem === false,
+      JSON.stringify(userCube));
+
+    const register = await fetch(`${APP_URL}api/datasets/remote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: engineUrl, dataset: '#Cubes' }),
+    });
+    const registerBody = await register.json();
+    check('registering a system cube is refused as invalid', register.status === 400 &&
+      registerBody.code === 'invalid_argument' &&
+      /System cubes/.test(registerBody.error ?? ''),
+    `${register.status} ${registerBody.code}: ${registerBody.error ?? ''}`);
+  }
 
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 2).join(' | '));
 

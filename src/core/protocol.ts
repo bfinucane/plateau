@@ -71,6 +71,15 @@ export interface CatalogResponse {
   measureDimension?: string | null;
   /** True when this cube is an attribute source rather than a measure cube. */
   isAttributeTable?: boolean;
+  /**
+   * Engine-maintained metadata cube (`#` prefix), per contract v1 §10.3.
+   *
+   * Such cubes are listable and queryable, but they are not user data: Plateau
+   * hides them from the dataset picker and refuses to register one as an
+   * ordinary dataset. Optional because an older engine predates the field; an
+   * absent value must be read as `false`.
+   */
+  isSystem?: boolean;
 }
 
 /**
@@ -174,6 +183,14 @@ export interface Capabilities {
    * computed over half a dataset returns plausible numbers that are not the answer.
    */
   maxRows?: number;
+  /**
+   * Whether the engine can write cells and save the catalogue (contract v1 §7/§8).
+   *
+   * Reported by v1 engines, deliberately NOT read by Plateau: Plateau is a
+   * read-only analytics client and does not claim Tier T4 (see the tier statement
+   * in README.md). A future authoring feature must feature-detect this first.
+   */
+  supportsWrite?: boolean;
 }
 
 // ------------------------------------------------------------------ query ---
@@ -181,8 +198,9 @@ export interface Capabilities {
 /**
  * A reference to a field used for grouping.
  *
- * `datePart` mirrors Tableau's date truncation. A storage engine may or may not
- * have native support; that is its business.
+ * `datePart` mirrors Tableau's date truncation. Contract v1 open break §11.1:
+ * engines refuse a non-empty `datePart`, so a remote client must NOT send it —
+ * Plateau computes the truncation client-side instead (see `RemoteBackend.query`).
  */
 export interface DimensionRef {
   name: string;
@@ -313,6 +331,17 @@ export interface SampleResponse {
  * distinguishable from engine faults: the first is a UI bug, the second is a
  * retry or a report.
  */
+/**
+ * The error `code` values contract v1 defines.
+ *
+ * Keep this list in step with `contract/PROTOCOL.md` §9: a code the client does
+ * not recognise collapses to `engine_error`, which loses the distinction between a
+ * client mistake (4xx) and an engine fault. `forbidden`, `unknown_member`,
+ * `consolidated_write`, `save_failed` and `method_not_allowed` are emitted by the
+ * engine's writeback/login routes; Plateau does not call those routes (Tier T4 is
+ * not adopted), but it must still surface the codes honestly rather than
+ * misfiling them as engine faults.
+ */
 export type ProtocolErrorCode =
   | 'unknown_dataset'
   | 'unsupported_aggregation'
@@ -322,7 +351,12 @@ export type ProtocolErrorCode =
   | 'unauthorized'
   | 'invalid_argument'
   | 'engine_error'
-  | 'version_mismatch';
+  | 'version_mismatch'
+  | 'forbidden'
+  | 'unknown_member'
+  | 'consolidated_write'
+  | 'save_failed'
+  | 'method_not_allowed';
 
 export class ProtocolError extends Error {
   code: ProtocolErrorCode;

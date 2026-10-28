@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, twenty session commits on top of `0e252ab`. Every number
+Written on branch `main`, twenty-one session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,13 +13,14 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 42 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
-| Source | 71 files in `src/`, ~29,700 lines |
-| Unit tests | **775 checks**, 23 suites, all passing |
-| Browser tests | **543 checks**, 16 harnesses, all passing |
-| Engine wire | `scripts/verify-engine.mjs`: **27 checks** against the live engine |
+| Commits | 43 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Source | 71 files in `src/`, ~29,800 lines |
+| Unit tests | **792 checks**, 23 suites, all passing |
+| Browser tests | **547 checks**, 16 harnesses, all passing |
+| Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
+| Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
 | Screenshots | 58, in `docs/screenshots/` |
-| Bundle | `index-CN5F12Rd.js` (app, 156 kB) + `echarts`/`react` vendor chunks |
+| Bundle | `index-BBVahtmX.js` (app, 156 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -77,9 +78,14 @@ renderer. `store.ts` validates every query's field names against
 `backend.schema()` — the same schema the data pane lists — so a field the user can
 see is the only kind a query may name.
 
-**The wire contract is normative** in `docs/ENGINE-PROTOCOL.md`, and
-`src/server/__tests__/protocol.test.ts` guards it against drifting from the code.
-Change one, change the other.
+**The wire contract is a pinned mirror**, not the source. `docs/ENGINE-PROTOCOL.md`
+mirrors **suite contract v1** (pinned 2026-10-28, verified against engine commit
+`d6b02e0`); the normative text is `contract/PROTOCOL.md`, owned by the contract-owner
+session, and a disagreement is a contract bug to report rather than a local ruling.
+`src/server/__tests__/protocol.test.ts` guards the shapes against drift from the code.
+Change one, change the other. Plateau's conformance is **Tier T2 (T0+T1+T2); T4
+writeback is not adopted** — see the Contract conformance section in README.md and the
+adoption notes in §8.13.
 
 ---
 
@@ -271,9 +277,9 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Twenty commits on top of `0e252ab` — twelve features, a wire follow-up, a maintenance
-pass, two design decisions and two notes on verification hygiene. The commit messages
-have the detail; the shape:
+Twenty-one commits on top of `0e252ab` — twelve features, a wire follow-up, a
+maintenance pass, a contract-v1 adoption, two design decisions and two notes on
+verification hygiene. The commit messages have the detail; the shape:
 
 | Was | Now |
 |---|---|
@@ -303,25 +309,26 @@ have the detail; the shape:
 | A measure could not be grouped into ranges, so histograms had to be their own mark and there was no way to build a distribution over any view | Create bins: a wizard that writes an ordinary row-level calculated DIMENSION (`FLOOR([Sales] / 1000) * 1000`), shows that formula and its range up front, and is offered only on local datasets because row access is required |
 | A dimension's members could not be saved as a reusable subset, and similar members could not be combined into one value | Sets: named member selections stored in the workbook and applied as ordinary dimension filters (works on remote data, and filters follow the set when it is edited). Groups: selected members combined into a derived dimension, created as a row-level calculated field (local-only) with the IF formula shown before creating it |
 | A time series could only show what had already happened, with no projection beyond the last period | Forecast: a linear trend fitted client-side to the displayed values, drawn as a dashed series beyond the last period with future labels stepped by the axis's own date part. Only on single-series temporal line/area views — and the UI says the engine is not forecasting |
-| An audit found dead declarations, a Vite React plugin imported but never installed, a single 1.4 MB JS bundle, two unused dev dependencies, and no check of the real engine's wire behaviour | Maintenance pass: fixed the unused code and plugin, split React/ECharts/application chunks (app is 156 kB), removed the unused dependencies and updated the lockfile, and added `scripts/verify-engine.mjs` (27 read-only checks against a live engine) |
+| An audit found dead declarations, a Vite React plugin imported but never installed, a single 1.4 MB JS bundle, two unused dev dependencies, and no check of the real engine's wire behaviour | Maintenance pass: fixed the unused code and plugin, split React/ECharts/application chunks (app is 156 kB), removed the unused dependencies and updated the lockfile, and added `scripts/verify-engine.mjs` (33 read-only checks against a live engine) |
+| The suite contract moved to `contract/` and a static audit found Plateau compliant at T2 but with five client-side gaps: no contract pin, `#` system cubes offered as datasets, five error codes misfiled, measure-scope filters inferred from the global list, and `datePart` forwarded to an engine that refuses it | Contract-v1 adoption (handoff 001, §8.13): mirror re-pinned to the contract, `isSystem` carried and enforced, the full error-code set accepted, measure scope closed unless explicitly reported, date bucketing computed client-side, and T2/T4 declared with evidence |
 
-New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (29),
-`capabilityGating.test.ts` (43), `workbookFile.test.ts` (73),
+New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (33),
+`capabilityGating.test.ts` (47), `workbookFile.test.ts` (73),
 `calculationDrafts.test.ts` (23), `referenceLines.test.ts` (11),
 `bins.test.ts` (30), `setsGroups.test.ts` (27), `forecast.test.ts` (30),
 `nullCells.test.ts` (22), `markInference.test.ts` (7), `axisNesting.test.ts` (20) and
 `engineAuth.test.ts` (30). `verify-ui` grew from 25 to 43 checks, `verify-marks` from
-18 to 29, `verify-viz` from 27 to 40, `verify-connect` from 26 to 80, and
-`verify-auth.mjs` is new (45 checks, with two stub engines: one requiring auth and one
-anonymous). `verify-workbook.mjs` (97 checks, own server and data directory; restarts
-the server to prove calculation drafts are re-registered, and creates bins, a set and a
-group through their dialogs) and `verify-test-set.mjs` (28 checks, data-driven from the
-workbook file) are new. Screenshots added: `51-three-dimensions.png`,
-`52-connect-calculated.png`, `53`–`60` for the workbook, test-set and tab-strip work,
-`61-null-cells.png`, `62-engine-auth.png`, `63-reference-lines.png`, `64-bins.png`,
-`65-sets-groups.png` and `66-forecast.png`.
+18 to 29, `verify-viz` from 27 to 40, `verify-connect` from 26 to 84 (system cubes
+included), and `verify-auth.mjs` is new (45 checks, with two stub engines: one requiring
+auth and one anonymous). `verify-workbook.mjs` (97 checks, own server and data
+directory; restarts the server to prove calculation drafts are re-registered, and
+creates bins, a set and a group through their dialogs) and `verify-test-set.mjs`
+(28 checks, data-driven from the workbook file) are new. Screenshots added:
+`51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`60` for the workbook,
+test-set and tab-strip work, `61-null-cells.png`, `62-engine-auth.png`,
+`63-reference-lines.png`, `64-bins.png`, `65-sets-groups.png` and `66-forecast.png`.
 
-The maintenance pass added `scripts/verify-engine.mjs` (27 checks, read-only): public
+The maintenance pass added `scripts/verify-engine.mjs` (33 checks, read-only): public
 capabilities, dataset discovery, describe, grouped SUM, a dimension filter, the row
 limit, unknown-cube/unknown-field refusals, an expression AST, and division by zero as
 `null`. It skips protected checks (rather than failing) when the engine requires auth and
@@ -615,22 +622,79 @@ Run after the analytics work, with no feature changes. What was found and fixed:
   all (see ENVIRONMENT.md); `esbuild` remains as Vite's transitive dependency, and
   `allowBuilds` stays required. A fresh install will no longer hoist the stale copies.
 - **Nothing checked the real engine's wire.** `scripts/verify-engine.mjs` is new:
-  read-only, 27 checks (capabilities, discovery, describe, grouped SUM, dimension
+  read-only, 33 checks (capabilities, discovery, describe, grouped SUM, dimension
   filter, limit, unknown cube/field refusals, engine-evaluated expression, division by
   zero as `null`). It skips protected checks without credentials rather than failing,
   and distinguishes "engine unreachable" (exit 2) from a wire failure (exit 1). Run
-  against the live engine at 8080 (anonymous): **27 passed, 0 failed, 0 skipped**. It
-  also confirmed the engine's catalog still calls the column hint `suggestedKind`; the
-  script accepts both that and the response `kind`.
+  against a transient seeded auth-enabled engine at d6b02e0: **33 passed, 0 failed,
+  0 skipped**. It also confirmed the engine's catalog still calls the column hint
+  `suggestedKind`; the script accepts both that and the response `kind`.
 - **Docs hygiene.** All local links in README/HANDOVER/ENVIRONMENT/ENGINE-PROTOCOL
   resolve (30 checked, one stale `17-map-fallback.png` reference removed along with the
   paragraph describing a Map mark that is deliberately absent). No TODO/FIXME markers
   remain in source, tests or scripts.
 
 Left deliberately: no CI (harnesses need Chrome and the wider sandbox), the ECharts
-chunk is not lazy, and the auth-protected branch of the engine smoke test has not been
-run against a real auth-enabled engine (no credentials in this session; the unit suite
-covers the client side with stubs).
+chunk is not lazy, and the auth-ready engine used for evidence is a throwaway process
+seeded from the engine tree's `seed.sql` on this machine, so the run is reproducible but
+not a recorded CI job.
+
+### 8.13 Suite contract v1 adoption (handoff 001)
+The suite contract moved to `contract/` (contract-owner session) and the owner's static
+audit of Plateau at HEAD `02e84d8` found it conformant at **T2** with seven gaps. The
+addressed handoff is `contract/handoffs/001-plateau-contract-v1.md`; all seven actions
+are now implemented:
+
+1. **Contract pin.** `docs/ENGINE-PROTOCOL.md` is declared a **pinned mirror of suite
+   contract v1** (not the source), pinned 2026-10-28 and verified against engine commit
+   `d6b02e0`; the normative text is `contract/PROTOCOL.md` and a disagreement is a
+   contract bug. README and §3 above point at the contract, not just the mirror.
+2. **System cubes.** `CatalogResponse.isSystem` is typed and carried; the probe flags
+   `#` cubes, the Connect picker hides them, join discovery skips them, and
+   `POST /api/datasets/remote` refuses one with `400 invalid_argument` (the route is
+   reachable directly). `verify-connect` pins the flag and the refusal.
+3. **Error codes.** All thirteen contract v1 codes are accepted; `forbidden`,
+   `unknown_member`, `consolidated_write`, `save_failed` and `method_not_allowed` no
+   longer collapse to `engine_error`. `httpTransport` tests each one over the wire.
+4. **Measure-scope filters (§11.3 / D4).** Measure scope is closed unless the report
+   carries an explicit `measure` list — in the dialogs and in server-side validation
+   (`unsupported_filter` before the wire). The global list is no longer inherited for
+   measure scope, which is what produced a Top/Bottom control that always 400'd.
+5. **`datePart` (§11.1).** Never forwarded: a remote query with a date part is served
+   by materialising the rows and truncating them with the local engine, the same
+   fallback shape as LOD (bounded by `maxRows`, refused as `row_limit` when truncated).
+   The `remoteDataset` suite asserts the engine receives no `/query` for such a view and
+   that the aggregation respects the buckets.
+6. **T4 declared, not implemented.** Plateau is a read-only analytics client in v1:
+   `capabilities.supportsWrite` is typed for mirror completeness but deliberately not
+   consumed. This is recorded in README ("Contract conformance"), the mirror, and the
+   handoff — a declared tier, not an accident.
+7. **Tier declared.** **T0–T2 achieved; T3 optional not adopted; T4 not adopted**, with
+   evidence in README and the `contract/STATUS.md` ledger row.
+
+Verification for the claim:
+
+- `npm test`: **792 checks in 23 suites**, exit 0.
+- `npm run typecheck`: exit 0.
+- `npm run verify:engine` against a throwaway engine built from engine HEAD
+  `d6b02e0` with authentication ON (a temporary user created out-of-band, private port,
+  scratch database seeded from the engine's own `seed.sql`, process killed afterwards):
+  **33 passed, 0 failed, 0 skipped** — including the 401-without-token check, login, and
+  the protected read/query checks against the seeded `Sales` cube. The engine-side
+  conformance checker remains the owner's evidence for the server.
+- Browser suite: **547 checks in 16 harnesses**, including `verify-auth` (45) and
+  `verify-connect` (84, now covering system cubes) and `verify-join` (38) against a
+  transient seeded engine.
+
+Known residuals (reported, not hidden): §11.4 (`value` + measure-dimension axis) is not
+sent by Plateau — the request builder never emits that combination, and the client has
+no path that puts a measure dimension on an axis; §11.7 (COUNT over text) remains an
+engine quirk, and Plateau's local inference keeps text columns out of measures; §11.8
+(grouped-no-measures duplication) surfaces only for a remote dimension-only query, and
+Plateau's picker/filter values come from `domainFor`, not those rows. The engine smoke
+test learns the cube's shape from `describe` and uses `value`, so it exercises
+measure-less cubes directly; measure cubes are exercised through `verify-join`'s
+attribute path.
 
 ---
 
@@ -712,19 +776,19 @@ covers the client side with stubs).
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 775 unit checks
+node scripts/test.mjs                                   # 792 unit checks
 node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
-node scripts/verify-engine.mjs http://127.0.0.1:8080     # 27 wire checks against a live engine
+node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
 ```
 
-Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 35, `remoteDataset` 38,
-`queryValidation` 17, `capabilityGating` 43, `tableCalcs` 51, `workbookBackup` 14,
-`split` 35, `axisSelection` 34, `aggregationMenu` 29, `workbookFile` 73,
+Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 40, `remoteDataset` 42,
+`queryValidation` 17, `capabilityGating` 47, `tableCalcs` 51, `workbookBackup` 14,
+`split` 35, `axisSelection` 34, `aggregationMenu` 33, `workbookFile` 73,
 `calculationDrafts` 23, `referenceLines` 11, `bins` 30, `setsGroups` 27, `forecast` 30,
 `nullCells` 22, `markInference` 7, `axisNesting` 20, `engineAuth` 30, `join` 28.
 
 Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 29, `verify-viz`
-40, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 80,
+40, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 84,
 `verify-tablecalc` 14, `verify-split` 16, `verify-measuresplit` 26, `verify-retry` 13,
 `verify-workbook` 97, `verify-test-set` 28, `verify-auth` 45, `verify-join` 38 (needs
 the engine). Each prints `N passed, M failed` and exits non-zero on failure.
@@ -739,7 +803,7 @@ is worth showing.
 
 ## 11. Provenance
 
-42 commits, `55482d0` … HEAD. The last twenty are this session; the 14 before them
+43 commits, `55482d0` … HEAD. The last twenty-one are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

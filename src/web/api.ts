@@ -374,6 +374,11 @@ export interface EngineCube {
   rowCount: number | null;
   columnCount: number | null;
   isAttributeTable: boolean;
+  /**
+   * Engine-maintained metadata cube (`#` prefix, contract v1 §10.3). The picker
+   * hides these: they are listable and queryable, but not chartable user data.
+   */
+  isSystem?: boolean;
 }
 
 /** Cubes an engine holds. Empty when the engine predates the endpoint. */

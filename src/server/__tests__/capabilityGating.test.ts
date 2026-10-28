@@ -332,6 +332,45 @@ async function main(): Promise<void> {
     server.close();
   }
 
+  /*
+   * Contract v1 §11.3 / D4: `filterOperators` is a GLOBAL, dimension-scope report.
+   * The engine reports no `filterOperatorsByScope` and refuses every measure-scope
+   * filter, so inheriting the global list for measure scope turned a validation
+   * pass into a guaranteed 400 — the exact client obligation the handoff names.
+   */
+  section('Measure scope is closed when the report has only a global list (§11.3)');
+
+  {
+    const globalOnly = capabilities({ filterOperators: ['in', 'equals', 'notEquals'] });
+    const requests: RecordedRequest[] = [];
+    const { dataset, server } = await remoteDataset(globalOnly, requests);
+    const before = queryRequests(requests).length;
+
+    const measureError = await rejected(() =>
+      queryDataset(dataset, {
+        fields: [{ name: 'Region', kind: 'dimension' }],
+        filters: [{ id: 'f1', field: 'Region', scope: 'measure', operator: 'in', values: ['East'] }],
+      }),
+    );
+    check('a measure filter is refused even though the global list names the operator',
+      measureError instanceof ProtocolError && measureError.code === 'unsupported_filter',
+      `${(measureError as ProtocolError)?.code}: ${measureError?.message}`);
+    check('the refusal explains the measure scope',
+      /measure scope/.test(measureError?.message ?? ''), measureError?.message);
+    check('nothing was sent to the engine', queryRequests(requests).length === before,
+      `${queryRequests(requests).length - before} queries`);
+
+    const dimensionAllowed = await queryDataset(dataset, {
+      fields: [{ name: 'Region', kind: 'dimension' }],
+      filters: [{ id: 'f2', field: 'Region', scope: 'dimension', operator: 'in', values: ['East'] }],
+    });
+    check('dimension scope still uses the global list',
+      dimensionAllowed.table.rowCount === 3 &&
+        queryRequests(requests).length === before + 1,
+      `rows=${dimensionAllowed.table.rowCount}, queries=${queryRequests(requests).length - before}`);
+    server.close();
+  }
+
   // ----------------------------------------------------------- row caps ---
   section('The engine row cap is clamped, and a partial table is refused');
 

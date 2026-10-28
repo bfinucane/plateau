@@ -539,9 +539,22 @@ export function createServer() {
               rowCount: catalog.rowCount,
               columnCount: catalog.columns.length,
               isAttributeTable: Boolean(catalog.isAttributeTable),
+              /*
+               * Contract v1 §10.3: `#` cubes are engine metadata, listed by
+               * `/v1/datasets` deliberately. Carry the flag through so the picker
+               * can hide them; a `#` prefix is also accepted as a signal because an
+               * older engine omits `isSystem` entirely.
+               */
+              isSystem: Boolean(catalog.isSystem) || name.startsWith('#'),
             };
           } catch {
-            return { name, rowCount: null, columnCount: null, isAttributeTable: false };
+            return {
+              name,
+              rowCount: null,
+              columnCount: null,
+              isAttributeTable: false,
+              isSystem: name.startsWith('#'),
+            };
           }
         }),
       );
@@ -600,6 +613,8 @@ export function createServer() {
         } catch {
           continue;
         }
+        // Engine metadata is not joinable user content (§10.3).
+        if (catalog.isSystem || name.startsWith('#')) continue;
         if (!catalog.isAttributeTable || !catalog.measureDimension) continue;
 
         const shared = catalog.columns
@@ -666,6 +681,22 @@ export function createServer() {
           error: 'This engine requires a sign-in before a dataset can be registered.',
           code: 'unauthorized',
           authRequired: true,
+        });
+        return;
+      }
+
+      /*
+       * Contract v1 §10.3: system cubes (`#` prefix, `describe.isSystem`) are
+       * engine-maintained metadata. They are listable, but registering one as a
+       * chartable dataset would put `#Cubes`/`#Members` in the data pane. Refuse
+       * it here as well as the picker hiding it: the route is reachable directly.
+       */
+      const requestedCatalog = await transport.describe(dataset.trim());
+      if (requestedCatalog.isSystem === true || dataset.trim().startsWith('#')) {
+        res.status(400).json({
+          error:
+            'System cubes (#…) are engine metadata, not datasets: they cannot be registered as an ordinary data source.',
+          code: 'invalid_argument',
         });
         return;
       }

@@ -246,30 +246,49 @@ export function availableAggregations(
  * capabilities endpoint — and everything is offered, the same policy as
  * `availableAggregations`.
  */
+/**
+ * Whether a reported operator list allows an operator.
+ *
+ * `undefined` means "nothing was reported", so the client offers everything (the
+ * same conservative policy as aggregations). An EMPTY array is a report that the
+ * engine implements none: offering the control anyway only produces a failed
+ * query. This distinction is load-bearing for measure-scope filters under
+ * contract v1 (§11.3).
+ */
 export function supportsFilterOperator(
   supported: Filter['operator'][] | undefined,
   operator: Filter['operator'],
 ): boolean {
-  if (!supported || supported.length === 0) return true;
+  if (supported === undefined) return true;
   return supported.includes(operator);
 }
 
 /**
  * The operators a data source reports for one filter scope.
  *
- * `filterOperators` is global; `filterOperatorsByScope` refines it. A reported
- * per-scope list wins for that scope, an absent one falls back to the global list,
- * and nothing reported means "no gate" (every operator offered).
+ * `filterOperators` is global; `filterOperatorsByScope` refines it. Dimension
+ * scope keeps the documented fallback: an explicit per-scope list wins, otherwise
+ * the global list. Measure scope does NOT: contract v1 §11.3 keeps
+ * `filterOperators` global-only and refuses every measure-scope filter, so unless
+ * the report carries an explicit `measure` list — including an explicit empty
+ * one — measure filters are treated as unsupported. Inferring them from the
+ * global list is what let a Top/Bottom filter pass validation and then 400 at the
+ * engine.
  *
- * The two scopes are genuinely different operations — a dimension filter prunes
- * rows before grouping, a measure filter compares aggregated values after it — so
- * an engine can support one and not the other.
+ * `undefined` means "nothing reported" and disables gating (a local dataset, or an
+ * engine with no capabilities endpoint); `[]` means "reported none".
  */
 export function filterOperatorsForScope(
   global: Filter['operator'][] | undefined,
   byScope: Partial<Record<Filter['scope'], Filter['operator'][]>> | undefined,
   scope: Filter['scope'],
 ): Filter['operator'][] | undefined {
+  if (scope === 'measure') {
+    const scopedMeasure = byScope?.measure;
+    if (Array.isArray(scopedMeasure)) return scopedMeasure;
+    // No report at all → no gate; a global-only report → measure is closed.
+    return global === undefined && byScope === undefined ? undefined : [];
+  }
   const scoped = byScope?.[scope];
   if (Array.isArray(scoped) && scoped.length > 0) return scoped;
   return global;

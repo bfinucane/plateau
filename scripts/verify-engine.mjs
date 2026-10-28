@@ -204,13 +204,21 @@ async function main() {
     const response = await request(`/v1/${encodeURIComponent(name)}`);
     if (response.status !== 200) continue;
     const body = response.body;
-    if (dimOf(body) && measureOf(body)) {
+    /*
+     * A useful test cube has data. Some seeded cubes (CostCentre) exist to model a
+     * hierarchy and carry no cells; choosing one would make every query check fail
+     * for a reason that has nothing to do with the wire. A measure-less cube's
+     * numeric `value` cell or a measure cube's measure dimension both count as a
+     * numeric measure.
+     */
+    const numeric = body.columns.some((column) => column.dataType === 'number');
+    if (dimOf(body) && numeric && (body.rowCount ?? 0) > 0) {
       dataset = name;
       catalog = body;
       break;
     }
   }
-  check('a cube with a string dimension and a numeric measure is describable',
+  check('a non-empty cube with a string dimension and a numeric measure is describable',
     Boolean(dataset),
     `tried ${JSON.stringify(candidates.slice(0, 5))}`);
   if (!dataset) {
@@ -221,9 +229,19 @@ async function main() {
   console.log(`  dataset: ${dataset} (${catalog.rowCount?.toLocaleString?.() ?? '?'} rows)`);
 
   const dimension = dimOf(catalog);
-  const measure = measureOf(catalog);
+  const numericColumn = catalog.columns.find((column) => column.dataType === 'number');
+  /*
+   * Contract §5.3: `value` names the stored cell on a measure-less cube and expands
+   * to ALL measures on a cube with a measure dimension. That makes it the one
+   * generic name a smoke test can use without knowing the cube's measure members.
+   * An expression AST needs a real field reference, which exists for the
+   * measure-less `value` cell — so expression checks run only there.
+   */
+  const measureName = 'value';
+  const expressionField = catalog.measureDimension ? null : 'value';
   console.log(`  dimension: ${dimension.name} (${dimension.dataType})`);
-  console.log(`  measure: ${measure.name} (${measure.dataType})`);
+  console.log(`  measure: ${measureName} (via ${numericColumn?.name ?? '?'})`);
+  console.log(`  measureDimension: ${catalog.measureDimension ?? 'none'}`);
 
   check('the catalog carries a row count', typeof catalog.rowCount === 'number',
     JSON.stringify(catalog.rowCount));
@@ -240,16 +258,17 @@ async function main() {
   section('Query');
   const base = await query(dataset, {
     groupBy: [{ name: dimension.name }],
-    measures: [{ name: measure.name, aggregation: 'SUM' }],
+    measures: [{ name: measureName, aggregation: 'SUM' }],
   });
   check('a grouped SUM query succeeds', base.status === 200,
     `status ${base.status} ${JSON.stringify(base.body?.code ?? base.body?.error ?? '')}`);
   const rows = Array.isArray(base.body?.rows) ? base.body.rows : [];
   check('it returns at least one group', rows.length > 0, `${rows.length} row(s)`);
-  check('the header names the dimension and the aggregation',
+  check('the header names the dimension and at least one measure column',
     Array.isArray(base.body?.columns) &&
-      base.body.columns.includes(dimension.name) &&
-      base.body.columns.some((column) => String(column).includes(measure.name)),
+      (base.body.columns[0] === dimension.name ||
+        base.body.columns.includes(dimension.name)) &&
+      base.body.columns.length >= 2,
     JSON.stringify(base.body?.columns));
   check('every row has one cell per column',
     rows.every((row) => Array.isArray(row) && row.length === (base.body?.columns?.length ?? -1)),
@@ -266,10 +285,12 @@ async function main() {
   check('the dimension cell is present', firstMember !== null && firstMember !== undefined,
     JSON.stringify(firstMember));
 
-  if (capabilities.filterOperators.map((op) => String(op)).includes('in') && firstMember !== null) {
+  if (firstMember === null || firstMember === undefined) {
+    skip('dimension filter check', 'the query returned no dimension cell to filter on');
+  } else {
     const filtered = await query(dataset, {
       groupBy: [{ name: dimension.name }],
-      measures: [{ name: measure.name, aggregation: 'SUM' }],
+      measures: [{ name: measureName, aggregation: 'SUM' }],
       filters: [
         {
           field: dimension.name,
@@ -280,18 +301,16 @@ async function main() {
       ],
     });
     check('a dimension `in` filter is accepted', filtered.status === 200,
-      `status ${filtered.status}`);
+      `status ${filtered.status} ${JSON.stringify(filtered.body?.code ?? '')}`);
     check('the filter actually filters every returned group',
       (filtered.body?.rows ?? []).length > 0 &&
         (filtered.body?.rows ?? []).every((row) => row[dimensionIndex] === firstMember),
       JSON.stringify((filtered.body?.rows ?? []).slice(0, 3)));
-  } else {
-    skip('dimension filter check', 'the engine does not advertise the "in" operator');
   }
 
   const limited = await query(dataset, {
     groupBy: [{ name: dimension.name }],
-    measures: [{ name: measure.name, aggregation: 'SUM' }],
+    measures: [{ name: measureName, aggregation: 'SUM' }],
     limit: 2,
   });
   check('a limit of 2 is honoured', limited.status === 200 &&
@@ -313,39 +332,47 @@ async function main() {
   const sumExpression = {
     type: 'call',
     name: 'SUM',
-    args: [{ type: 'field', name: measure.name }],
+    args: [{ type: 'field', name: expressionField ?? 'value' }],
   };
-  const expressionQuery = await query(dataset, {
-    groupBy: [],
-    measures: [{ name: 'wire_sum', expr: sumExpression }],
-  });
-  const expressionSupported =
-    expressionQuery.status === 200 &&
-    (expressionQuery.body?.rows ?? []).length === 1 &&
-    typeof (expressionQuery.body?.rows ?? [])[0]?.[0] === 'number';
-  check('a measure expression AST is evaluated by the engine', expressionSupported,
-    `status ${expressionQuery.status} ${JSON.stringify(expressionQuery.body?.rows ?? expressionQuery.body ?? '')}`);
 
-  if (expressionSupported) {
-    const divided = await query(dataset, {
-      groupBy: [],
-      measures: [
-        {
-          name: 'wire_div_zero',
-          expr: {
-            type: 'binary',
-            op: '/',
-            left: sumExpression,
-            right: { type: 'number', value: 0 },
-          },
-        },
-      ],
-    });
-    check('division by zero is null, not zero or an error', divided.status === 200 &&
-      (divided.body?.rows ?? []).some((row) => row[0] === null),
-    `status ${divided.status} ${JSON.stringify(divided.body?.rows ?? divided.body?.code ?? '')}`);
+  if (!expressionField) {
+    skip(
+      'expression semantics',
+      'the chosen cube has a measure dimension, so a field reference needs its member names',
+    );
   } else {
-    skip('expression semantics', 'the engine did not evaluate a SUM expression');
+    const expressionQuery = await query(dataset, {
+      groupBy: [],
+      measures: [{ name: 'wire_sum', expr: sumExpression }],
+    });
+    const expressionSupported =
+      expressionQuery.status === 200 &&
+      (expressionQuery.body?.rows ?? []).length === 1 &&
+      typeof (expressionQuery.body?.rows ?? [])[0]?.[0] === 'number';
+    check('a measure expression AST is evaluated by the engine', expressionSupported,
+      `status ${expressionQuery.status} ${JSON.stringify(expressionQuery.body?.rows ?? expressionQuery.body ?? '')}`);
+
+    if (expressionSupported) {
+      const divided = await query(dataset, {
+        groupBy: [],
+        measures: [
+          {
+            name: 'wire_div_zero',
+            expr: {
+              type: 'binary',
+              op: '/',
+              left: sumExpression,
+              right: { type: 'number', value: 0 },
+            },
+          },
+        ],
+      });
+      check('division by zero is null, not zero or an error', divided.status === 200 &&
+        (divided.body?.rows ?? []).some((row) => row[0] === null),
+      `status ${divided.status} ${JSON.stringify(divided.body?.rows ?? divided.body?.code ?? '')}`);
+    } else {
+      skip('expression semantics', 'the engine did not evaluate a SUM expression');
+    }
   }
 
   console.log('\n' + summary());

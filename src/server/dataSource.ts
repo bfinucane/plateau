@@ -492,6 +492,27 @@ export class RemoteBackend implements DatasetBackend {
     }
 
     /*
+     * Temporal bucketing has the same shape of problem (contract v1 open break
+     * §11.1): the engine parses `datePart` and then refuses every non-empty value
+     * with `400 unsupported_expression`, and says so in the contract as a command
+     * to clients — "MUST NOT send" — because there is no capability to detect it.
+     *
+     * So the truncation is computed here instead, over the same materialised table
+     * the LOD fallback uses. That keeps month/quarter grouping WORKING rather than
+     * silently degrading to raw dates; the cost is a row materialisation, bounded
+     * by the engine's `maxRows` and refused as `row_limit` when truncated, exactly
+     * like the LOD path. When §11.1 closes, this fallback can be retried against
+     * the engine behind whatever capability that change introduces.
+     */
+    const needsDateBucketingLocally = spec.fields.some(
+      (field) => field.kind === 'dimension' && field.datePart !== undefined,
+    );
+    if (needsDateBucketingLocally) {
+      const table = await this.materializeTable();
+      return executeQuery(table, spec);
+    }
+
+    /*
      * Refuse a filter operator this engine does not implement, before it goes on
      * the wire.
      *
@@ -502,23 +523,35 @@ export class RemoteBackend implements DatasetBackend {
      *
      * Reports can be per SCOPE: dimension filters prune rows before grouping, while
      * measure filters compare aggregated values after it, and an engine may support
-     * one and not the other. A scope-specific list overrides the global one; an
-     * absent scope falls back to it.
+     * one and not the other. Contract v1 §11.3 keeps `filterOperators` GLOBAL-ONLY
+     * and refuses every measure-scope filter, so a scope that is absent from a
+     * present `filterOperatorsByScope` must NOT inherit the global list for
+     * measure scope: doing that turned client-side validation into a guaranteed
+     * 400. Measure scope is therefore closed unless the report names a measure
+     * list explicitly; dimension scope still falls back to the global list.
      *
-     * The LOD fallback above deliberately runs BEFORE this check: that path
-     * evaluates the filters with the local engine, whose capability list is not
-     * the remote one.
+     * The LOD and date-bucketing fallbacks above deliberately run BEFORE this
+     * check: those paths evaluate the filters with the local engine, whose
+     * capability list is not the remote one.
      */
     const operatorsForScope = (
       scope: 'dimension' | 'measure',
     ): Filter['operator'][] | null => {
-      const byScope = capabilities?.filterOperatorsByScope;
+      // Nothing was reported: do not invent a gate. (A local/absent-capability
+      // engine still gets the benefit of the doubt; the UI behaves the same way.)
+      if (!capabilities) return null;
+      const byScope = capabilities.filterOperatorsByScope;
       const scoped = byScope?.[scope];
-      if (Array.isArray(scoped) && scoped.length > 0) return scoped;
-      if (Array.isArray(capabilities?.filterOperators) && capabilities.filterOperators.length > 0) {
-        return capabilities.filterOperators;
+      if (scope === 'measure') {
+        // Explicit list — including explicit empty — is the report; otherwise
+        // measure scope is unsupported under contract v1 §11.3.
+        return Array.isArray(scoped) ? scoped : [];
       }
-      return null;
+      if (Array.isArray(scoped) && scoped.length > 0) return scoped;
+      // An ABSENT global list is "not reported" (do not gate, as previously);
+      // an empty one is a report that nothing is implemented.
+      if (!Array.isArray(capabilities.filterOperators)) return null;
+      return capabilities.filterOperators;
     };
 
     const unsupportedByScope = new Map<string, { field: string; operator: string }[]>();

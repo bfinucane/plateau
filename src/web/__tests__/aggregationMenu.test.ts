@@ -92,10 +92,14 @@ section('Nothing reported means every filter operator is offered');
 {
   check('an unreported engine offers "in"', supportsFilterOperator(undefined, 'in'));
   check('an unreported engine offers "top"', supportsFilterOperator(undefined, 'top'));
-  check('an empty report is treated as "unknown", not "nothing works"',
-    supportsFilterOperator([], 'between'));
-  check('every dialog mode is available', availableFilterModes(undefined).length === FILTER_MODES.length,
+  check('an EMPTY report means "none implemented", not "unknown"',
+    !supportsFilterOperator([], 'between'));
+  check('every dialog mode is available when nothing was reported',
+    availableFilterModes(undefined).length === FILTER_MODES.length,
     String(availableFilterModes(undefined).length));
+  check('an empty report offers no dialog modes',
+    availableFilterModes([]).length === 0,
+    JSON.stringify(availableFilterModes([]).map((entry) => entry.mode)));
 }
 
 section('A reported engine offers only the filter operators it implements');
@@ -141,17 +145,29 @@ section('A per-scope filter report refines the global list');
   check('the other scope uses its own list',
     JSON.stringify(filterOperatorsForScope(global, byScope, 'measure')) === JSON.stringify(['top']),
     JSON.stringify(filterOperatorsForScope(global, byScope, 'measure')));
-  check('an absent scope falls back to the global list',
-    JSON.stringify(filterOperatorsForScope(global, { dimension: ['in'] }, 'measure')) ===
-      JSON.stringify(global));
-  check('nothing reported at all means no gate',
-    filterOperatorsForScope(undefined, undefined, 'dimension') === undefined);
-  check('an empty scoped list is treated as unreported, like an empty global one',
-    JSON.stringify(filterOperatorsForScope(global, { dimension: [] }, 'dimension')) ===
-      JSON.stringify(global));
+  check('an absent DIMENSION scope falls back to the global list',
+    JSON.stringify(filterOperatorsForScope(global, { measure: [] }, 'dimension')) ===
+      JSON.stringify(global),
+    JSON.stringify(filterOperatorsForScope(global, { measure: [] }, 'dimension')));
 
-  // The dialog consequence: a measure-scope report of [] (via fallback) must not
-  // silently offer a measure filter the engine never claimed.
+  /*
+   * Contract v1 §11.3 / D4: the engine's filter report is global-only and every
+   * measure-scope filter is refused. A measure list must therefore NEVER be
+   * inferred from the global list, or the dialog offers a Top/Bottom control whose
+   * Apply is a guaranteed 400.
+   */
+  check('an absent MEASURE scope does NOT inherit the global list',
+    JSON.stringify(filterOperatorsForScope(global, undefined, 'measure')) === '[]',
+    JSON.stringify(filterOperatorsForScope(global, undefined, 'measure')));
+  check('a dimension-only per-scope report still closes measure scope',
+    JSON.stringify(filterOperatorsForScope(global, { dimension: ['in'] }, 'measure')) === '[]',
+    JSON.stringify(filterOperatorsForScope(global, { dimension: ['in'] }, 'measure')));
+  check('an explicit empty measure list is respected as "none"',
+    JSON.stringify(filterOperatorsForScope(global, { measure: [] }, 'measure')) === '[]');
+  check('nothing reported at all means no gate on either scope',
+    filterOperatorsForScope(undefined, undefined, 'dimension') === undefined &&
+      filterOperatorsForScope(undefined, undefined, 'measure') === undefined);
+
   const measureModes = availableFilterModes(filterOperatorsForScope(global, byScope, 'measure'));
   check('measure-scope modes follow the measure-scope list',
     measureModes.map((entry) => entry.mode).join(',') === 'top',
@@ -159,6 +175,12 @@ section('A per-scope filter report refines the global list');
   const dimensionModes = availableFilterModes(filterOperatorsForScope(global, byScope, 'dimension'));
   check('dimension-scope modes follow the dimension-scope list',
     dimensionModes.length === 0, JSON.stringify(dimensionModes.map((entry) => entry.mode)));
+
+  const globalOnlyModes = availableFilterModes(
+    filterOperatorsForScope(['in', 'between', 'top'], undefined, 'measure'),
+  );
+  check('a global-only report offers no measure-scope modes at all',
+    globalOnlyModes.length === 0, JSON.stringify(globalOnlyModes.map((entry) => entry.mode)));
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
