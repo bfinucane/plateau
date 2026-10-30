@@ -1976,7 +1976,10 @@ textarea {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  /* A pane narrower than this cannot show three rotated category labels without
+     drawing them over each other. Wrapping to another row is better than a
+     cramped chart; the grid scrolls when rows exceed the viewport. */
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 8px;
   padding: 8px;
   overflow: auto;
@@ -1985,7 +1988,7 @@ textarea {
 .pane {
   display: flex;
   flex-direction: column;
-  min-height: 180px;
+  min-height: 200px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-subtle);

@@ -532,6 +532,84 @@ try {
     offAgain?.series?.length === 1 && offAgain?.categories?.length === observed,
     JSON.stringify({ series: offAgain?.series?.length, categories: offAgain?.categories?.length }));
 
+  // ── Small multiples: no crowded or duplicated axis text ──────────────
+  console.log('\nSmall multiples keep axis text readable');
+
+  await evaluate(`(() => {
+    const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === 'Clear sheet');
+    if (b) b.click();
+    return true;
+  })()`);
+  await sleep(800);
+  await setMark('column');
+  await dropOnAxis('Region', 'columns');
+  await sleep(900);
+  await dropOnAxis('Product Name', 'columns');
+  await sleep(900);
+  await dropOnAxis('Sales', 'rows');
+  await sleep(1800);
+
+  const paneSelected = await evaluate(`(() => {
+    const select = document.querySelector('.pane-select');
+    if (!select) return 'no pane select';
+    if (![...select.options].some((option) => option.value === 'Product Name')) {
+      return 'option missing';
+    }
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, 'Product Name');
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'ok';
+  })()`);
+  await sleep(2200);
+  check('small multiples can be chosen in the Marks card', paneSelected === 'ok', paneSelected);
+
+  const paneOption = await evaluate(`(() => {
+    const panes = [...document.querySelectorAll('.pane')];
+    const canvas = panes[0]?.querySelector('.pane-canvas');
+    if (!canvas) return { paneCount: panes.length, error: 'no pane canvas' };
+    const inst = window.__ECHARTS__?.getInstanceByDom(canvas);
+    if (!inst) return { paneCount: panes.length, error: 'no chart instance' };
+    const option = inst.getOption();
+    const first = (value) => (Array.isArray(value) ? value[0] : value);
+    const xAxis = first(option.xAxis) ?? {};
+    const yAxis = first(option.yAxis) ?? {};
+    const grid = first(option.grid) ?? {};
+    const axisLabel = first(xAxis.axisLabel) ?? {};
+    return {
+      paneCount: panes.length,
+      labels: (Array.isArray(xAxis.data) ? xAxis.data : []).map(String),
+      rotate: Array.isArray(axisLabel.rotate) ? axisLabel.rotate[0] : axisLabel.rotate,
+      fontSize: axisLabel.fontSize,
+      gridTop: grid.top,
+      splitNumber: Array.isArray(yAxis.splitNumber) ? yAxis.splitNumber[0] : yAxis.splitNumber,
+      paneTitles: panes.slice(0, 3).map((pane) => pane.querySelector('.pane-title')?.textContent?.trim()),
+    };
+  })()`);
+  console.log('  small multiples:', JSON.stringify(paneOption));
+
+  check('the view is split into one pane per product', paneOption.paneCount > 1,
+    String(paneOption.paneCount));
+  check('the pane title names the split',
+    paneOption.paneTitles?.every((title) => title && title.length > 0),
+    JSON.stringify(paneOption.paneTitles));
+  check('the split dimension is NOT repeated under the bars',
+    Array.isArray(paneOption.labels) &&
+      paneOption.labels.every((label) => !/Binder|Table|Chair/i.test(label)),
+    JSON.stringify(paneOption.labels));
+  check('the axis labels are the four regions',
+    Array.isArray(paneOption.labels) &&
+      paneOption.labels.every((label) => ['Central', 'East', 'South', 'West'].includes(label)),
+    JSON.stringify(paneOption.labels));
+  check('narrow-pane categories are rotated instead of overlapping',
+    Number(paneOption.rotate) > 0, String(paneOption.rotate));
+  check('the compact axis font is used', paneOption.fontSize === 10,
+    String(paneOption.fontSize));
+  check('the plot starts higher in the pane', Number(paneOption.gridTop) <= 16,
+    String(paneOption.gridTop));
+  check('the value axis uses the compact tick count', paneOption.splitNumber === 3,
+    String(paneOption.splitNumber));
+
+  await screenshot('67-small-multiples-labels.png');
+
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 2).join(' | '));
 
   const failed = results.filter((r) => !r.ok);

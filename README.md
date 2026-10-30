@@ -333,7 +333,7 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 792 unit checks, 23 suites
+npm test         # 805 unit checks, 23 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
@@ -367,7 +367,7 @@ The other harnesses, each of which prints `N passed, M failed`:
 ```bash
 node e2e/verify-lod.mjs        # 14 checks: LOD fields through the real UI, incl. filter ordering
 node e2e/verify-marks.mjs      # 29 checks: Color / Size / Label channels, bar stacking, reference lines
-node e2e/verify-viz.mjs        # 40 checks: scatter axes, trend-line fit, heat map orientation, forecast projection
+node e2e/verify-viz.mjs        # 49 checks: scatter axes, trend-line fit, heat map orientation, forecast projection, small-multiples label layout
 node e2e/verify-sort.mjs       # 15 checks: Sort control reaches the engine; axis orientation
 node e2e/verify-treemap.mjs    # 16 checks: treemap hierarchy, tooltip paths, Detail guard
 node e2e/verify-dashboard.mjs  # 29 checks: panels, independent queries, resize, swap, persistence
@@ -394,7 +394,7 @@ writes nothing. If the engine requires authentication it checks the 401 first, t
 skips the protected checks unless `PLATEAU_ENGINE_USER` and `PLATEAU_ENGINE_PASSWORD`
 are set — a skip is reported, never counted as a pass.
 
-Total: **1339 checks** — 792 unit, 547 browser, plus 33 real-engine wire checks.
+Total: **1361 checks** — 805 unit, 556 browser, plus 33 real-engine wire checks.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -418,7 +418,7 @@ Total: **1339 checks** — 792 unit, 547 browser, plus 33 real-engine wire check
 | forecast | 30 | least-squares fit, projections, date-part labels, chart series |
 | null cells | 22 | absence is not zero, in every mark |
 | mark inference | 7 | a scatter needs a measure on each axis |
-| axis nesting | 20 | line, heat map and treemap show every placed dimension |
+| axis nesting | 33 | line, heat map and treemap show every placed dimension; compact small-multiple axes |
 | engine auth | 30 | public capabilities, login, per-request bearer tokens, 401 drops the session |
 | joins | 28 | join schema, gating, capability refusal |
 
@@ -731,7 +731,7 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   trend projection, not a statistical model — the engine is not asked to forecast.
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1339 checks green (792 unit, 547 browser)
+- 1361 checks green (805 unit, 556 browser)
 
 ### Connecting to an engine
 

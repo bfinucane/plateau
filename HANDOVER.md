@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, twenty-one session commits on top of `0e252ab`. Every number
+Written on branch `main`, twenty-two session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,14 +13,14 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 43 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
-| Source | 71 files in `src/`, ~29,800 lines |
-| Unit tests | **792 checks**, 23 suites, all passing |
-| Browser tests | **547 checks**, 16 harnesses, all passing |
+| Commits | 44 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Source | 71 files in `src/`, ~30,000 lines |
+| Unit tests | **805 checks**, 23 suites, all passing |
+| Browser tests | **556 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
-| Screenshots | 58, in `docs/screenshots/` |
-| Bundle | `index-BBVahtmX.js` (app, 156 kB) + `echarts`/`react` vendor chunks |
+| Screenshots | 59, in `docs/screenshots/` |
+| Bundle | `index-CIUcvvgB.js` (app, 157 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -277,7 +277,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Twenty-one commits on top of `0e252ab` — twelve features, a wire follow-up, a
+Twenty-two commits on top of `0e252ab` — thirteen features, a wire follow-up, a
 maintenance pass, a contract-v1 adoption, two design decisions and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
@@ -311,14 +311,15 @@ verification hygiene. The commit messages have the detail; the shape:
 | A time series could only show what had already happened, with no projection beyond the last period | Forecast: a linear trend fitted client-side to the displayed values, drawn as a dashed series beyond the last period with future labels stepped by the axis's own date part. Only on single-series temporal line/area views — and the UI says the engine is not forecasting |
 | An audit found dead declarations, a Vite React plugin imported but never installed, a single 1.4 MB JS bundle, two unused dev dependencies, and no check of the real engine's wire behaviour | Maintenance pass: fixed the unused code and plugin, split React/ECharts/application chunks (app is 156 kB), removed the unused dependencies and updated the lockfile, and added `scripts/verify-engine.mjs` (33 read-only checks against a live engine) |
 | The suite contract moved to `contract/` and a static audit found Plateau compliant at T2 but with five client-side gaps: no contract pin, `#` system cubes offered as datasets, five error codes misfiled, measure-scope filters inferred from the global list, and `datePart` forwarded to an engine that refuses it | Contract-v1 adoption (handoff 001, §8.13): mirror re-pinned to the contract, `isSystem` carried and enforced, the full error-code set accepted, measure scope closed unless explicitly reported, date bucketing computed client-side, and T2/T4 declared with evidence |
+| Small-multiple panes squeezed three region labels onto one axis and repeated the pane's product name as a nested axis label, so text overlapped and the plot was tiny | Compact pane layout (§8.14): the split dimension is no longer nested into the axis, narrow panes rotate and truncate category labels, the value axis gets fewer ticks, margins are tightened, and panes wrap below a 260 px minimum width |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (33),
 `capabilityGating.test.ts` (47), `workbookFile.test.ts` (73),
 `calculationDrafts.test.ts` (23), `referenceLines.test.ts` (11),
 `bins.test.ts` (30), `setsGroups.test.ts` (27), `forecast.test.ts` (30),
-`nullCells.test.ts` (22), `markInference.test.ts` (7), `axisNesting.test.ts` (20) and
+`nullCells.test.ts` (22), `markInference.test.ts` (7), `axisNesting.test.ts` (33) and
 `engineAuth.test.ts` (30). `verify-ui` grew from 25 to 43 checks, `verify-marks` from
-18 to 29, `verify-viz` from 27 to 40, `verify-connect` from 26 to 84 (system cubes
+18 to 29, `verify-viz` from 27 to 49, `verify-connect` from 26 to 84 (system cubes
 included), and `verify-auth.mjs` is new (45 checks, with two stub engines: one requiring
 auth and one anonymous). `verify-workbook.mjs` (97 checks, own server and data
 directory; restarts the server to prove calculation drafts are re-registered, and
@@ -326,7 +327,8 @@ creates bins, a set and a group through their dialogs) and `verify-test-set.mjs`
 (28 checks, data-driven from the workbook file) are new. Screenshots added:
 `51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`60` for the workbook,
 test-set and tab-strip work, `61-null-cells.png`, `62-engine-auth.png`,
-`63-reference-lines.png`, `64-bins.png`, `65-sets-groups.png` and `66-forecast.png`.
+`63-reference-lines.png`, `64-bins.png`, `65-sets-groups.png`, `66-forecast.png` and
+`67-small-multiples-labels.png`.
 
 The maintenance pass added `scripts/verify-engine.mjs` (33 checks, read-only): public
 capabilities, dataset discovery, describe, grouped SUM, a dimension filter, the row
@@ -696,6 +698,27 @@ test learns the cube's shape from `describe` and uses `value`, so it exercises
 measure-less cubes directly; measure cubes are exercised through `verify-join`'s
 attribute path.
 
+### 8.14 Chart text was crowded in small multiples
+A screenshot showed a small-multiple pane where three region labels shared one narrow
+axis — overlapping — while the pane's product name was repeated as a nested axis label
+under the bars, and five value ticks squeezed into ~70 px of plot. The split dimension
+was being treated as an ordinary placed dimension by the nesting code, and panes had a
+220 px floor that was narrower than the labels.
+
+Fixed:
+- **The split dimension is excluded from nesting** in the bar-like and line builders —
+  the pane title already names it. The line builder also no longer creates one line per
+  product inside a pane; the pane dimension is not a series.
+- **Compact pane layout** (`sheet.paneBy`): category labels rotate at three or more
+  categories, are capped at 14 characters with an ellipsis, and use the 10 px font; the
+  value axis asks for three ticks and enables its overlap hider; margins are tightened
+  (top 12, bottom 58) so the plot is not a thin strip.
+- **Panes are at least 260 px wide and 200 px tall**; the grid wraps to another row
+  rather than squeezing charts below that. `verify-viz` grew 40 → 49 checks and
+  `axisNesting` 20 → 33, including an assertion that the split dimension never appears
+  in the axis labels and that a full-width chart keeps the roomy base layout.
+  Screenshot: `docs/screenshots/67-small-multiples-labels.png`.
+
 ---
 
 ## 9. Traps
@@ -776,7 +799,7 @@ attribute path.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 792 unit checks
+node scripts/test.mjs                                   # 805 unit checks
 node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
 ```
@@ -785,10 +808,10 @@ Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 40, `remoteDataset
 `queryValidation` 17, `capabilityGating` 47, `tableCalcs` 51, `workbookBackup` 14,
 `split` 35, `axisSelection` 34, `aggregationMenu` 33, `workbookFile` 73,
 `calculationDrafts` 23, `referenceLines` 11, `bins` 30, `setsGroups` 27, `forecast` 30,
-`nullCells` 22, `markInference` 7, `axisNesting` 20, `engineAuth` 30, `join` 28.
+`nullCells` 22, `markInference` 7, `axisNesting` 33, `engineAuth` 30, `join` 28.
 
 Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 29, `verify-viz`
-40, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 84,
+49, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 84,
 `verify-tablecalc` 14, `verify-split` 16, `verify-measuresplit` 26, `verify-retry` 13,
 `verify-workbook` 97, `verify-test-set` 28, `verify-auth` 45, `verify-join` 38 (needs
 the engine). Each prints `N passed, M failed` and exits non-zero on failure.
@@ -803,7 +826,7 @@ is worth showing.
 
 ## 11. Provenance
 
-43 commits, `55482d0` … HEAD. The last twenty-one are this session; the 14 before them
+44 commits, `55482d0` … HEAD. The last twenty-two are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

@@ -337,14 +337,44 @@ export function nestCategories(outer: string[], inner: string[]): string[] {
  * label, which cancels leading spaces, so the second level looks like a sibling of
  * the first. Rich styles give each line its own left edge and padding.
  */
+/** Text width control for crowded axes: a hard cap with an ellipsis. */
+function truncateLabel(value: string, maxChars: number): string {
+  const text = String(value);
+  return text.length > maxChars ? `${text.slice(0, Math.max(1, maxChars - 1))}…` : text;
+}
+
+/**
+ * Small multiples are drawn in narrow panes, so their axes need a tighter layout
+ * than a full-width chart. `paneBy` is the signal: every pane is one split, and
+ * the same builders serve them.
+ */
+function compactPane(sheet?: Sheet): boolean {
+  return Boolean(sheet?.paneBy);
+}
+
 function nestedCategoryAxis(
   levels: string[][],
-  options: { rotateAt?: number; rotateDegrees?: number } = {},
+  options: {
+    rotateAt?: number;
+    rotateDegrees?: number;
+    /** Hard cap per label line, with an ellipsis. */
+    truncateAt?: number;
+    fontSize?: number;
+    /**
+     * Show every label even when ECharts thinks they overlap. Compact panes set
+     * this because a dropped region label loses information; wide charts keep the
+     * overlap hider so a dense axis cannot smear.
+     */
+    showAll?: boolean;
+  } = {},
 ): { labels: string[]; axisLabel: Record<string, unknown>; levelCount: number } {
   const labels = nestCategoryLevels(levels);
   const levelCount = levels.length;
   const rotateAt = options.rotateAt ?? 8;
   const rotateDegrees = options.rotateDegrees ?? 32;
+  const fontSize = options.fontSize ?? 11;
+  const truncateAt = options.truncateAt;
+  const showAll = options.showAll === true;
 
   if (levelCount <= 1) {
     /*
@@ -357,7 +387,14 @@ function nestedCategoryAxis(
     return {
       labels: flat,
       levelCount,
-      axisLabel: { rotate: flat.length > rotateAt ? rotateDegrees : 0 },
+      axisLabel: {
+        rotate: flat.length > rotateAt ? rotateDegrees : 0,
+        ...(showAll ? { hideOverlap: false } : {}),
+        fontSize,
+        ...(truncateAt
+          ? { formatter: (value: string) => truncateLabel(String(value), truncateAt) }
+          : {}),
+      },
     };
   }
 
@@ -366,19 +403,26 @@ function nestedCategoryAxis(
     levelCount,
     axisLabel: {
       rotate: labels.length > rotateAt ? rotateDegrees : 0,
-      lineHeight: 13,
+      lineHeight: fontSize + 2,
       // Nested labels are wider, so the overlap hider starts dropping whole
       // categories — two of four regions disappeared once, which loses more than
       // the overlap ever cost. At small counts every label is shown.
       interval: (labels.length <= 12 ? 0 : 'auto') as number | 'auto',
-      hideOverlap: labels.length > 12,
+      // Only widen the exception for dense labels (the previous behaviour) or for
+      // a compact pane. Wide charts otherwise keep the outer overlap hider.
+      ...(labels.length > 12 || showAll ? { hideOverlap: showAll ? false : true } : {}),
+      fontSize,
       formatter: (value: string) => {
         const lines = String(value).split('\n');
         // Pad every level that exists, including blank repeated ones: a missing
         // line would otherwise shift the levels below it up.
         return Array.from(
           { length: levelCount },
-          (_, level) => `{level${level}|${(lines[level] ?? '').trim()}}`,
+          (_, level) => {
+            const raw = (lines[level] ?? '').trim();
+            const text = truncateAt ? truncateLabel(raw, truncateAt) : raw;
+            return `{level${level}|${text}}`;
+          },
         ).join('\n');
       },
       rich: Object.fromEntries(
@@ -386,7 +430,7 @@ function nestedCategoryAxis(
           `level${level}`,
           {
             align: 'left' as const,
-            fontSize: 11,
+            fontSize,
             color: '#5b6472',
             // The first level has no indent; each level below adds one, so the
             // drawn hierarchy matches the leading spaces in the data.
@@ -923,18 +967,37 @@ function buildBarLike(
     (encoding) => encoding.kind === 'dimension' && encoding.id !== axisEncoding?.id,
   );
   const nestedEncodings = placedDimensions.filter(
-    (encoding) => !(colorEncoding?.kind === 'dimension' && encoding.id === colorEncoding.id),
+    (encoding) =>
+      // A dimension used to SPLIT the view is already named by the pane title.
+      // Repeating it as a nested axis level puts the product name under every bar
+      // (and crowds the axis) for no new information.
+      encoding.field !== sheet?.paneBy &&
+      !(colorEncoding?.kind === 'dimension' && encoding.id === colorEncoding.id),
   );
   const nestedIndices = nestedEncodings
     .map((encoding) => (columns ? columns.indexOf(encoding) : -1))
     .filter((index) => index >= 0);
 
-  const axis = nestedCategoryAxis([
-    result.rows.map((row) => formatCategory(row[dimensionIndex], isDate)),
-    ...nestedIndices.map((index) =>
-      result.rows.map((row) => formatCategory(row[index], isTemporalColumn(result, index))),
-    ),
-  ]);
+  const compact = compactPane(sheet);
+  const axis = nestedCategoryAxis(
+    [
+      result.rows.map((row) => formatCategory(row[dimensionIndex], isDate)),
+      ...nestedIndices.map((index) =>
+        result.rows.map((row) => formatCategory(row[index], isTemporalColumn(result, index))),
+      ),
+    ],
+    {
+      // In a quarter-width pane, three long category names cannot share the axis:
+      // rotate them (and truncate the very long ones) instead of letting ECharts
+      // drop labels or draw them over each other. Horizontal bars keep their
+      // labels horizontal, so they only get truncation.
+      rotateAt: horizontal ? 1_000 : compact ? 3 : 8,
+      rotateDegrees: compact ? 30 : 32,
+      truncateAt: compact ? (horizontal ? 18 : 14) : undefined,
+      fontSize: compact ? 10 : 11,
+      showAll: compact,
+    },
+  );
 
   const categoryAxis = {
     type: 'category',
@@ -950,7 +1013,16 @@ function buildBarLike(
   const valueAxis = {
     type: 'value',
     splitLine: GRID_SPLIT_STYLE,
-    axisLabel: { ...AXIS_LABEL_STYLE, formatter: (v: number) => formatNumber(v) },
+    // Fewer ticks in a short pane: five numeric labels in ~70 px of plot is what
+    // made the value axis read as a smear.
+    splitNumber: compact ? 3 : undefined,
+    axisLabel: {
+      ...AXIS_LABEL_STYLE,
+      // The value axis is where a short pane's labels collide vertically; the
+      // overlap hider is only needed there, not on a full-width chart.
+      ...(compact ? { fontSize: 10, hideOverlap: true } : {}),
+      formatter: (v: number) => formatNumber(v),
+    },
     axisLine: { show: false },
   };
 
@@ -975,6 +1047,20 @@ function buildBarLike(
   return {
     option: {
       ...baseOption(),
+      // A pane is ~260 px wide and ~200 px tall. The base margins are for a
+      // full-width chart; `containLabel` keeps the small left margin honest when
+      // the value labels are short (they are compacted via formatNumber).
+      ...(compact
+        ? {
+            grid: {
+              left: horizontal ? 64 : 44,
+              right: 14,
+              top: 12,
+              bottom: horizontal ? 42 : 58,
+              containLabel: true,
+            },
+          }
+        : {}),
       tooltip: { ...(baseOption().tooltip as object), trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: tooltipFormatter(plan.measureNames) },
       xAxis: horizontal ? valueAxis : categoryAxis,
       yAxis: horizontal ? { ...categoryAxis, ...categoryAxisOrientation } : valueAxis,
@@ -1008,10 +1094,21 @@ function buildLineLike(
   // A dimension on Color becomes one line per value; otherwise a second axis
   // dimension splits the series.
   const colorEncoding = columns.shelf('color')[0];
+  /*
+   * In small multiples the pane dimension is a grouping field, not a series: a
+   * line per product inside a pane already titled with that product would draw
+   * single-point lines. Only a colour dimension (or a further non-pane dimension)
+   * may split the series.
+   */
   const seriesDimensionIndex =
     colorEncoding && colorEncoding.kind === 'dimension' && columns.indexOf(colorEncoding) >= 0
       ? columns.indexOf(colorEncoding)
-      : plan.dimensionIndices[1];
+      : sheet.paneBy
+        ? plan.dimensionIndices.find(
+            (index) =>
+              index !== dimensionIndex && result.columns[index] !== sheet.paneBy,
+          )
+        : plan.dimensionIndices[1];
 
   /*
    * Every PLACED dimension that is neither the x axis nor the series becomes a
@@ -1027,21 +1124,52 @@ function buildLineLike(
    * under every tick would say it twice.
    */
   const placedDimensionIndices = [...(sheet?.shelves.columns ?? []), ...(sheet?.shelves.rows ?? [])]
-    .filter((encoding) => encoding.kind === 'dimension')
+    .filter(
+      (encoding) =>
+        encoding.kind === 'dimension' &&
+        // The split dimension is already the pane title; do not repeat it as a
+        // nested axis level (nor as a series, above).
+        encoding.field !== sheet.paneBy,
+    )
     .map((encoding) => columns.indexOf(encoding))
     .filter((index) => index >= 0);
   const nestedIndices = [...new Set(placedDimensionIndices)].filter(
     (index) => index !== dimensionIndex && index !== seriesDimensionIndex,
   );
 
-  const axis = nestedCategoryAxis([
-    result.rows.map((row) => formatCategory(row[dimensionIndex], isDate)),
-    ...nestedIndices.map((index) =>
-      result.rows.map((row) => formatCategory(row[index], isTemporalColumn(result, index))),
-    ),
-  ]);
+  const compact = compactPane(sheet);
+  const axis = nestedCategoryAxis(
+    [
+      result.rows.map((row) => formatCategory(row[dimensionIndex], isDate)),
+      ...nestedIndices.map((index) =>
+        result.rows.map((row) => formatCategory(row[index], isTemporalColumn(result, index))),
+      ),
+    ],
+    {
+      rotateAt: compact ? 3 : 8,
+      rotateDegrees: compact ? 30 : 32,
+      truncateAt: compact ? 14 : undefined,
+      fontSize: compact ? 10 : 11,
+      showAll: compact,
+    },
+  );
   let categories = axis.labels;
   const referenceLines = referenceLineMark(sheet, 'y');
+  const compactGrid = compact
+    ? {
+        grid: { left: 44, right: 14, top: 12, bottom: 58, containLabel: true },
+      }
+    : {};
+  const lineValueAxis = {
+    type: 'value',
+    splitLine: GRID_SPLIT_STYLE,
+    splitNumber: compact ? 3 : undefined,
+    axisLabel: {
+      ...AXIS_LABEL_STYLE,
+      ...(compact ? { fontSize: 10, hideOverlap: true } : {}),
+      formatter: (v: number) => formatNumber(v),
+    },
+  };
 
   if (seriesDimensionIndex === undefined) {
     const series: Record<string, unknown>[] = [
@@ -1145,6 +1273,7 @@ function buildLineLike(
   return {
     option: {
       ...baseOption(),
+      ...compactGrid,
       tooltip: { ...(baseOption().tooltip as object), trigger: 'axis', formatter: tooltipFormatter(plan.measureNames) },
       xAxis: {
         type: 'category',
@@ -1154,11 +1283,7 @@ function buildLineLike(
         axisLine: AXIS_LINE_STYLE,
         axisTick: { show: false },
       },
-      yAxis: {
-        type: 'value',
-        splitLine: GRID_SPLIT_STYLE,
-        axisLabel: { ...AXIS_LABEL_STYLE, formatter: (v: number) => formatNumber(v) },
-      },
+      yAxis: lineValueAxis,
       series,
     },
   };

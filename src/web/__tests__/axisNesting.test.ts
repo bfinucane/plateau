@@ -344,5 +344,109 @@ section('A treemap nests every placed dimension');
   check('and no breadcrumb', (series.breadcrumb as { show?: boolean } | undefined)?.show === false);
 }
 
+/*
+ * Small multiples: a pane is roughly a quarter of the width of a normal chart.
+ * The axis has to change shape with it, or labels are drawn over each other and
+ * the split dimension is repeated under every bar.
+ */
+section('Small-multiple panes get a compact, non-duplicated axis');
+
+const paneResult = resultWith(
+  [
+    { name: 'Region', kind: 'dimension' },
+    { name: 'Product Name', kind: 'dimension' },
+    { name: 'Sum of Sales', kind: 'measure' },
+  ],
+  [
+    ['Central', 'Avery Durable Binder', 10],
+    ['South', 'Avery Durable Binder', 20],
+    ['East', 'Avery Durable Binder', 30],
+    ['West', 'Avery Durable Binder', 40],
+  ],
+);
+
+{
+  const sheet = createSheet('SM');
+  sheet.mark = 'column';
+  sheet.paneBy = 'Product Name';
+  sheet.shelves.columns = [
+    { id: 'c-region', field: 'Region', kind: 'dimension' },
+    { id: 'c-product', field: 'Product Name', kind: 'dimension' },
+  ];
+  sheet.shelves.rows = [{ id: 'r-sales', field: 'Sales', kind: 'measure', aggregation: 'SUM' }];
+
+  const option = buildChart(paneResult, sheet).option as {
+    xAxis: { data: string[]; axisLabel: Record<string, unknown> };
+    yAxis: { splitNumber?: number; axisLabel: Record<string, unknown> };
+    grid?: Record<string, number>;
+  };
+  console.log('  compact bar axis:', JSON.stringify(option.xAxis.axisLabel));
+  check('the split dimension is not repeated as a nested axis label',
+    !option.xAxis.data.some((label) => label.includes('Avery Durable Binder')),
+    JSON.stringify(option.xAxis.data));
+  check('the remaining labels are the axis dimension',
+    option.xAxis.data.join(',') === 'Central,South,East,West', JSON.stringify(option.xAxis.data));
+  check('few categories are rotated in a narrow pane',
+    Number(option.xAxis.axisLabel.rotate) > 0, String(option.xAxis.axisLabel.rotate));
+  check('the axis font is one point smaller',
+    option.xAxis.axisLabel.fontSize === 10, String(option.xAxis.axisLabel.fontSize));
+  check('long labels are truncated rather than overlapping',
+    typeof option.xAxis.axisLabel.formatter === 'function' &&
+      String((option.xAxis.axisLabel.formatter as (v: string) => string)('Avery Durable Binder'))
+        .endsWith('…'),
+    String(
+      (option.xAxis.axisLabel.formatter as ((v: string) => string) | undefined)?.(
+        'Avery Durable Binder',
+      ),
+    ));
+  check('the value axis asks for fewer ticks',
+    option.yAxis.splitNumber === 3, String(option.yAxis.splitNumber));
+  check('the grid gives the plot more vertical room',
+    option.grid?.top === 12 && option.grid?.bottom === 58, JSON.stringify(option.grid));
+}
+
+{
+  const sheet = createSheet('SM line');
+  sheet.mark = 'line';
+  sheet.paneBy = 'Product Name';
+  sheet.shelves.columns = [
+    { id: 'c-region', field: 'Region', kind: 'dimension' },
+    { id: 'c-product', field: 'Product Name', kind: 'dimension' },
+  ];
+  sheet.shelves.rows = [{ id: 'r-sales', field: 'Sales', kind: 'measure', aggregation: 'SUM' }];
+
+  const option = buildChart(paneResult, sheet).option as {
+    series: { data: unknown[] }[];
+    xAxis: { data: string[] };
+  };
+  check('a pane dimension does not become one line per value',
+    option.series.length === 1, String(option.series.length));
+  check('the line keeps one point per category in the pane',
+    option.series[0].data.length === 4, String(option.series[0].data.length));
+  check('and the split dimension is absent from its axis',
+    !option.xAxis.data.some((label) => label.includes('Avery Durable Binder')),
+    JSON.stringify(option.xAxis.data));
+}
+
+{
+  // A full-width chart keeps the roomy layout: no forced grid override, no
+  // reduced tick count.
+  const sheet = createSheet('Wide');
+  sheet.mark = 'column';
+  sheet.shelves.columns = [{ id: 'c-region', field: 'Region', kind: 'dimension' }];
+  sheet.shelves.rows = [{ id: 'r-sales', field: 'Sales', kind: 'measure', aggregation: 'SUM' }];
+  const option = buildChart(paneResult, sheet).option as {
+    grid?: { top?: number };
+    yAxis: { splitNumber?: number };
+    xAxis: { axisLabel: Record<string, unknown> };
+  };
+  check('a wide chart keeps the roomy base grid',
+    option.grid?.top === 28, JSON.stringify(option.grid));
+  check('or the reduced value tick count', option.yAxis.splitNumber === undefined,
+    String(option.yAxis.splitNumber));
+  check('or forced rotation for four short labels',
+    option.xAxis.axisLabel.rotate === 0, String(option.xAxis.axisLabel.rotate));
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exitCode = 1;
