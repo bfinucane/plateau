@@ -26,6 +26,12 @@ interface ConnectDialogProps {
   onClose: () => void;
   /** Called after a successful registration so the app can select the dataset. */
   onConnected: (datasetId: string) => void;
+  /**
+   * Values to pre-fill when the dialog is opened to reconnect an existing remote
+   * dataset. The user still confirms (and can sign in first); this only saves them
+   * from retyping the URL, cube and display name.
+   */
+  initial?: { url?: string; dataset?: string; name?: string };
 }
 
 type ProbeState =
@@ -37,10 +43,10 @@ type ProbeState =
 /** Aggregations the local engine supports, for comparison against an engine. */
 const LOCAL_AGGREGATIONS = ['SUM', 'AVG', 'MEDIAN', 'MIN', 'MAX', 'COUNT', 'COUNTD', 'STDEV', 'VAR', 'ATTR'];
 
-export function ConnectDialog({ onClose, onConnected }: ConnectDialogProps) {
-  const [url, setUrl] = useState('http://127.0.0.1:8080');
-  const [dataset, setDataset] = useState('');
-  const [name, setName] = useState('');
+export function ConnectDialog({ onClose, onConnected, initial }: ConnectDialogProps) {
+  const [url, setUrl] = useState(initial?.url ?? 'http://127.0.0.1:8080');
+  const [dataset, setDataset] = useState(initial?.dataset ?? '');
+  const [name, setName] = useState(initial?.name ?? '');
   const [probe, setProbe] = useState<ProbeState>({ status: 'idle' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

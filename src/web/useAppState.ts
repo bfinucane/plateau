@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import {
   ApiError,
   addCalculatedField as apiAddCalculatedField,
+  deleteDataset as apiDeleteDataset,
   fetchCalculatedFields,
   fetchDataset,
   fetchDatasets,
@@ -748,6 +749,33 @@ export function useAppState() {
     return datasets;
   }, []);
 
+  /**
+   * Unregisters the active remote dataset and falls back to a local one.
+   *
+   * "Disconnect" is about the data-source registration, not the engine session:
+   * several datasets can share one engine URL, so removing one must not sign the
+   * others out. The engine's Sign out button in the Connect dialog owns that.
+   * Switching to the fallback resets the view, exactly as choosing another data
+   * source does.
+   */
+  const disconnectDataset = useCallback(async (): Promise<string | null> => {
+    const activeId = state.activeDatasetId;
+    const activeName = state.dataset?.name ?? null;
+    if (!activeId) return null;
+    if (!state.dataset?.engineUrl) {
+      throw new Error('Only a remote dataset can be disconnected.');
+    }
+    await apiDeleteDataset(activeId);
+    const datasets = await fetchDatasets();
+    dispatch({ type: 'datasets/loaded', datasets });
+    const fallback = datasets.find((dataset) => !dataset.engineUrl) ?? datasets[0];
+    if (fallback) {
+      const dataset = await fetchDataset(fallback.id);
+      dispatch({ type: 'dataset/selected', dataset, datasetId: dataset.id });
+    }
+    return activeName;
+  }, [state.activeDatasetId, state.dataset]);
+
   /** Adds a field to a shelf using a column's default encoding. */
   const addFieldToShelf = useCallback(
     (column: ColumnInfo, shelf: ShelfId, index?: number) => {
@@ -996,6 +1024,7 @@ export function useAppState() {
     allowedFilterOperatorsByScope,
     selectDataset,
     refreshDatasets,
+    disconnectDataset,
     addFieldToShelf,
     createCalculated,
     deleteCalculated,

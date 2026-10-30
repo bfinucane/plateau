@@ -78,6 +78,10 @@ export function App() {
   const [setDialog, setSetDialog] = useState<{ field?: string; editing?: WorkbookSet } | null>(null);
   const [groupDialog, setGroupDialog] = useState<{ field?: string } | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
+  /** Values to pre-fill when Connect was opened from "Reconnect". */
+  const [connectInitial, setConnectInitial] = useState<
+    { url?: string; dataset?: string; name?: string } | undefined
+  >(undefined);
   const [inspectorTab, setInspectorTab] = useState<'values' | 'query'>('values');
   const [inspectedField, setInspectedField] = useState<ColumnInfo | null>(null);
   const [inspectedValues, setInspectedValues] = useState<CellValue[][]>([]);
@@ -647,6 +651,52 @@ export function App() {
     [app, setStatusNow],
   );
 
+  const openConnect = useCallback(
+    (initial?: { url?: string; dataset?: string; name?: string }) => {
+      setConnectInitial(initial);
+      setConnectOpen(true);
+    },
+    [],
+  );
+
+  /**
+   * Reconnect does not try to guess a session or re-register silently: it opens
+   * Connect with the URL, cube and display name already filled in, so the normal
+   * probe/sign-in flow still runs. That is what makes it work after the engine
+   * restarted, when the old dataset registration (and token) are gone.
+   */
+  const handleReconnect = useCallback(() => {
+    const dataset = state.dataset;
+    if (!dataset?.engineUrl) return;
+    openConnect({
+      url: dataset.engineUrl,
+      dataset: dataset.engineDataset ?? dataset.name,
+      name: dataset.name,
+    });
+  }, [state.dataset, openConnect]);
+
+  const handleDisconnect = useCallback(async () => {
+    const name = state.dataset?.name;
+    if (!name) return;
+    if (
+      !window.confirm(
+        `Disconnect "${name}"? This removes the remote data source from Plateau and switches to the local sample dataset. The engine sign-out is separate, and the view will reset.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const removed = await app.disconnectDataset();
+      setStatusNow(
+        removed
+          ? `Disconnected from ${removed}. Connect again to reach that engine.`
+          : 'Disconnected',
+      );
+    } catch (error) {
+      setStatusNow(error instanceof Error ? error.message : 'Could not disconnect');
+    }
+  }, [app, state.dataset, setStatusNow]);
+
   const handleExport = useCallback(() => {
     if (!queryResult) return;
     download(
@@ -705,9 +755,30 @@ export function App() {
           <input type="file" accept=".csv,.tsv,.txt" onChange={handleFileInput} hidden />
         </label>
 
-        <button type="button" className="button-secondary" onClick={() => setConnectOpen(true)}>
+        <button type="button" className="button-secondary" onClick={() => openConnect()}>
           Connect
         </button>
+
+        {state.dataset?.engineUrl && (
+          <>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={handleReconnect}
+              title="Open Connect pre-filled with this remote dataset's engine, cube and name"
+            >
+              Reconnect
+            </button>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => void handleDisconnect()}
+              title="Remove this remote data source from Plateau and switch to the local sample dataset. The engine sign-out is separate."
+            >
+              Disconnect
+            </button>
+          </>
+        )}
 
         <button
           type="button"
@@ -1345,7 +1416,11 @@ export function App() {
 
       {connectOpen && (
         <ConnectDialog
-          onClose={() => setConnectOpen(false)}
+          initial={connectInitial}
+          onClose={() => {
+            setConnectOpen(false);
+            setConnectInitial(undefined);
+          }}
           onConnected={(datasetId) => void handleConnected(datasetId)}
         />
       )}

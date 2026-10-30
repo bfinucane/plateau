@@ -902,6 +902,80 @@ try {
   await sleep(600);
   check('Cancel closes without connecting', !(await dialogOpen()));
 
+  // ------------------------------------------ disconnect / reconnect
+  console.log('\nDisconnecting and reconnecting the remote data source');
+
+  const remoteButtons = await evaluate(`(() => ({
+    reconnect: [...document.querySelectorAll('.command-bar button')].some(b => b.textContent.trim() === 'Reconnect'),
+    disconnect: [...document.querySelectorAll('.command-bar button')].some(b => b.textContent.trim() === 'Disconnect'),
+  }))()`);
+  check('a remote dataset offers Reconnect and Disconnect', remoteButtons.reconnect && remoteButtons.disconnect,
+    JSON.stringify(remoteButtons));
+
+  await clickButton('Reconnect');
+  await sleep(900);
+  const prefilled = await evaluate(`(() => ({
+    open: Boolean(document.querySelector('.connect-dialog')),
+    url: document.querySelector('#connect-url')?.value ?? '',
+    dataset: document.querySelector('#connect-dataset')?.value ?? '',
+    name: document.querySelector('#connect-name')?.value ?? '',
+  }))()`);
+  console.log('  reconnect prefill:', JSON.stringify(prefilled));
+  check('Reconnect opens Connect', prefilled.open === true);
+  check('it pre-fills the engine URL', prefilled.url === `http://127.0.0.1:${ENGINE_PORT}`, prefilled.url);
+  check('it pre-fills the cube name', prefilled.dataset === 'sales', prefilled.dataset);
+  check('it pre-fills the display name', prefilled.name === 'Remote Sales', prefilled.name);
+  await clickButton('Cancel');
+  await sleep(500);
+
+  // Accept the confirmation without a native dialog in headless test.
+  await evaluate(`window.confirm = () => true; true`);
+  await clickButton('Disconnect');
+  await sleep(3000);
+  check('Disconnect reports what was removed',
+    /Disconnected from Remote Sales/.test(await evaluate(`document.querySelector('.status-message')?.textContent ?? ''`)),
+    await evaluate(`document.querySelector('.status-message')?.textContent ?? ''`));
+  const afterDisconnect = await evaluate(`(() => ({
+    options: [...document.querySelectorAll('#dataset-select option')].map(o => o.textContent),
+    selected: document.querySelector('#dataset-select')?.selectedOptions?.[0]?.textContent ?? '',
+    remoteButtons: [...document.querySelectorAll('.command-bar button')].some(b => b.textContent.trim() === 'Disconnect'),
+  }))()`);
+  console.log('  after disconnect:', JSON.stringify(afterDisconnect));
+  check('the remote dataset leaves the data source list',
+    !afterDisconnect.options.some((option) => /Remote Sales/.test(option)),
+    JSON.stringify(afterDisconnect.options));
+  check('Plateau falls back to the local sample',
+    /Sample/.test(afterDisconnect.selected), afterDisconnect.selected);
+  check('the remote-only actions disappear', afterDisconnect.remoteButtons === false);
+
+  // Reconnect through the normal Connect flow: the same engine URL and cube must
+  // register a fresh dataset (the old registration was removed).
+  await clickButton('Connect');
+  await sleep(800);
+  await setInput('connect-url', `http://127.0.0.1:${ENGINE_PORT}`);
+  await sleep(300);
+  await setInput('connect-dataset', 'sales');
+  await sleep(300);
+  await setInput('connect-name', 'Remote Sales');
+  await sleep(400);
+  await clickButton('Add dataset');
+  await sleep(3500);
+  const reconnected = await evaluate(`(() => ({
+    options: [...document.querySelectorAll('#dataset-select option')].map(o => o.textContent),
+    selected: document.querySelector('#dataset-select')?.selectedOptions?.[0]?.textContent ?? '',
+    fields: document.querySelectorAll('.field-row').length,
+    remoteButtons: [...document.querySelectorAll('.command-bar button')].some(b => b.textContent.trim() === 'Reconnect'),
+  }))()`);
+  console.log('  reconnected:', JSON.stringify(reconnected));
+  check('reconnecting registers the remote dataset again',
+    reconnected.options.some((option) => /Remote Sales/.test(option)),
+    JSON.stringify(reconnected.options));
+  check('and makes it the active source', /Remote Sales/.test(reconnected.selected), reconnected.selected);
+  check('the engine fields load again', reconnected.fields === 4, String(reconnected.fields));
+  check('Reconnect/Disconnect come back', reconnected.remoteButtons === true);
+
+  await screenshot('36-disconnect-reconnect.png');
+
   // ------------------------- system cubes are hidden and cannot be registered
   console.log('\nSystem cubes are identified, not offered as datasets');
 

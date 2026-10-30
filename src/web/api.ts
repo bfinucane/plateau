@@ -70,6 +70,11 @@ export interface DatasetMeta {
    * hold datasets from more than one, and a login form without a target is a guess.
    */
   engineUrl?: string;
+  /**
+   * The cube name on that engine, kept for the reconnect pre-fill. `name` is the
+   * display name the user chose and may differ from the cube.
+   */
+  engineDataset?: string;
 }
 
 /**

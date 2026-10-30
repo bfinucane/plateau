@@ -96,6 +96,12 @@ export interface DatasetMeta {
    * registered at once.
    */
   engineUrl?: string;
+  /**
+   * The cube name on that engine (what `POST /api/datasets/remote` was asked to
+   * read), preserved so the UI can pre-fill a reconnect without remembering it.
+   * `name` is the display name and may differ.
+   */
+  engineDataset?: string;
 }
 
 /** A calculated field definition, stored independently of any materialised column. */
@@ -278,6 +284,7 @@ export async function createRemoteDataset(options: {
       columns: describeColumns(schema),
       capabilities,
       engineUrl: options.engineUrl,
+      engineDataset: options.dataset,
     },
     backend,
     calculated: new Map(),

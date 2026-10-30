@@ -110,6 +110,8 @@ async function main(): Promise<void> {
       `rows=${dataset.meta.rowCount} cols=${dataset.meta.columnCount}`);
     check('the source is marked as remote', dataset.meta.source === 'remote engine',
       dataset.meta.source);
+    check('the cube name is remembered for reconnect', dataset.meta.engineDataset === 'sales',
+      String(dataset.meta.engineDataset));
     check('columns are described for the data pane', dataset.meta.columns.length === 4);
     check('the metadata carries the engine capabilities',
       (dataset.meta.capabilities?.aggregations ?? []).join(',') === capabilities.aggregations.join(','),

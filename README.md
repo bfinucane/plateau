@@ -333,7 +333,7 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 805 unit checks, 23 suites
+npm test         # 806 unit checks, 23 suites
 npm run typecheck
 npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
 ```
@@ -371,7 +371,7 @@ node e2e/verify-viz.mjs        # 49 checks: scatter axes, trend-line fit, heat m
 node e2e/verify-sort.mjs       # 15 checks: Sort control reaches the engine; axis orientation
 node e2e/verify-treemap.mjs    # 16 checks: treemap hierarchy, tooltip paths, Detail guard
 node e2e/verify-dashboard.mjs  # 29 checks: panels, independent queries, resize, swap, persistence
-node e2e/verify-connect.mjs    # 84 checks: connect dialog, capability gating, pushed-down fields, null cells, filter scopes, system cubes
+node e2e/verify-connect.mjs    # 97 checks: connect dialog, capability gating, pushed-down fields, null cells, filter scopes, system cubes, disconnect/reconnect
 node e2e/verify-tablecalc.mjs  # 14 checks: table calculations in the real UI
 node e2e/verify-split.mjs      # 16 checks: split panes
 node e2e/verify-measuresplit.mjs # 26 checks: one pane per measure
@@ -394,7 +394,7 @@ writes nothing. If the engine requires authentication it checks the 401 first, t
 skips the protected checks unless `PLATEAU_ENGINE_USER` and `PLATEAU_ENGINE_PASSWORD`
 are set — a skip is reported, never counted as a pass.
 
-Total: **1361 checks** — 805 unit, 556 browser, plus 33 real-engine wire checks.
+Total: **1375 checks** — 806 unit, 569 browser, plus 33 real-engine wire checks.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -402,7 +402,7 @@ Total: **1361 checks** — 805 unit, 556 browser, plus 33 real-engine wire check
 | LOD | 45 | `FIXED`/`INCLUDE`/`EXCLUDE` parsing and filter ordering |
 | protocol | 56 | **local/remote parity**, wire shapes, LOD fallback, capability negotiation |
 | http transport | 40 | request encoding, error mapping (all contract v1 codes), timeouts, doc/code consistency |
-| remote dataset | 42 | registration, failure modes, queries, pushed-down calculated fields, client-side date bucketing |
+| remote dataset | 43 | registration, failure modes, queries, pushed-down calculated fields, client-side date bucketing, reconnect metadata |
 | query validation | 17 | unknown field names are refused, local and remote |
 | capability gating | 47 | filter operators, per-scope reports (measure scope closed under contract v1), row caps, formula vocabulary |
 | table calculations | 51 | partitions, addressing, null handling |
@@ -731,7 +731,7 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   trend projection, not a statistical model — the engine is not asked to forecast.
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1361 checks green (805 unit, 556 browser)
+- 1375 checks green (806 unit, 569 browser)
 
 ### Connecting to an engine
 
@@ -755,6 +755,7 @@ Three routes expose this to the browser:
 | --- | --- |
 | `GET /api/engine/probe?url=` | Reports capabilities and reachability without registering anything |
 | `POST /api/datasets/remote` | Registers a dataset held by an engine |
+| `DELETE /api/datasets/:id` | Unregisters a dataset (the UI's Disconnect action) |
 | `GET /api/datasets` | Remote datasets appear alongside local ones |
 
 An unreachable engine returns `reachable: false` rather than an HTTP error — a
@@ -793,6 +794,13 @@ the engine is up and what it can actually do *before* committing:
   dialog with the reason.
 - **Connect** registers the dataset, which then behaves like any other data
   source — fields in the pane, drag onto shelves, charts render.
+- **Disconnect and Reconnect** sit beside Connect while a remote source is active.
+  Disconnect removes that registration and switches to the local sample dataset;
+  other datasets are untouched, and the engine session stays signed in (the
+  dialog's **Sign out** owns that). Reconnect opens Connect with the engine URL,
+  cube name and display name already filled in, which is also the recovery path
+  after an engine restart — the old registration and token are gone, so confirm
+  the prefilled values and the source comes back.
 
 ![A chart built on a remote dataset](docs/screenshots/34-connect-chart.png)
 
