@@ -164,7 +164,7 @@ try {
   check('shelves present', shell.shelfCount >= 2, `${shell.shelfCount} shelves`);
   check('marks card present', shell.hasMarks);
   check('inspector present', shell.hasInspector);
-  check('sample dataset loaded', shell.datasetName.includes('Superstore'), shell.datasetName);
+  check('test fixture dataset loaded', shell.datasetName.includes('Superstore'), shell.datasetName);
 
   await screenshot('01-initial.png');
 

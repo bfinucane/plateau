@@ -680,7 +680,7 @@ export function App() {
     if (!name) return;
     if (
       !window.confirm(
-        `Disconnect "${name}"? This removes the remote data source from Plateau and switches to the local sample dataset. The engine sign-out is separate, and the view will reset.`,
+        `Disconnect "${name}"? This removes the remote data source from Plateau and switches to another local source when one exists. The engine sign-out is separate, and the view will reset.`,
       )
     ) {
       return;
@@ -752,7 +752,7 @@ export function App() {
 
         <label className="button-secondary file-button">
           Upload CSV
-          <input type="file" accept=".csv,.tsv,.txt" onChange={handleFileInput} hidden />
+          <input id="csv-upload-input" type="file" accept=".csv,.tsv,.txt" onChange={handleFileInput} hidden />
         </label>
 
         <button type="button" className="button-secondary" onClick={() => openConnect()}>
@@ -773,7 +773,7 @@ export function App() {
               type="button"
               className="button-secondary"
               onClick={() => void handleDisconnect()}
-              title="Remove this remote data source from Plateau and switch to the local sample dataset. The engine sign-out is separate."
+              title="Remove this remote data source from Plateau and switch to another local source when one exists. The engine sign-out is separate."
             >
               Disconnect
             </button>
@@ -944,12 +944,34 @@ export function App() {
         </button>
       </header>
 
+      {!state.loading && !state.dataset && (
+        <div className="start-banner" role="status">
+          <div>
+            <strong>No data source yet.</strong> Plateau starts empty by design — upload a CSV or
+            connect to an engine to build a view.
+          </div>
+          <div className="start-banner-actions">
+            <button
+              type="button"
+              className="button-primary"
+              onClick={() => document.getElementById('csv-upload-input')?.click()}
+            >
+              Upload CSV
+            </button>
+            <button type="button" className="button-secondary" onClick={() => openConnect()}>
+              Connect to an engine
+            </button>
+          </div>
+        </div>
+      )}
+
       {state.workbook.view === 'dashboard' && app.activeDashboard ? (
         <div className="app-body">
           <DashboardView
             dashboard={app.activeDashboard}
             sheets={state.workbook.sheets}
             datasetId={state.activeDatasetId}
+            datasetRevision={(state.dataset?.columns ?? []).map((column) => column.name).join('|')}
             availableSheets={app.availableSheets}
             onAddPanel={(sheetId) =>
               dispatch({

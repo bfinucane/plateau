@@ -21,6 +21,8 @@ interface DashboardViewProps {
   dashboard: Dashboard;
   sheets: Sheet[];
   datasetId: string | null;
+  /** Changes when the dataset's column set changes (calculation drafts). */
+  datasetRevision: string;
   /** Worksheets not yet on this dashboard, offered in the palette. */
   availableSheets: Sheet[];
   onAddPanel: (sheetId: string) => void;
@@ -34,6 +36,7 @@ export function DashboardView({
   dashboard,
   sheets,
   datasetId,
+  datasetRevision,
   availableSheets,
   onAddPanel,
   onSwapPanels,
@@ -131,6 +134,7 @@ export function DashboardView({
               panel={panel}
               sheet={sheetById.get(panel.sheetId)}
               datasetId={datasetId}
+              datasetRevision={datasetRevision}
               dragging={draggingId === panel.id}
               // Offer the next panel as the swap partner, wrapping at the end.
               swapTargetId={

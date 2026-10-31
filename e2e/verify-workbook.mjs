@@ -22,7 +22,7 @@
  */
 
 import { spawn, execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { teardown } from './harness.mjs';
@@ -62,8 +62,7 @@ writeFileSync(
   }),
   'utf8',
 );
-// The dataset has to exist or the app has nothing to query; the workbook does not.
-copyFileSync(resolve(PROJECT, 'data', 'superstore.csv'), resolve(DATA_DIR, 'superstore.csv'));
+// The test server registers the checked-in fixture; the workbook does not bring data.
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
@@ -114,7 +113,7 @@ async function getWorkbook() {
 async function startServer() {
   const child = spawn(
     NODE,
-    [resolve(PROJECT, 'scripts/run.mjs'), resolve(PROJECT, 'src/server/index.ts'), '--serve-static'],
+    [resolve(PROJECT, 'scripts/run.mjs'), resolve(PROJECT, 'scripts/test-server.ts'), '--serve-static'],
     {
       cwd: PROJECT,
       stdio: 'ignore',

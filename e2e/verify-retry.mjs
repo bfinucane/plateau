@@ -46,7 +46,7 @@ function check(name, ok, detail = '') {
 
 /** Starts the app server on APP_PORT and resolves once it answers. */
 async function startServer() {
-  const child = spawn(NODE, [resolve(PROJECT, 'scripts/run.mjs'), resolve(PROJECT, 'src/server/index.ts'), '--serve-static'], {
+  const child = spawn(NODE, [resolve(PROJECT, 'scripts/run.mjs'), resolve(PROJECT, 'scripts/test-server.ts'), '--serve-static'], {
     cwd: PROJECT,
     stdio: 'ignore',
     env: { ...process.env, PORT: String(APP_PORT), TEMP: OUT_DIR, TMP: OUT_DIR, TMPDIR: OUT_DIR },

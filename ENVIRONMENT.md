@@ -189,10 +189,11 @@ test fails.
 
 For a harness that needs to control the data files themselves:
 
-- `PLATEAU_DATA_DIR` overrides the server's data directory (sample, saved workbook,
-  uploads). `verify-workbook.mjs` points it at `.tmp/workbook-data`, copyies
-  `data/superstore.csv` there, and deletes it afterwards — so it can write marker
-  workbooks without touching a real session's file.
+- `PLATEAU_DATA_DIR` overrides the server's data directory (saved workbook and uploads).
+  `verify-workbook.mjs` points it at `.tmp/workbook-data` and deletes it afterwards — so it
+  can write marker workbooks without touching a real session's file. The browser suite's
+  dataset comes from `test-fixtures/superstore.csv` via `scripts/test-server.ts`, not from
+  product data.
 
 ## Verifying against a server without leaving one behind
 

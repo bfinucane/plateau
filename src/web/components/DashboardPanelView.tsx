@@ -16,6 +16,8 @@ interface DashboardPanelViewProps {
   panel: DashboardPanel;
   sheet: Sheet | undefined;
   datasetId: string | null;
+  /** Changes when dataset columns change, so a failed panel query can retry. */
+  datasetRevision: string;
   /** Panel being dragged, if any. */
   dragging: boolean;
   /** Panel id to swap with, offered as an explicit control. */
@@ -33,6 +35,7 @@ export function DashboardPanelView({
   panel,
   sheet,
   datasetId,
+  datasetRevision,
   dragging,
   swapTargetId,
   onStartDrag,
@@ -43,7 +46,11 @@ export function DashboardPanelView({
   onResize,
   onOpenSheet,
 }: DashboardPanelViewProps) {
-  const { result, error, loading, empty, retry } = useSheetQuery(sheet ?? null, datasetId);
+  const { result, error, loading, empty, retry } = useSheetQuery(
+    sheet ?? null,
+    datasetId,
+    datasetRevision,
+  );
   const [dropTarget, setDropTarget] = useState(false);
 
   const style: React.CSSProperties = {
@@ -79,7 +86,7 @@ export function DashboardPanelView({
         onDragEnd={onEndDrag}
         title="Drag to reposition this panel"
       >
-        <span className="dash-panel-grip" aria-hidden="true">â£¿</span>
+        <span className="dash-panel-grip" aria-hidden="true">⠿</span>
         <span className="dash-panel-title">{panel.title ?? sheet?.name ?? 'Missing worksheet'}</span>
 
         <div className="dash-panel-actions">
@@ -90,7 +97,7 @@ export function DashboardPanelView({
               title="Swap position with the next panel"
               onClick={() => onSwapWith(panel.id, swapTargetId)}
             >
-              â‡„
+              ⇄
             </button>
           )}
           <label className="dash-size" title="Panel width in columns">
@@ -128,7 +135,7 @@ export function DashboardPanelView({
               title="Open this worksheet"
               onClick={() => onOpenSheet(sheet.id)}
             >
-              â†—
+              ↗
             </button>
           )}
           <button

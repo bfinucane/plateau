@@ -58,7 +58,6 @@ const DATA_DIR = process.env.PLATEAU_DATA_DIR
 const WORKBOOK_PATH = resolve(DATA_DIR, 'workbook.json');
 /** Previous generation, kept so a bad save is recoverable. */
 const WORKBOOK_BACKUP_PATH = resolve(DATA_DIR, 'workbook.json.bak');
-const SUPERSTORE_PATH = resolve(DATA_DIR, 'superstore.csv');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -816,18 +815,6 @@ export function createServer() {
   }
 
   return app;
-}
-
-/** Loads the bundled Superstore sample if no datasets exist yet. */
-export function loadSampleDataset(): Dataset | null {
-  if (!existsSync(SUPERSTORE_PATH)) return null;
-  const csv = readFileSync(SUPERSTORE_PATH, 'utf8');
-  return createDatasetFromCsv(csv, 'Sample - Superstore', 'bundled sample');
-}
-
-/** Reads the bundled dataset path so the CLI can report it. */
-export function samplePath(): string {
-  return SUPERSTORE_PATH;
 }
 
 export { DATA_DIR, PROJECT_ROOT };

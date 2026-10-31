@@ -16,7 +16,7 @@ import { parseCsv, sniffDelimiter } from '../csv.js';
 import { evaluateExpression, parseFormula } from '../expression.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const CSV_PATH = resolve(HERE, '..', '..', '..', 'data', 'superstore.csv');
+const CSV_PATH = resolve(HERE, '..', '..', '..', 'test-fixtures', 'superstore.csv');
 
 let passed = 0;
 let failed = 0;

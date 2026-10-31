@@ -317,11 +317,18 @@ The inspector shows each field's statistics, or the exact engine request behind 
 
 ```bash
 npm install
-npm run seed     # writes data/superstore.csv (deterministic)
 npm run dev      # API on :5177, UI on :5173
 ```
 
 Then open **http://localhost:5173**.
+
+Plateau starts with **no data**. There is no built-in sample: upload a CSV, or connect to an
+engine and register a dataset. The demo content in [`../Examples/`](../Examples/README.md)
+includes a CSV and four workbooks to open once that dataset exists.
+
+The first launch looks like this:
+
+![Plateau with no data source](docs/screenshots/68-empty-start.png)
 
 To run the API and the built UI from a single origin instead:
 
@@ -335,7 +342,15 @@ npm run serve    # http://127.0.0.1:5177
 ```bash
 npm test         # 806 unit checks, 23 suites
 npm run typecheck
-npm run test:ui  # drives the real UI in headless Chrome; 41 end-to-end checks
+```
+
+The browser harnesses need a dataset. `npm run test:server` starts a separate server seeded
+from the checked-in `test-fixtures/superstore.csv` (never from product data), then run a
+harness against it, for example:
+
+```bash
+npm run test:server   # terminal 1, http://127.0.0.1:5177
+node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 ```
 
 `npm test` runs twenty-three suites: `engine.test.ts` (expressions, CSV, inference, query
@@ -795,7 +810,8 @@ the engine is up and what it can actually do *before* committing:
 - **Connect** registers the dataset, which then behaves like any other data
   source — fields in the pane, drag onto shelves, charts render.
 - **Disconnect and Reconnect** sit beside Connect while a remote source is active.
-  Disconnect removes that registration and switches to the local sample dataset;
+  Disconnect removes that registration and switches to another local dataset when
+  one exists (otherwise the workspace returns to its empty state);
   other datasets are untouched, and the engine session stays signed in (the
   dialog's **Sign out** owns that). Reconnect opens Connect with the engine URL,
   cube name and display name already filled in, which is also the recovery path

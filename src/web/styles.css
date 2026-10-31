@@ -80,6 +80,25 @@ textarea {
   min-height: 0;
 }
 
+/* First-run / disconnected state. Plateau ships no data, so this is the only
+   instruction a new workbook gets before a CSV or engine connection exists. */
+.start-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 10px 18px;
+  background: var(--warning-soft, #fdf4e3);
+  border-bottom: 1px solid #ecd9b8;
+  color: #6b4d1d;
+  font-size: 12.5px;
+}
+.start-banner strong { color: #3f2d10; }
+.start-banner-actions { display: flex; gap: 8px; flex: none; }
+@media (max-width: 760px) {
+  .start-banner { align-items: flex-start; flex-direction: column; gap: 8px; }
+}
+
 .command-spacer {
   flex: 1;
 }

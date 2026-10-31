@@ -68,6 +68,7 @@ interface State {
 type Action =
   | { type: 'datasets/loaded'; datasets: DatasetMeta[] }
   | { type: 'dataset/selected'; dataset: DatasetMeta | null; datasetId: string | null }
+  | { type: 'dataset/cleared'; datasets: DatasetMeta[] }
   | { type: 'dataset/rebound'; dataset: DatasetMeta; datasetId: string }
   | { type: 'dataset/updated'; dataset: DatasetMeta }
   | { type: 'workbook/loaded'; workbook: WorkbookState | null }
@@ -202,6 +203,16 @@ function reducer(state: State, action: Action): State {
         ...state,
         dataset: action.dataset,
         datasets: state.datasets.map((d) => (d.id === action.dataset.id ? { ...d, ...action.dataset } : d)),
+      };
+
+    case 'dataset/cleared':
+      return {
+        ...state,
+        datasets: action.datasets,
+        dataset: null,
+        activeDatasetId: null,
+        // There is nothing left to query; keep the empty-source state coherent.
+        workbook: createInitialWorkbook(),
       };
 
     case 'workbook/loaded':
@@ -615,6 +626,17 @@ export function useAppState() {
   // Serialise so the effect only fires on real changes.
   const specKey = useMemo(() => (spec ? JSON.stringify(spec) : ''), [spec]);
 
+  /**
+   * Changes when the dataset's column set changes — notably when workbook
+   * calculation drafts have just been registered. A sheet can reference a field
+   * that did not exist for the first query; rerunning on the column change makes
+   * opening a workbook self-healing instead of leaving a stale "unknown field".
+   */
+  const columnsKey = useMemo(
+    () => (state.dataset?.columns ?? []).map((column) => column.name).join('|'),
+    [state.dataset],
+  );
+
   useEffect(() => {
     if (!spec) {
       setQueryResult(null);
@@ -687,7 +709,7 @@ export function useAppState() {
       });
     // `attempt` lets a retry re-run the same spec: the query only re-runs when the
     // spec changes, so a failure would otherwise never clear.
-  }, [specKey, spec, attempt]);
+  }, [specKey, spec, attempt, columnsKey]);
 
   /** Re-runs the active sheet's query. */
   const retryQuery = useCallback(() => setAttempt((value) => value + 1), []);
@@ -772,6 +794,8 @@ export function useAppState() {
     if (fallback) {
       const dataset = await fetchDataset(fallback.id);
       dispatch({ type: 'dataset/selected', dataset, datasetId: dataset.id });
+    } else {
+      dispatch({ type: 'dataset/cleared', datasets });
     }
     return activeName;
   }, [state.activeDatasetId, state.dataset]);
@@ -888,6 +912,11 @@ export function useAppState() {
         // Refresh the column list WITHOUT `dataset/selected`: that resets the
         // workbook, and losing every sheet to restore one field would be worse.
         dispatch({ type: 'dataset/updated', dataset: await fetchDataset(dataset.id) });
+        // A workbook opened with its calculation drafts sees the sheet query run
+        // before the drafts are registered, so the first attempt can fail with
+        // "unknown field". Re-running after registration makes opening content
+        // self-healing; without it the user had to press Try again.
+        setAttempt((value) => value + 1);
         if (failures.length > 0) {
           calculationSyncRef.current = null;
           dispatch({

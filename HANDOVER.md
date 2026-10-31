@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, twenty-three session commits on top of `0e252ab`. Every number
+Written on branch `main`, twenty-four session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,14 +13,14 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 45 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 46 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 71 files in `src/`, ~30,000 lines |
 | Unit tests | **806 checks**, 23 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
-| Screenshots | 60, in `docs/screenshots/` |
-| Bundle | `index-BfFMCWhv.js` (app, 159 kB) + `echarts`/`react` vendor chunks |
+| Screenshots | 61, in `docs/screenshots/` |
+| Bundle | `index-5IQhVRuW.js` (app, 159 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -40,8 +40,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-engine.ps1
 start.cmd
 ```
 
-`start.cmd` finds Node, generates the sample dataset on first run, refuses to start
-if `dist\web\index.html` is missing, and opens a browser.
+`start.cmd` finds Node, refuses to start if `dist\web\index.html` is missing, and opens a
+browser. It deliberately seeds **no data**: upload a CSV or connect to an engine.
 
 ```powershell
 pnpm run build                  # rebuild the client into dist/web
@@ -277,7 +277,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Twenty-three commits on top of `0e252ab` — fourteen features, a wire follow-up, a
+Twenty-four commits on top of `0e252ab` — fifteen features, a wire follow-up, a
 maintenance pass, a contract-v1 adoption, two design decisions and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
@@ -312,7 +312,8 @@ verification hygiene. The commit messages have the detail; the shape:
 | An audit found dead declarations, a Vite React plugin imported but never installed, a single 1.4 MB JS bundle, two unused dev dependencies, and no check of the real engine's wire behaviour | Maintenance pass: fixed the unused code and plugin, split React/ECharts/application chunks (app is 156 kB), removed the unused dependencies and updated the lockfile, and added `scripts/verify-engine.mjs` (33 read-only checks against a live engine) |
 | The suite contract moved to `contract/` and a static audit found Plateau compliant at T2 but with five client-side gaps: no contract pin, `#` system cubes offered as datasets, five error codes misfiled, measure-scope filters inferred from the global list, and `datePart` forwarded to an engine that refuses it | Contract-v1 adoption (handoff 001, §8.13): mirror re-pinned to the contract, `isSystem` carried and enforced, the full error-code set accepted, measure scope closed unless explicitly reported, date bucketing computed client-side, and T2/T4 declared with evidence |
 | Small-multiple panes squeezed three region labels onto one axis and repeated the pane's product name as a nested axis label, so text overlapped and the plot was tiny | Compact pane layout (§8.14): the split dimension is no longer nested into the axis, narrow panes rotate and truncate category labels, the value axis gets fewer ticks, margins are tightened, and panes wrap below a 260 px minimum width |
-| A remote data source could be added and switched to, but never removed from the app; after an engine restart the only route back was retyping the URL and cube from memory | Disconnect / Reconnect (§8.15): Disconnect unregisters the active remote dataset (falls back to the local sample, keeps the engine session and other datasets); Reconnect opens Connect pre-filled with the engine URL, cube and display name. The cube name is now stored in dataset metadata, so the pre-fill survives a reload. |
+| A remote data source could be added and switched to, but never removed from the app; after an engine restart the only route back was retyping the URL and cube from memory | Disconnect / Reconnect (§8.15): Disconnect unregisters the active remote dataset (falls back to another local dataset when one exists, else the empty state; keeps the engine session and other datasets); Reconnect opens Connect pre-filled with the engine URL, cube and display name. The cube name is now stored in dataset metadata, so the pre-fill survives a reload. |
+| Plateau auto-seeded a bundled “Sample - Superstore” on first run, separate from Patricia, and the examples built for the previous request were new code rather than content | Removed the built-in sample (§8.16): product starts empty with an explicit Upload/Connect state; the browser suite seeds a separate test fixture; `Examples/` now holds an explicit CSV and four workbook JSON files, no code. Opening a workbook whose calculation drafts need registration now re-runs the panels once the fields exist. |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (33),
 `capabilityGating.test.ts` (47), `workbookFile.test.ts` (73),
@@ -329,7 +330,8 @@ creates bins, a set and a group through their dialogs) and `verify-test-set.mjs`
 `51-three-dimensions.png`, `52-connect-calculated.png`, `53`–`60` for the workbook,
 test-set and tab-strip work, `61-null-cells.png`, `62-engine-auth.png`,
 `63-reference-lines.png`, `64-bins.png`, `65-sets-groups.png`, `66-forecast.png`,
-`67-small-multiples-labels.png` and `36-disconnect-reconnect.png`.
+`67-small-multiples-labels.png`, `36-disconnect-reconnect.png` and
+`68-empty-start.png`.
 
 The maintenance pass added `scripts/verify-engine.mjs` (33 checks, read-only): public
 capabilities, dataset discovery, describe, grouped SUM, a dimension filter, the row
@@ -597,9 +599,9 @@ it appears to, and it is the only fixture using `.import_pc` (no engine test cov
 Proposed (not done): make the tree unique-membered with a genuinely signed weight and
 leaf facts derived from the sample, assert the rolled-up total in the seed, and make
 promotion **erase** the orphaned leaf values (the current behaviour keeps them
-unreachable but persisted) plus warn on re-parenting. Our generator
-`scripts/export-engine-fixtures.mjs` has the same false comment and needs the same fix
-when fixtures are regenerated.
+unreachable but persisted) plus warn on re-parenting. The fixture generator that produced
+these files (`scripts/export-engine-fixtures.mjs`) had the same false comment; it was removed
+with the sample.
 
 ### 8.12 Maintenance pass (audit results)
 Run after the analytics work, with no feature changes. What was found and fixed:
@@ -729,9 +731,9 @@ Switching datasets also silently left every previous remote registration in the 
 - `DELETE /api/datasets/:id` already existed but had no caller. The toolbar now shows
   **Disconnect** and **Reconnect** while the active dataset is remote.
 - **Disconnect** asks for confirmation, unregisters the dataset, refreshes the list
-  and falls back to a local dataset (preferring one over another remote). It does
-  **not** sign the engine out — several datasets can share an engine URL, so the
-  dialog's existing **Sign out** stays the only session-level action.
+  and falls back to another local dataset when one exists (otherwise the empty
+  start state). It does **not** sign the engine out — several datasets can share an
+  engine URL, so the dialog's existing **Sign out** stays the only session-level action.
 - **Reconnect** opens the normal Connect dialog pre-filled with the dataset's
   `engineUrl`, the new `engineDataset` cube name and its display name. Nothing is
   re-registered silently: the usual Test/Add dataset flow (including sign-in) runs, so
@@ -740,9 +742,38 @@ Switching datasets also silently left every previous remote registration in the 
   the list and detail routes, so the pre-fill does not depend on the display name.
 - `verify-connect` grew 84 → 97 checks: the two actions appear only for a remote
   source, Reconnect pre-fills all three values, Disconnect confirms and reports what
-  was removed, the remote source disappears and the local sample becomes active, and a
+  was removed, the remote source disappears and the local test fixture becomes active, and a
   full Connect brings the same remote dataset back with its fields.
   Screenshot: `docs/screenshots/36-disconnect-reconnect.png`.
+
+### 8.16 No built-in sample; demo content instead
+Plateau used to seed a bundled “Sample - Superstore” whenever the server started with no
+datasets. That fixture was separate from Patricia’s model and made it unclear which data a
+workbook was showing: a workbook records field names, not a dataset binding, so opening
+content against the sample looked correct while testing the wrong source. The previous demo
+request had also produced four **code** demos, not content.
+
+- **Removed the bundled sample from the product.** `src/server/index.ts` starts empty;
+  `loadSampleDataset`/`samplePath` and `data/superstore.csv` are gone. `start.cmd` no longer
+  generates it. The empty state is explicit: “No data source yet” with Upload CSV and
+  Connect actions.
+- **Test-only fixture.** `test-fixtures/superstore.csv` exists only for tests. `npm run
+  test:server` (`scripts/test-server.ts`) seeds it under the name “Test fixture -
+  Superstore”; `verify-retry` and `verify-workbook` launch that server, and the README tells
+  browser-harness users to do the same. `verify-ui` now checks for the fixture instead of a
+  sample.
+- **Content lives in `Examples/`.** `Examples/data/Superstore.csv` is the exact Patricia v2
+  raw source (SHA-256 `9325960E…`); four workbook JSONs compose an executive overview, a
+  sales deep dive, a calculations/LOD tour and a 14-sheet visual gallery. No app code, no
+  second front end.
+- **Opening content with calculation drafts self-heals.** The first query can run before the
+  drafts are registered; the app now re-runs both the active sheet (`columnsKey`) and every
+  dashboard panel (`datasetRevision`) when the column set changes. The calculations example
+  opens with zero errors instead of four “unknown field” panels.
+- **Evidence:** all four example workbooks loaded through the real UI from an empty server:
+  5/1, 6/2, 3/1 and 14/1 sheets/dashboards, screenshots in `Examples/docs/`, zero view
+  errors. Full suite still **806 unit / 569 browser**, with `verify-connect` at 97 and
+  `verify-workbook` at 97.
 
 ---
 
@@ -825,7 +856,8 @@ Switching datasets also silently left every previous remote registration in the 
 ```powershell
 cd tableau-clone
 node scripts/test.mjs                                   # 806 unit checks
-node e2e/verify-ui.mjs http://127.0.0.1:5180/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
+npm run test:server                                     # terminal 2: test fixture on :5177
+node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
 ```
 
@@ -851,7 +883,7 @@ is worth showing.
 
 ## 11. Provenance
 
-45 commits, `55482d0` … HEAD. The last twenty-three are this session; the 14 before them
+46 commits, `55482d0` … HEAD. The last twenty-four are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

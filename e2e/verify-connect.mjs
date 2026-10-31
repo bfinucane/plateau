@@ -944,8 +944,8 @@ try {
   check('the remote dataset leaves the data source list',
     !afterDisconnect.options.some((option) => /Remote Sales/.test(option)),
     JSON.stringify(afterDisconnect.options));
-  check('Plateau falls back to the local sample',
-    /Sample/.test(afterDisconnect.selected), afterDisconnect.selected);
+  check('Plateau falls back to the local test fixture',
+    /Test fixture|Superstore/.test(afterDisconnect.selected), afterDisconnect.selected);
   check('the remote-only actions disappear', afterDisconnect.remoteButtons === false);
 
   // Reconnect through the normal Connect flow: the same engine URL and cube must

@@ -55,17 +55,6 @@ if not defined NODE_EXE (
 echo   Using Node: %NODE_EXE%
 "%NODE_EXE%" --version
 
-REM --- first run: the sample dataset ---------------------------------------
-if not exist "data\superstore.csv" (
-  echo   Generating the sample dataset...
-  "%NODE_EXE%" scripts\run.mjs scripts\generate-superstore.ts
-  if errorlevel 1 (
-    echo   ERROR: could not generate the sample dataset.
-    pause
-    exit /b 1
-  )
-)
-
 if not exist "dist\web\index.html" (
   echo.
   echo   ERROR: no built UI found at dist\web\index.html

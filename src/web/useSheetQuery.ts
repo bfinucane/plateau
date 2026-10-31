@@ -27,7 +27,16 @@ export interface SheetQuery {
   retry: () => void;
 }
 
-export function useSheetQuery(sheet: Sheet | null, datasetId: string | null): SheetQuery {
+export function useSheetQuery(
+  sheet: Sheet | null,
+  datasetId: string | null,
+  /**
+   * Changes when the dataset's columns change, e.g. after workbook calculation
+   * drafts are registered. The spec itself does not change in that case, but the
+   * query that failed with "unknown field" must be allowed to run again.
+   */
+  datasetRevision = '',
+): SheetQuery {
   const [result, setResult] = useState<QueryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -77,7 +86,8 @@ export function useSheetQuery(sheet: Sheet | null, datasetId: string | null): Sh
       requestIdRef.current++;
     };
     // `attempt` is in the dependency list so a retry re-runs the same spec.
-  }, [specKey, spec, attempt]);
+    // `datasetRevision` handles columns arriving after the first query.
+  }, [specKey, spec, attempt, datasetRevision]);
 
   return {
     result,
