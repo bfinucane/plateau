@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, twenty-five session commits on top of `0e252ab`. Every number
+Written on branch `main`, twenty-six session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,9 +13,9 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 47 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 48 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 71 files in `src/`, ~30,000 lines |
-| Unit tests | **812 checks**, 23 suites, all passing |
+| Unit tests | **814 checks**, 23 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
@@ -277,7 +277,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Twenty-five commits on top of `0e252ab` — sixteen features, a wire follow-up, a
+Twenty-six commits on top of `0e252ab` — seventeen features, a wire follow-up, a
 maintenance pass, a contract-v1 adoption, two design decisions and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
@@ -315,6 +315,7 @@ verification hygiene. The commit messages have the detail; the shape:
 | A remote data source could be added and switched to, but never removed from the app; after an engine restart the only route back was retyping the URL and cube from memory | Disconnect / Reconnect (§8.15): Disconnect unregisters the active remote dataset (falls back to another local dataset when one exists, else the empty state; keeps the engine session and other datasets); Reconnect opens Connect pre-filled with the engine URL, cube and display name. The cube name is now stored in dataset metadata, so the pre-fill survives a reload. |
 | Plateau auto-seeded a bundled “Sample - Superstore” on first run, separate from Patricia, and the examples built for the previous request were new code rather than content | Removed the built-in sample (§8.16): product starts empty with an explicit Upload/Connect state; the browser suite seeds a separate test fixture; `Examples/` now holds an explicit CSV and four workbook JSON files, no code. Opening a workbook whose calculation drafts need registration now re-runs the panels once the fields exist. |
 | Patricia's `Orders` stores four measures as members of one `Measure` column; `describe` names the dimension but not its members, so Plateau showed a single meaningless `Measure` field and hid Sales/Profit/Quantity/Discount | Measure-dimension expansion (§8.17): read the dimension's domain once at registration, synthesise one ordinary measure per member, hide the storage column, and send member names in queries. Attribute cubes are not expanded. |
+| Sorting a view by SUM(Sales) failed with `orderBy names unknown output column 'Sum of Sales'`: the client's pill label was sent as the engine output name | Remote ORDER BY translation (§8.18): map the client’s aggregate label (“Sum of Sales”, “Average of Profit”, …) back to the measure member name (`Sales`, `Profit`) before sending; dimension sorts keep the field name. |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (33),
 `capabilityGating.test.ts` (47), `workbookFile.test.ts` (73),
@@ -764,9 +765,10 @@ request had also produced four **code** demos, not content.
   Superstore”; `verify-retry` and `verify-workbook` launch that server, and the README tells
   browser-harness users to do the same. `verify-ui` now checks for the fixture instead of a
   sample.
-- **Content lives in `Examples/`.** `Examples/data/Superstore.csv` is the exact Patricia v2
-  raw source (SHA-256 `9325960E…`); four workbook JSONs compose an executive overview, a
-  sales deep dive, a calculations/LOD tour and a 14-sheet visual gallery. No app code, no
+- **Content lives in `Examples/`.** `Examples/data/Superstore.csv` is the Patricia v2 source
+  with its headers renamed to the v2.2 SQL-safe identifiers (`SubCategory`, `OrderDate`, …;
+  SHA-256 `516D91F3…`, values unchanged); four workbook JSONs compose an executive overview,
+  a sales deep dive, a calculations/LOD tour and a 14-sheet visual gallery. No app code, no
   second front end.
 - **Opening content with calculation drafts self-heals.** The first query can run before the
   drafts are registered; the app now re-runs both the active sheet (`columnsKey`) and every
@@ -801,6 +803,25 @@ the wire shape is contract v1 (§3.1/§3.2), and the engine answers `measures: [
   `measure-dimension cubes expose their members as measures` adds six checks
   (`remoteDataset` 43 → 49; full unit 806 → 812). Documentation in
   `docs/ENGINE-PROTOCOL.md` explains the expansion. No wire change.
+
+### 8.18 Sorting by a measure on the wire
+After measure dimensions were expanded, sorting a remote view by `SUM(Sales)` failed with
+`Invalid argument: orderBy names unknown output column 'Sum of Sales'`. The browser's
+`spec.sort.field` is the **client output label** (`Sum of Sales`, `Average of Profit`),
+because that is the name it uses to find the rendered column; the engine's output column is
+the **measure member name** (`Sales`, `Profit`), with the human label carried separately in
+`measureLabels`.
+
+- `specToRequest` now maps `spec.sort.field` back through the fields in the request:
+  measure fields use the same label map as the renderer (`Sum`, `Average`, `Median`,
+  `Minimum`, `Maximum`, `Count`, `Count Distinct`, `Std. Deviation`, `Variance`,
+  `Attribute`) and send the bare field name; dimension sorts keep the dimension name.
+  A caller that already sends the engine vocabulary is accepted unchanged.
+- The fake engine in `protocol.test.ts` now translates the wire's measure-name ORDER BY back
+  to its local `Sum of Sales` column, so the local/remote parity test still means what it
+  says instead of accidentally encoding the wrong boundary behaviour.
+- `protocol` grew 56 → 58 checks (SUM label, Average label, dimension sort). Full unit suite
+  **814 checks / 23 suites**; typecheck clean. No wire change.
 
 ---
 
@@ -888,7 +909,7 @@ node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Ap
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
 ```
 
-Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 40, `remoteDataset` 49,
+Suites: `engine` 77, `lod` 45, `protocol` 58, `httpTransport` 40, `remoteDataset` 49,
 `queryValidation` 17, `capabilityGating` 47, `tableCalcs` 51, `workbookBackup` 14,
 `split` 35, `axisSelection` 34, `aggregationMenu` 33, `workbookFile` 73,
 `calculationDrafts` 23, `referenceLines` 11, `bins` 30, `setsGroups` 27, `forecast` 30,
@@ -910,7 +931,7 @@ is worth showing.
 
 ## 11. Provenance
 
-47 commits, `55482d0` … HEAD. The last twenty-five are this session; the 14 before them
+48 commits, `55482d0` … HEAD. The last twenty-six are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

@@ -11,6 +11,7 @@
  * without needing a running engine.
  */
 
+import { aggregateColumnName } from '../../core/expression.js';
 import { buildTableFromRows } from '../../core/table.js';
 import { executeQuery, type QuerySpec } from '../../core/engine.js';
 import {
@@ -137,6 +138,19 @@ class FakeEngine implements EngineTransport {
   async query(request: QueryRequest): Promise<QueryResponse> {
     validateQueryRequest(request);
 
+    /*
+     * The wire's ORDER BY names the MEASURE ("Sales"); the in-process engine
+     * names the aggregated column "Sum of Sales". A real engine sorts by its
+     * own output; this fake has to translate back before calling executeQuery,
+     * exactly as the real protocol boundary does in the other direction.
+     */
+    const sortedMeasure = request.orderBy
+      ? request.measures.find((measure) => measure.name === request.orderBy?.output)
+      : undefined;
+    const localSortField = sortedMeasure
+      ? aggregateColumnName(sortedMeasure.aggregation ?? 'SUM', sortedMeasure.name)
+      : request.orderBy?.output;
+
     // Decode the plan back into the engine's own spec. This is the fidelity
     // check: anything the protocol cannot carry becomes a mismatch later.
     const spec: QuerySpec = {
@@ -154,7 +168,7 @@ class FakeEngine implements EngineTransport {
       ],
       filters: request.filters,
       sort: request.orderBy
-        ? { field: request.orderBy.output, direction: request.orderBy.direction }
+        ? { field: localSortField ?? request.orderBy.output, direction: request.orderBy.direction }
         : undefined,
       limit: request.limit,
     };
@@ -538,10 +552,32 @@ async function main(): Promise<void> {
       request.measures[0].aggregation === 'SUM', String(request.measures[0].aggregation));
     check('filters pass through unchanged', request.filters.length === 1);
     check('sort becomes orderBy',
-      request.orderBy?.output === 'Sum of Sales' && request.orderBy?.direction === 'desc',
+      request.orderBy?.output === 'Sales' && request.orderBy?.direction === 'desc',
       JSON.stringify(request.orderBy));
     check('limit passes through', request.limit === 25);
     check('protocol version is stamped', request.protocolVersion === PROTOCOL_VERSION);
+
+    const averageSorted = specToRequest('ds', {
+      fields: [
+        { name: 'Region', kind: 'dimension' },
+        { name: 'Profit', kind: 'measure', aggregation: 'AVG' },
+      ],
+      sort: { field: 'Average of Profit', direction: 'asc' },
+    });
+    check('a non-SUM client label also maps to the measure name',
+      averageSorted.orderBy?.output === 'Profit',
+      JSON.stringify(averageSorted.orderBy));
+
+    const dimensionSorted = specToRequest('ds', {
+      fields: [
+        { name: 'Region', kind: 'dimension' },
+        { name: 'Sales', kind: 'measure', aggregation: 'SUM' },
+      ],
+      sort: { field: 'Region', direction: 'asc' },
+    });
+    check('a dimension sort keeps the field name',
+      dimensionSorted.orderBy?.output === 'Region',
+      JSON.stringify(dimensionSorted.orderBy));
   }
 
   section('LOD fallback');

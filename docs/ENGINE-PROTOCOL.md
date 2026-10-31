@@ -351,9 +351,13 @@ predicate (fixed in engine `ae5e2c9`, §11.9). Plateau sends `describe` casing.
 
 ### `orderBy`
 
-`output` is the **output column name** — `"Sum of Sales"`, not `"Sales"`. If the
-named column does not exist, return `invalid_argument` rather than sorting by
-something else.
+`output` is the **exact output column name**, as it appears in `response.columns`. For a
+measure-dimension cube that is the measure member name (`"Sales"`); for a measure-less cube
+the engine may name the aggregated column from the aggregation. A client's pill label
+(`"Sum of Sales"`) is not a wire name. Plateau translates its label back to the query field
+before sending the request, which is why sorting a remote `SUM(Sales)` view now sends
+`{"output":"Sales"}`. If the named column does not exist, return `invalid_argument` rather
+than sorting by something else.
 
 ### `expressions`
 

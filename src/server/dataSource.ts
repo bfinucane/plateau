@@ -20,8 +20,7 @@
 
 import type { ColumnSchema, DataTable } from '../core/types.js';
 import type { Filter } from '../core/filters.js';
-import { formulaAst, type AstNode } from '../core/expression.js';
-import type { QueryResult, QuerySpec } from '../core/engine.js';
+import { formulaAst, type AstNode } from '../core/expression.js';import type { QueryResult, QuerySpec } from '../core/engine.js';
 import {
   PROTOCOL_VERSION,
   ProtocolError,
@@ -856,6 +855,38 @@ function inferLogicalType(dataType: EngineColumn['dataType']): ColumnSchema['log
 // ------------------------------------------------- spec -> request mapping ---
 
 /**
+ * Client-side pill labels for aggregations.
+ *
+ * `spec.sort.field` arrives as a CLIENT output label ("Sum of Sales", "Average
+ * of Profit"), because the browser uses that name to look up the rendered column.
+ * The engine, by contrast, names an aggregated column after the measure itself
+ * ("Sales", "Profit"). The two vocabularies must not be mixed on the wire; doing
+ * so produced `orderBy names unknown output column 'Sum of Sales'`.
+ *
+ * Kept here rather than importing the web module: this translator is the seam
+ * between the client and the protocol, so it owns the mapping.
+ */
+const CLIENT_AGGREGATION_LABELS: Record<string, string> = {
+  SUM: 'Sum',
+  AVG: 'Average',
+  MEDIAN: 'Median',
+  MIN: 'Minimum',
+  MAX: 'Maximum',
+  COUNT: 'Count',
+  COUNTD: 'Count Distinct',
+  STDEV: 'Std. Deviation',
+  VAR: 'Variance',
+  ATTR: 'Attribute',
+};
+
+/** The client's output-column name for a query field. */
+function clientOutputName(field: QuerySpec['fields'][number]): string {
+  if (field.kind === 'dimension') return field.name;
+  const aggregation = field.aggregation ?? 'SUM';
+  return `${CLIENT_AGGREGATION_LABELS[aggregation] ?? aggregation} of ${field.name}`;
+}
+
+/**
  * Translates the client's query spec into a protocol request.
  *
  * This is the ONLY place the two vocabularies meet. Keeping it in one function
@@ -884,7 +915,20 @@ export function specToRequest(datasetId: string, spec: QuerySpec): QueryRequest 
   };
 
   if (spec.sort) {
-    request.orderBy = { output: spec.sort.field, direction: spec.sort.direction };
+    /*
+     * The engine has no "Sum of Sales" output column: the result column is the
+     * measure name and `measureLabels` carries the human label separately. Map
+     * the client's pill label back to the field it came from before sending the
+     * ORDER BY. Accept a raw field name too, so callers that already send the
+     * engine vocabulary keep working.
+     */
+    const sortedField = spec.fields.find(
+      (field) => clientOutputName(field) === spec.sort?.field || field.name === spec.sort?.field,
+    );
+    request.orderBy = {
+      output: sortedField?.name ?? spec.sort.field,
+      direction: spec.sort.direction,
+    };
   }
   if (Object.keys(expressions).length > 0) {
     request.expressions = expressions;

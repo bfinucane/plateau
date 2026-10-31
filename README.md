@@ -340,7 +340,7 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 812 unit checks, 23 suites
+npm test         # 814 unit checks, 23 suites
 npm run typecheck
 ```
 
@@ -409,13 +409,13 @@ writes nothing. If the engine requires authentication it checks the 401 first, t
 skips the protected checks unless `PLATEAU_ENGINE_USER` and `PLATEAU_ENGINE_PASSWORD`
 are set — a skip is reported, never counted as a pass.
 
-Total: **1381 checks** — 812 unit, 569 browser, plus 33 real-engine wire checks.
+Total: **1383 checks** — 814 unit, 569 browser, plus 33 real-engine wire checks.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
 | engine | 77 | expressions, CSV, type inference, query execution, calculated fields |
 | LOD | 45 | `FIXED`/`INCLUDE`/`EXCLUDE` parsing and filter ordering |
-| protocol | 56 | **local/remote parity**, wire shapes, LOD fallback, capability negotiation |
+| protocol | 58 | **local/remote parity**, wire shapes, LOD fallback, capability negotiation, ORDER BY output naming |
 | http transport | 40 | request encoding, error mapping (all contract v1 codes), timeouts, doc/code consistency |
 | remote dataset | 49 | registration, failure modes, queries, pushed-down calculated fields, client-side date bucketing, measure-dimension expansion |
 | query validation | 17 | unknown field names are refused, local and remote |
@@ -746,7 +746,7 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   trend projection, not a statistical model — the engine is not asked to forecast.
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1381 checks green (812 unit, 569 browser)
+- 1383 checks green (814 unit, 569 browser)
 
 ### Connecting to an engine
 
