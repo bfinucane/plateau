@@ -133,7 +133,78 @@ async function main(): Promise<void> {
     server.close();
   }
 
-  section('Unknown dataset');
+  section('Measure-dimension cubes expose their members as measures');
+
+  {
+    const ordersCatalog = {
+      dataset: 'Orders',
+      rowCount: 22240,
+      measureDimension: 'Measure',
+      isAttributeTable: false,
+      isSystem: false,
+      columns: [
+        { name: 'Region', dataType: 'string', cardinality: 4, suggestedKind: 'dimension' },
+        { name: 'Order Date', dataType: 'string', cardinality: 929, suggestedKind: 'dimension' },
+        {
+          name: 'Measure',
+          dataType: 'number',
+          logicalType: 'real',
+          cardinality: 2,
+          suggestedKind: 'measure',
+        },
+      ],
+    };
+    let domainRequests = 0;
+    const { server, port } = await startStub((url) => {
+      if (url === '/v1/capabilities') return { body: capabilities };
+      if (url === '/v1/orders') return { body: ordersCatalog };
+      if (url.includes('/query')) {
+        domainRequests += 1;
+        return {
+          body: {
+            dataset: 'Orders',
+            protocolVersion: PROTOCOL_VERSION,
+            columns: ['Measure'],
+            columnMeta: [{
+              name: 'Measure', kind: 'dimension', dataType: 'string',
+              logicalType: 'string', semanticType: 'nominal', defaultAggregation: 'COUNT',
+            }],
+            rows: [['Sales'], ['Profit']],
+            dimensionNames: ['Measure'],
+            measureNames: [],
+            measureLabels: [],
+            domain: { Measure: ['Sales', 'Profit'] },
+            elapsedMs: 1,
+            truncated: false,
+          },
+        };
+      }
+      return { status: 404, body: { code: 'unknown_dataset', error: 'no such dataset' } };
+    });
+
+    const transport = new HttpEngineTransport({ baseUrl: `http://127.0.0.1:${port}` });
+    const dataset = await createRemoteDataset({ name: 'Orders', dataset: 'orders', transport });
+    const schema = await dataset.backend.schema();
+    const names = schema.map((column) => column.name);
+    console.log('  measure-dimension schema:', JSON.stringify(schema.map((c) => `${c.name}:${c.kind}`)));
+
+    check('the measure dimension itself is not presented as a field',
+      !names.includes('Measure'), JSON.stringify(names));
+    check('its members become ordinary measures',
+      ['Sales', 'Profit'].every((name) => schema.find((c) => c.name === name)?.kind === 'measure'),
+      JSON.stringify(schema.filter((c) => ['Sales', 'Profit'].includes(c.name))));
+    check('they are numeric and continuous',
+      schema.filter((c) => ['Sales', 'Profit'].includes(c.name))
+        .every((c) => c.dataType === 'number' && c.role === 'continuous'));
+    check('the remaining dimensions are untouched',
+      names.includes('Region') && names.includes('Order Date'), JSON.stringify(names));
+    check('member discovery uses the domain path, once',
+      domainRequests === 1, String(domainRequests));
+    check('the dataset reports the four-cell-per-row storage count honestly',
+      dataset.meta.rowCount === 22240, String(dataset.meta.rowCount));
+
+    server.close();
+  }
 
   {
     const { server, port } = await startStub(() => ({

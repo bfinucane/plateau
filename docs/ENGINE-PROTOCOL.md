@@ -182,6 +182,17 @@ The middle two exist for **join discovery**: they are how a client can tell that
 holds attribute values meant to be attached to another cube, rather than measures to
 be queried directly. See `capabilities.supportsJoin` and the `join` block in §3.
 
+**A measure dimension is not shown as a user dimension.** When `measureDimension` is
+non-null and `isAttributeTable` is false, the column named there (e.g. `Measure`) stores
+the measure names as its members; the cells are values for whichever member applies.
+Plateau reads the domain of that dimension once at registration and presents each member
+as an ordinary measure — Patricia's `Orders` appears as `Sales`, `Profit`, `Quantity` and
+`Discount`, not as one field called `Measure`. The measure-dimension column itself is
+hidden from the data pane. A query then sends `measures: [{"name":"Sales",…}]`; it never
+puts the measure dimension in `groupBy` with measures (§11.4). Attribute cubes are exempt:
+their `measureDimension` names attachable attribute values, not measures. `rowCount` remains
+the contract's stored-cell count, so a four-measure cube reports four cells per line item.
+
 **System cubes are not datasets.** `/v1/datasets` deliberately includes `#`-prefixed
 cubes so one call discovers the whole database; `describe.isSystem` is how a client
 tells them apart. Plateau hides them from the dataset picker, skips them as join

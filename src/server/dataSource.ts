@@ -212,6 +212,17 @@ export class RemoteBackend implements DatasetBackend {
   private transport: EngineTransport;
   /** Cached catalog; the client invalidates by constructing a new backend. */
   private catalog: CatalogResponse | null = null;
+  /**
+   * Members of the cube's measure dimension, once discovered.
+   *
+   * A measure-dimension cube stores measures as members of one column (Patricia's
+   * `Orders` stores `Sales`, `Profit`, `Quantity`, `Discount` as members of
+   * `Measure`). `describe` reports the dimension and its cardinality, not the
+   * member names, so the names must be read once from its domain. The UI presents
+   * them as ordinary measures; sending the dimension itself to the data pane is
+   * what made Plateau look like it had one meaningless `Measure` field.
+   */
+  private measureMembers: string[] | null = null;
   private caps: Capabilities | null = null;
   /**
    * Calculated-field formulas defined against this dataset, by name.
@@ -334,6 +345,55 @@ export class RemoteBackend implements DatasetBackend {
   }
 
   /**
+   * The members of the cube's measure dimension, in display order.
+   *
+   * There is no `describe` field for member names; the contract's way to read
+   * them is a grouped domain request. The query deliberately asks for NO measures:
+   * the engine's `domain` map is the distinct-value path (§3.3/§5), and a
+   * measure-dimension axis with no measures is legal (§11.4/§11.8). Rows are not
+   * used: §11.8 duplicates them once per measure, while `domain` does not.
+   */
+  private async ensureMeasureMembers(catalog: CatalogResponse): Promise<string[]> {
+    if (this.measureMembers) return this.measureMembers;
+    const dimension = catalog.measureDimension;
+    if (!dimension) {
+      this.measureMembers = [];
+      return this.measureMembers;
+    }
+
+    const measureColumn = catalog.columns.find((column) => column.name === dimension);
+    // Ask for enough members to cover the reported cardinality, but keep the
+    // request bounded even on a malformed/hostile catalog.
+    const wanted = Math.max(1, Math.min(measureColumn?.cardinality ?? 1000, 1000));
+    const response = await this.transport.query({
+      dataset: this.id,
+      protocolVersion: PROTOCOL_VERSION,
+      groupBy: [{ name: dimension }],
+      measures: [],
+      filters: [],
+      domainFor: [dimension],
+      limit: await this.clampToEngineLimit(wanted),
+    });
+
+    const domain = response.domain?.[dimension];
+    const fromDomain = Array.isArray(domain)
+      ? domain.map((value) => String(value)).filter((value) => value.length > 0)
+      : [];
+    const fromRows = response.rows
+      .map((row) => (row[0] === null || row[0] === undefined ? '' : String(row[0])))
+      .filter((value) => value.length > 0);
+    const members = fromDomain.length > 0 ? fromDomain : [...new Set(fromRows)];
+    if (members.length === 0) {
+      throw new ProtocolError(
+        'engine_error',
+        `The cube describes "${dimension}" as its measure dimension but returned no measure members.`,
+      );
+    }
+    this.measureMembers = members;
+    return members;
+  }
+
+  /**
    * Columns of the dataset, including any joined attributes.
    *
    * `describe` cannot list the attributes: they are members of the attribute cube's
@@ -343,7 +403,42 @@ export class RemoteBackend implements DatasetBackend {
    */
   async schema(): Promise<ColumnSchema[]> {
     const catalog = await this.ensureCatalog();
-    const base = catalog.columns.map((column) => engineColumnToSchema(column));
+    const measureDimension = catalog.measureDimension;
+    /*
+     * A measure-dimension cube is stored as ONE numeric column whose members are
+     * the measures. Presenting that column as a field named `Measure` would show
+     * one meaningless measure and hide Sales/Profit/...; instead, replace it with
+     * one virtual measure per member. Attribute cubes also use `measureDimension`
+     * for their attribute names, so they keep their columns untouched.
+     */
+    const isMeasureCube = Boolean(measureDimension) && !catalog.isAttributeTable;
+    const base = catalog.columns
+      .filter((column) => !isMeasureCube || column.name !== measureDimension)
+      .map((column) => engineColumnToSchema(column));
+
+    if (isMeasureCube) {
+      const members = await this.ensureMeasureMembers(catalog);
+      for (const member of members) {
+        base.push({
+          name: member,
+          label: member,
+          dataType: 'number',
+          logicalType: 'real',
+          semanticType: 'quantitative',
+          kind: 'measure',
+          role: 'continuous',
+          nullCount: 0,
+          // Per-measure cardinality/ranges are not in `describe`; leaving them
+          // unknown is honest, and much better than attributing the whole
+          // dimension's min/max to every measure.
+          cardinality: 0,
+          sampleValues: [],
+          min: null,
+          max: null,
+          isInteger: false,
+        });
+      }
+    }
 
     // Calculated fields defined on this dataset are unknown to the engine's
     // catalog, so they are appended regardless of whether a join is attached.

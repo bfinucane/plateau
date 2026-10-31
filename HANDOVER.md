@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, twenty-four session commits on top of `0e252ab`. Every number
+Written on branch `main`, twenty-five session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,9 +13,9 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 46 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 47 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 71 files in `src/`, ~30,000 lines |
-| Unit tests | **806 checks**, 23 suites, all passing |
+| Unit tests | **812 checks**, 23 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
@@ -277,7 +277,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Twenty-four commits on top of `0e252ab` — fifteen features, a wire follow-up, a
+Twenty-five commits on top of `0e252ab` — sixteen features, a wire follow-up, a
 maintenance pass, a contract-v1 adoption, two design decisions and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
@@ -314,6 +314,7 @@ verification hygiene. The commit messages have the detail; the shape:
 | Small-multiple panes squeezed three region labels onto one axis and repeated the pane's product name as a nested axis label, so text overlapped and the plot was tiny | Compact pane layout (§8.14): the split dimension is no longer nested into the axis, narrow panes rotate and truncate category labels, the value axis gets fewer ticks, margins are tightened, and panes wrap below a 260 px minimum width |
 | A remote data source could be added and switched to, but never removed from the app; after an engine restart the only route back was retyping the URL and cube from memory | Disconnect / Reconnect (§8.15): Disconnect unregisters the active remote dataset (falls back to another local dataset when one exists, else the empty state; keeps the engine session and other datasets); Reconnect opens Connect pre-filled with the engine URL, cube and display name. The cube name is now stored in dataset metadata, so the pre-fill survives a reload. |
 | Plateau auto-seeded a bundled “Sample - Superstore” on first run, separate from Patricia, and the examples built for the previous request were new code rather than content | Removed the built-in sample (§8.16): product starts empty with an explicit Upload/Connect state; the browser suite seeds a separate test fixture; `Examples/` now holds an explicit CSV and four workbook JSON files, no code. Opening a workbook whose calculation drafts need registration now re-runs the panels once the fields exist. |
+| Patricia's `Orders` stores four measures as members of one `Measure` column; `describe` names the dimension but not its members, so Plateau showed a single meaningless `Measure` field and hid Sales/Profit/Quantity/Discount | Measure-dimension expansion (§8.17): read the dimension's domain once at registration, synthesise one ordinary measure per member, hide the storage column, and send member names in queries. Attribute cubes are not expanded. |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (33),
 `capabilityGating.test.ts` (47), `workbookFile.test.ts` (73),
@@ -692,14 +693,15 @@ Verification for the claim:
   transient seeded engine.
 
 Known residuals (reported, not hidden): §11.4 (`value` + measure-dimension axis) is not
-sent by Plateau — the request builder never emits that combination, and the client has
-no path that puts a measure dimension on an axis; §11.7 (COUNT over text) remains an
+sent by Plateau — the request builder only emits specific measure members and the
+measure-dimension column is hidden from the shelves, so there is no path to that
+combination; §11.7 (COUNT over text) remains an
 engine quirk, and Plateau's local inference keeps text columns out of measures; §11.8
 (grouped-no-measures duplication) surfaces only for a remote dimension-only query, and
 Plateau's picker/filter values come from `domainFor`, not those rows. The engine smoke
 test learns the cube's shape from `describe` and uses `value`, so it exercises
-measure-less cubes directly; measure cubes are exercised through `verify-join`'s
-attribute path.
+measure-less cubes directly; measure-dimension cubes are exercised by the new
+`remoteDataset` block and by a live Patricia `Orders` registration.
 
 ### 8.14 Chart text was crowded in small multiples
 A screenshot showed a small-multiple pane where three region labels shared one narrow
@@ -772,8 +774,33 @@ request had also produced four **code** demos, not content.
   opens with zero errors instead of four “unknown field” panels.
 - **Evidence:** all four example workbooks loaded through the real UI from an empty server:
   5/1, 6/2, 3/1 and 14/1 sheets/dashboards, screenshots in `Examples/docs/`, zero view
-  errors. Full suite still **806 unit / 569 browser**, with `verify-connect` at 97 and
+  errors. Full suite **812 unit / 569 browser**, with `verify-connect` at 97 and
   `verify-workbook` at 97.
+
+### 8.17 Measure-dimension cubes: members become measures
+Patricia's `Orders` stores the four raw CSV measure columns as **members** of one
+`Measure` dimension, with the values in cells. `describe` reports the dimension and its
+cardinality but not the member names, so Plateau's schema mapped that column as one
+field called `Measure` and hid Sales/Profit/Quantity/Discount. That is not a data problem:
+the wire shape is contract v1 (§3.1/§3.2), and the engine answers `measures: [{"name":
+"Sales"}]` correctly.
+
+- `RemoteBackend.schema()` now detects `measureDimension` on a non-attribute cube, reads
+  its domain **once** at registration (`groupBy:[Measure], measures:[], domainFor:[Measure]`),
+  and returns one synthetic numeric measure per member in display order. The storage column
+  itself is filtered out of the data pane. Attribute cubes keep their columns because their
+  measure dimension names attributes, not measures.
+- Queries send member names (`Sales`, `Profit`), never the measure dimension in `groupBy`;
+  §11.4's forbidden combination remains unreachable. `value` is still available to the
+  engine and smoke test for measure-less cubes, but the UI exposes the actual measures.
+- `rowCount` remains the contract's stored-cell count (22,240 for four measures over 5,560
+  line items); it is metadata, not a claim that the cube has 22,240 line items.
+- Evidence: a live registration against the transient shared v2 database produced 22
+  columns — 18 dimensions plus `Sales`, `Profit`, `Quantity`, `Discount` — and a
+  `Region × SUM(Sales)` query matched Patricia's totals. The unit block
+  `measure-dimension cubes expose their members as measures` adds six checks
+  (`remoteDataset` 43 → 49; full unit 806 → 812). Documentation in
+  `docs/ENGINE-PROTOCOL.md` explains the expansion. No wire change.
 
 ---
 
@@ -861,7 +888,7 @@ node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Ap
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
 ```
 
-Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 40, `remoteDataset` 43,
+Suites: `engine` 77, `lod` 45, `protocol` 56, `httpTransport` 40, `remoteDataset` 49,
 `queryValidation` 17, `capabilityGating` 47, `tableCalcs` 51, `workbookBackup` 14,
 `split` 35, `axisSelection` 34, `aggregationMenu` 33, `workbookFile` 73,
 `calculationDrafts` 23, `referenceLines` 11, `bins` 30, `setsGroups` 27, `forecast` 30,
@@ -883,7 +910,7 @@ is worth showing.
 
 ## 11. Provenance
 
-46 commits, `55482d0` … HEAD. The last twenty-four are this session; the 14 before them
+47 commits, `55482d0` … HEAD. The last twenty-five are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.
