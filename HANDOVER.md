@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, twenty-seven session commits on top of `0e252ab`. Every number
+Written on branch `main`, twenty-eight session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,14 +13,14 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 49 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 50 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 71 files in `src/`, ~30,000 lines |
-| Unit tests | **816 checks**, 23 suites, all passing |
+| Unit tests | **818 checks**, 23 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
 | Screenshots | 61, in `docs/screenshots/` |
-| Bundle | `index-5IQhVRuW.js` (app, 159 kB) + `echarts`/`react` vendor chunks |
+| Bundle | `index-BKXHwp97.js` (app, 160 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -277,7 +277,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Twenty-seven commits on top of `0e252ab` — eighteen features, a wire follow-up, a
+Twenty-eight commits on top of `0e252ab` — nineteen features, a wire follow-up, a
 maintenance pass, a contract-v1 adoption, two design decisions and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
@@ -317,6 +317,7 @@ verification hygiene. The commit messages have the detail; the shape:
 | Patricia's `Orders` stores four measures as members of one `Measure` column; `describe` names the dimension but not its members, so Plateau showed a single meaningless `Measure` field and hid Sales/Profit/Quantity/Discount | Measure-dimension expansion (§8.17): read the dimension's domain once at registration, synthesise one ordinary measure per member, hide the storage column, and send member names in queries. Attribute cubes are not expanded. |
 | Sorting a view by SUM(Sales) failed with `orderBy names unknown output column 'Sum of Sales'`: the client's pill label was sent as the engine output name | Remote ORDER BY translation (§8.18): map the client’s aggregate label (“Sum of Sales”, “Average of Profit”, …) back to the measure member name (`Sales`, `Profit`) before sending; dimension sorts keep the field name. |
 | A table with only State on the shelf showed Washington four times, Michigan four times, etc. against Patricia `Orders` | §11.8 duplicate collapse (§8.19): a measure-dimension cube returns each group once per measure member for a no-measure query; Plateau now collapses identical rows before the UI renders them. |
+| A row chart split by Region had every State label sitting below its bar | Pane-aware category selection (§8.20): `Region` was chosen as the category axis even though it was already the pane title; the nested axis then printed a blank Region line above State, pushing the visible text down. The split field is now skipped when another dimension is available. |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (33),
 `capabilityGating.test.ts` (47), `workbookFile.test.ts` (73),
@@ -839,6 +840,23 @@ no-measure row shape as a distinct list.
 `remoteDataset` grew 49 → 51 checks (four duplicate rows become two, in order). Full unit
 suite **816 checks / 23 suites**; typecheck clean. No wire change.
 
+### 8.20 Pane field chosen as the category axis
+A row chart with `SUM(Sales)`, `Region` and `State` on Columns, `SUM(Quantity)` on Rows, a
+`State` label and **small multiples by Region** showed every State label below its bar.
+`Region` was picked as the category axis by `pickCategoryEncoding` because it was the first
+dimension on Columns, even though every pane is already titled with it. `State` then became
+a nested second axis level under a blank `Region` line; the blank line is part of the
+label's box, so the visible State text was pushed down by one line height.
+
+`pickCategoryEncoding` now takes the sheet's `paneBy` field and skips it while choosing the
+category axis, falling back to it only when it is the only dimension. In the reported view
+the axis becomes `State`, each label is one line and centered on its bar; the four region
+panes now render correctly. The renderer still draws the second measure (`Quantity`) as a
+clustered series — remove it from Rows if only Sales is wanted.
+
+`axisSelection` grew 34 → 36 checks (pane field skipped; sole-pane-field fallback). Full unit
+suite **818 checks / 23 suites**; new bundle `index-BKXHwp97.js`. No wire change.
+
 ---
 
 ## 9. Traps
@@ -927,7 +945,7 @@ node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks agains
 
 Suites: `engine` 77, `lod` 45, `protocol` 58, `httpTransport` 40, `remoteDataset` 51,
 `queryValidation` 17, `capabilityGating` 47, `tableCalcs` 51, `workbookBackup` 14,
-`split` 35, `axisSelection` 34, `aggregationMenu` 33, `workbookFile` 73,
+`split` 35, `axisSelection` 36, `aggregationMenu` 33, `workbookFile` 73,
 `calculationDrafts` 23, `referenceLines` 11, `bins` 30, `setsGroups` 27, `forecast` 30,
 `nullCells` 22, `markInference` 7, `axisNesting` 33, `engineAuth` 30, `join` 28.
 
@@ -947,7 +965,7 @@ is worth showing.
 
 ## 11. Provenance
 
-49 commits, `55482d0` … HEAD. The last twenty-seven are this session; the 14 before them
+50 commits, `55482d0` … HEAD. The last twenty-eight are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

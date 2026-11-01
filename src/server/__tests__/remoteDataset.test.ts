@@ -228,7 +228,6 @@ async function main(): Promise<void> {
       dataset.meta.rowCount === 22240, String(dataset.meta.rowCount));
 
     const dimensionOnly = await dataset.backend.query({
-      datasetId: dataset.meta.id,
       fields: [{ name: 'State', kind: 'dimension' }],
       limit: 10,
     });

@@ -259,14 +259,27 @@ export function pickCategoryEncoding(
   columnShelf: Encoding[],
   rowShelf: Encoding[],
   horizontal: boolean,
+  paneBy?: string,
 ): Encoding | undefined {
-  const dimensions = (shelf: Encoding[]) => shelf.filter((e) => e.kind === 'dimension');
+  const dimensions = (shelf: Encoding[]) =>
+    shelf.filter((e) => e.kind === 'dimension' && e.field !== paneBy);
 
   const preferred = horizontal ? dimensions(rowShelf) : dimensions(columnShelf);
   const other = horizontal ? dimensions(columnShelf) : dimensions(rowShelf);
 
   const dimension = preferred[0] ?? other[0];
   if (dimension) return dimension;
+
+  /*
+   * A split field is already named by the pane title. If it is the ONLY
+   * dimension, falling back to it is still better than using a measure as the
+   * category axis; it just repeats the pane title for a one-bar pane.
+   */
+  const allDimensions = (shelf: Encoding[]) => shelf.filter((e) => e.kind === 'dimension');
+  const preferredDims = allDimensions(horizontal ? rowShelf : columnShelf);
+  const otherDims = allDimensions(horizontal ? columnShelf : rowShelf);
+  const fallbackDimension = preferredDims[0] ?? otherDims[0];
+  if (fallbackDimension) return fallbackDimension;
 
   // No dimension anywhere: one measure on each shelf is a single-value bar, and
   // labelling it with the measure is the best available answer.
@@ -858,7 +871,7 @@ function buildBarLike(
    * Within the chosen shelf a dimension is preferred, since a measure there
    * would mean a value axis rather than categories.
    */
-  const axisEncoding = pickCategoryEncoding(columnShelf, rowShelf, horizontal);
+  const axisEncoding = pickCategoryEncoding(columnShelf, rowShelf, horizontal, sheet?.paneBy);
 
   const colorEncoding = columns?.shelf('color')[0];
   const colorIndex =

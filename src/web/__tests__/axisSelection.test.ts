@@ -77,6 +77,30 @@ section('Orientation decides the order, not the outcome');
   check('horizontal prefers Rows', horizontal?.field === 'Category', String(horizontal?.field));
 }
 
+section('The split dimension is not used as the category axis');
+
+{
+  /*
+   * Reported with State on a row chart split by Region: Region was picked as the
+   * category axis even though every pane is already titled with it. State then
+   * became an indented second line under a blank Region line, which pushed every
+   * visible label below its bar. The paneBy field must be skipped when another
+   * dimension is available.
+   */
+  const picked = pickCategoryEncoding(
+    [dim('Region'), dim('State')],
+    [],
+    true,
+    'Region',
+  );
+  check('the pane field is skipped, leaving State as the category',
+    picked?.field === 'State', String(picked?.field));
+
+  const onlyPaneField = pickCategoryEncoding([dim('Region')], [], true, 'Region');
+  check('if the pane field is the only dimension, it is still better than a measure',
+    onlyPaneField?.field === 'Region', String(onlyPaneField?.field));
+}
+
 {
   // The preferred shelf has no dimension, so the other one supplies it.
   const vertical = pickCategoryEncoding([measure('Sales')], [dim('Category'), dim('Region')], false);
