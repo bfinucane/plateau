@@ -155,11 +155,35 @@ async function main(): Promise<void> {
       ],
     };
     let domainRequests = 0;
+    let queryCount = 0;
     const { server, port } = await startStub((url) => {
       if (url === '/v1/capabilities') return { body: capabilities };
       if (url === '/v1/orders') return { body: ordersCatalog };
       if (url.includes('/query')) {
         domainRequests += 1;
+        queryCount += 1;
+        if (queryCount > 1) {
+          // A dimension-only query on the measure cube: the engine repeats each
+          // State once for each measure member (§11.8).
+          return {
+            body: {
+              dataset: 'Orders',
+              protocolVersion: PROTOCOL_VERSION,
+              columns: ['State'],
+              columnMeta: [{
+                name: 'State', kind: 'dimension', dataType: 'string',
+                logicalType: 'string', semanticType: 'nominal', defaultAggregation: 'COUNT',
+              }],
+              rows: [['Washington'], ['Washington'], ['Michigan'], ['Michigan']],
+              dimensionNames: ['State'],
+              measureNames: [],
+              measureLabels: [],
+              domain: {},
+              elapsedMs: 1,
+              truncated: false,
+            },
+          };
+        }
         return {
           body: {
             dataset: 'Orders',
@@ -202,6 +226,17 @@ async function main(): Promise<void> {
       domainRequests === 1, String(domainRequests));
     check('the dataset reports the four-cell-per-row storage count honestly',
       dataset.meta.rowCount === 22240, String(dataset.meta.rowCount));
+
+    const dimensionOnly = await dataset.backend.query({
+      datasetId: dataset.meta.id,
+      fields: [{ name: 'State', kind: 'dimension' }],
+      limit: 10,
+    });
+    check('dimension-only rows are collapsed, not shown once per measure',
+      dimensionOnly.table.rowCount === 2, String(dimensionOnly.table.rowCount));
+    check('the distinct values survive in order',
+      JSON.stringify(dimensionOnly.table.columns[0]) === JSON.stringify(['Washington', 'Michigan']),
+      JSON.stringify(dimensionOnly.table.columns[0]));
 
     server.close();
   }

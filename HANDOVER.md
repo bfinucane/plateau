@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, twenty-six session commits on top of `0e252ab`. Every number
+Written on branch `main`, twenty-seven session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,9 +13,9 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 48 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 49 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 71 files in `src/`, ~30,000 lines |
-| Unit tests | **814 checks**, 23 suites, all passing |
+| Unit tests | **816 checks**, 23 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
@@ -277,7 +277,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Twenty-six commits on top of `0e252ab` — seventeen features, a wire follow-up, a
+Twenty-seven commits on top of `0e252ab` — eighteen features, a wire follow-up, a
 maintenance pass, a contract-v1 adoption, two design decisions and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
@@ -316,6 +316,7 @@ verification hygiene. The commit messages have the detail; the shape:
 | Plateau auto-seeded a bundled “Sample - Superstore” on first run, separate from Patricia, and the examples built for the previous request were new code rather than content | Removed the built-in sample (§8.16): product starts empty with an explicit Upload/Connect state; the browser suite seeds a separate test fixture; `Examples/` now holds an explicit CSV and four workbook JSON files, no code. Opening a workbook whose calculation drafts need registration now re-runs the panels once the fields exist. |
 | Patricia's `Orders` stores four measures as members of one `Measure` column; `describe` names the dimension but not its members, so Plateau showed a single meaningless `Measure` field and hid Sales/Profit/Quantity/Discount | Measure-dimension expansion (§8.17): read the dimension's domain once at registration, synthesise one ordinary measure per member, hide the storage column, and send member names in queries. Attribute cubes are not expanded. |
 | Sorting a view by SUM(Sales) failed with `orderBy names unknown output column 'Sum of Sales'`: the client's pill label was sent as the engine output name | Remote ORDER BY translation (§8.18): map the client’s aggregate label (“Sum of Sales”, “Average of Profit”, …) back to the measure member name (`Sales`, `Profit`) before sending; dimension sorts keep the field name. |
+| A table with only State on the shelf showed Washington four times, Michigan four times, etc. against Patricia `Orders` | §11.8 duplicate collapse (§8.19): a measure-dimension cube returns each group once per measure member for a no-measure query; Plateau now collapses identical rows before the UI renders them. |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (33),
 `capabilityGating.test.ts` (47), `workbookFile.test.ts` (73),
@@ -823,6 +824,21 @@ the **measure member name** (`Sales`, `Profit`), with the human label carried se
 - `protocol` grew 56 → 58 checks (SUM label, Average label, dimension sort). Full unit suite
   **814 checks / 23 suites**; typecheck clean. No wire change.
 
+### 8.19 Dimension-only rows repeated once per measure
+A view with only `State` on the shelf against Patricia `Orders` showed Washington four times,
+Michigan four times, and so on. The engine was doing exactly what contract §11.8 records: on
+a cube with a measure dimension, a grouped query with **no measures** returns each group once
+per measure member. It is a pre-existing storage-shape quirk, not four duplicate states.
+
+`RemoteBackend.query` now detects a no-measure query against a measure-dimension cube and
+collapses identical output rows before returning the result. The distinct values and their
+order survive; `domainFor` remains the path for picker values, and a measure-less cube is
+untouched. This matches the contract's warning that clients must not render the raw
+no-measure row shape as a distinct list.
+
+`remoteDataset` grew 49 → 51 checks (four duplicate rows become two, in order). Full unit
+suite **816 checks / 23 suites**; typecheck clean. No wire change.
+
 ---
 
 ## 9. Traps
@@ -909,7 +925,7 @@ node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Ap
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
 ```
 
-Suites: `engine` 77, `lod` 45, `protocol` 58, `httpTransport` 40, `remoteDataset` 49,
+Suites: `engine` 77, `lod` 45, `protocol` 58, `httpTransport` 40, `remoteDataset` 51,
 `queryValidation` 17, `capabilityGating` 47, `tableCalcs` 51, `workbookBackup` 14,
 `split` 35, `axisSelection` 34, `aggregationMenu` 33, `workbookFile` 73,
 `calculationDrafts` 23, `referenceLines` 11, `bins` 30, `setsGroups` 27, `forecast` 30,
@@ -931,7 +947,7 @@ is worth showing.
 
 ## 11. Provenance
 
-48 commits, `55482d0` … HEAD. The last twenty-six are this session; the 14 before them
+49 commits, `55482d0` … HEAD. The last twenty-seven are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

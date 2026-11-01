@@ -681,7 +681,16 @@ export class RemoteBackend implements DatasetBackend {
     validateQueryRequest(request);
     const response = await this.transport.query(request);
     const { toQueryResult } = await import('../core/protocol.js');
-    return toQueryResult(response);
+    const result = toQueryResult(response);
+    const catalog = await this.ensureCatalog();
+    if (request.measures.length === 0 && catalog.measureDimension && !catalog.isAttributeTable) {
+      // Contract §11.8: a dimension-only query on a measure-dimension cube
+      // repeats each group once per measure member. The repetition is storage
+      // noise, not distinct data; collapse identical rows before the UI sees
+      // them. Callers that need the raw shape can use the engine directly.
+      return collapseDuplicateRows(result);
+    }
+    return result;
   }
 
   async domain(field: string, limit = 1000): Promise<unknown[]> {
@@ -809,6 +818,38 @@ export class RemoteBackend implements DatasetBackend {
       name: this.name,
     });
   }
+}
+
+/**
+ * Collapses duplicate output rows while keeping the original column order.
+ *
+ * Used for §11.8: a dimension-only query against a measure-dimension cube
+ * repeats each group once per measure. The duplicated rows are storage noise,
+ * not distinct members; showing them as a table would make 24 states look like
+ * 96. Values are serialised for equality because dates are objects on the wire.
+ */
+function collapseDuplicateRows(result: QueryResult): QueryResult {
+  const { table } = result;
+  if (table.rowCount < 2) return result;
+
+  const seen = new Set<string>();
+  const keep: number[] = [];
+  for (let row = 0; row < table.rowCount; row += 1) {
+    const key = JSON.stringify(table.columns.map((column) => column[row]));
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keep.push(row);
+  }
+  if (keep.length === table.rowCount) return result;
+
+  return {
+    ...result,
+    table: {
+      ...table,
+      rowCount: keep.length,
+      columns: table.columns.map((column) => keep.map((index) => column[index])),
+    },
+  };
 }
 
 /** Maps an engine-reported column to the client's schema shape. */

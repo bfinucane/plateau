@@ -192,6 +192,9 @@ hidden from the data pane. A query then sends `measures: [{"name":"Sales",…}]`
 puts the measure dimension in `groupBy` with measures (§11.4). Attribute cubes are exempt:
 their `measureDimension` names attachable attribute values, not measures. `rowCount` remains
 the contract's stored-cell count, so a four-measure cube reports four cells per line item.
+For a grouped query with **no measures**, contract §11.8 says the engine repeats each group
+once per measure member; Plateau collapses identical result rows before rendering a
+dimension-only table. This is a client-side correction, not a wire change.
 
 **System cubes are not datasets.** `/v1/datasets` deliberately includes `#`-prefixed
 cubes so one call discovers the whole database; `describe.isSystem` is how a client
