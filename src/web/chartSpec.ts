@@ -888,7 +888,19 @@ function buildBarLike(
     columns && axisEncoding
       ? plan.measureIndices.find((i) => i !== axisIndex)
       : planMeasureIndex;
-  const measureForValues = resolvedMeasureIndex ?? planMeasureIndex;
+  /*
+   * A bar has ONE value shelf: Columns for a horizontal bar, Rows for a
+   * vertical one. Only measures on that shelf can be plotted. Taking the second
+   * measure from the opposite shelf made the category label sit between two
+   * clustered series while only one bar was visible — the reported "labels
+   * below the bars" in a row chart with Sales on Columns and Quantity on Rows.
+   */
+  const valueShelfMeasureIndices = (horizontal ? columnShelf : rowShelf)
+    .filter((encoding) => encoding.kind === 'measure')
+    .map((encoding) => (columns ? columns.indexOf(encoding) : -1))
+    .filter((index) => index >= 0);
+  const measureForValues =
+    valueShelfMeasureIndices[0] ?? resolvedMeasureIndex ?? planMeasureIndex;
   const measureName =
     measureForValues >= 0 ? result.columnMeta[measureForValues]?.name ?? planMeasureName : planMeasureName;
 
@@ -896,10 +908,9 @@ function buildBarLike(
   const categories = result.rows.map((row) => formatCategory(row[dimensionIndex], isDate));
   const values = result.rows.map((row) => toNumber(row[measureForValues]));
 
-  // Second measure becomes a second series (clustered bars).
-  const secondMeasureIndex = plan.measureIndices.find(
-    (i) => i !== measureForValues && i !== axisIndex,
-  );
+  // Second measure on the VALUE shelf becomes a second series (clustered bars).
+  // A measure on the category shelf has no bar to attach to and is not plotted.
+  const secondMeasureIndex = valueShelfMeasureIndices[1];
 
   const barStyle = symbol === 'square' ? { borderRadius: 0 } : { borderRadius: [3, 3, 0, 0] };
 
@@ -950,7 +961,7 @@ function buildBarLike(
 
     if (secondMeasureIndex !== undefined) {
       series.push({
-        name: plan.measureNames[1],
+        name: result.columnMeta[secondMeasureIndex]?.name ?? plan.measureNames[1],
         type: 'bar',
         data: result.rows.map((row) => toNumber(row[secondMeasureIndex])),
         barMaxWidth: 64,

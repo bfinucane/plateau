@@ -61,7 +61,9 @@ function resultWith(columns: ColumnShape[], rows: (string | number | null)[][]):
     rows,
     dimensionNames: columns.filter((column) => column.kind === 'dimension').map((c) => c.name),
     measureNames: columns.filter((column) => column.kind === 'measure').map((c) => c.name),
-    measureLabels: ['SUM(Sales)'],
+    measureLabels: columns
+      .filter((column) => column.kind === 'measure')
+      .map((column) => `SUM(${column.name.replace(/^Sum of /, '')})`),
     domain: {},
     elapsedMs: 1,
     truncated: false,
@@ -426,6 +428,72 @@ const paneResult = resultWith(
   check('and the split dimension is absent from its axis',
     !option.xAxis.data.some((label) => label.includes('Avery Durable Binder')),
     JSON.stringify(option.xAxis.data));
+}
+
+{
+  /*
+   * One measure on each axis is a scatter when inferred, but a manually chosen
+   * Row mark has only one value shelf (Columns). Taking Quantity from Rows as a
+   * second series shifted the category label between the two series; only the
+   * value-shelf measure should be plotted.
+   */
+  const twoAxisResult = resultWith(
+    [
+      { name: 'Region', kind: 'dimension' },
+      { name: 'State', kind: 'dimension' },
+      { name: 'Sum of Sales', kind: 'measure' },
+      { name: 'Sum of Quantity', kind: 'measure' },
+    ],
+    [
+      ['Central', 'Missouri', 10, 5],
+      ['Central', 'Texas', 20, 7],
+      ['East', 'New York', 30, 9],
+    ],
+  );
+  const sheet = createSheet('One measure per axis');
+  sheet.mark = 'bar';
+  sheet.paneBy = 'Region';
+  sheet.shelves.columns = [
+    { id: 'c-sales', field: 'Sales', kind: 'measure', aggregation: 'SUM' },
+    { id: 'c-region', field: 'Region', kind: 'dimension' },
+    { id: 'c-state', field: 'State', kind: 'dimension' },
+  ];
+  sheet.shelves.rows = [
+    { id: 'r-quantity', field: 'Quantity', kind: 'measure', aggregation: 'SUM' },
+  ];
+  sheet.shelves.label = [{ id: 'l-state', field: 'State', kind: 'dimension' }];
+
+  const option = buildChart(twoAxisResult, sheet).option as {
+    series: { name: string }[];
+    yAxis: { data: string[] };
+  };
+  check('a measure on the category shelf is not a second bar series',
+    option.series.length === 1, JSON.stringify(option.series.map((s) => s.name)));
+  check('the category labels are the non-pane dimension only',
+    option.yAxis.data.join(',') === 'Missouri,Texas,New York',
+    JSON.stringify(option.yAxis.data));
+}
+
+{
+  // A second measure on the SAME value shelf is still a clustered comparison.
+  const sameShelfResult = resultWith(
+    [
+      { name: 'State', kind: 'dimension' },
+      { name: 'Sum of Sales', kind: 'measure' },
+      { name: 'Sum of Profit', kind: 'measure' },
+    ],
+    [['Missouri', 10, 2], ['Texas', 20, 4]],
+  );
+  const sheet = createSheet('Cluster');
+  sheet.mark = 'column';
+  sheet.shelves.columns = [{ id: 'c-state', field: 'State', kind: 'dimension' }];
+  sheet.shelves.rows = [
+    { id: 'r-sales', field: 'Sales', kind: 'measure', aggregation: 'SUM' },
+    { id: 'r-profit', field: 'Profit', kind: 'measure', aggregation: 'SUM' },
+  ];
+  const option = buildChart(sameShelfResult, sheet).option as { series: unknown[] };
+  check('two measures on the value shelf still produce two series',
+    option.series.length === 2, String(option.series.length));
 }
 
 {

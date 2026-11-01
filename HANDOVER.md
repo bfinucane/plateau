@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, twenty-eight session commits on top of `0e252ab`. Every number
+Written on branch `main`, twenty-nine session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,14 +13,14 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 50 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 51 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 71 files in `src/`, ~30,000 lines |
-| Unit tests | **818 checks**, 23 suites, all passing |
+| Unit tests | **821 checks**, 23 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
 | Screenshots | 61, in `docs/screenshots/` |
-| Bundle | `index-BKXHwp97.js` (app, 160 kB) + `echarts`/`react` vendor chunks |
+| Bundle | `index-ChN67zrz.js` (app, 160 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -277,7 +277,7 @@ attribute values are strings and never measures.
 
 ## 7. What this session changed
 
-Twenty-eight commits on top of `0e252ab` — nineteen features, a wire follow-up, a
+Twenty-nine commits on top of `0e252ab` — twenty features, a wire follow-up, a
 maintenance pass, a contract-v1 adoption, two design decisions and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
@@ -840,22 +840,31 @@ no-measure row shape as a distinct list.
 `remoteDataset` grew 49 → 51 checks (four duplicate rows become two, in order). Full unit
 suite **816 checks / 23 suites**; typecheck clean. No wire change.
 
-### 8.20 Pane field chosen as the category axis
+### 8.20 Two causes of labels below the bars
 A row chart with `SUM(Sales)`, `Region` and `State` on Columns, `SUM(Quantity)` on Rows, a
 `State` label and **small multiples by Region** showed every State label below its bar.
-`Region` was picked as the category axis by `pickCategoryEncoding` because it was the first
-dimension on Columns, even though every pane is already titled with it. `State` then became
-a nested second axis level under a blank `Region` line; the blank line is part of the
-label's box, so the visible State text was pushed down by one line height.
+
+1. `Region` was picked as the category axis by `pickCategoryEncoding` because it was the first
+   dimension on Columns, even though every pane is already titled with it. `State` then became
+   a nested second axis level under a blank `Region` line; the blank line is part of the
+   label's box, so the visible State text was pushed down.
+2. Even after the axis became `State`, the row mark still treated `Quantity` — a measure on
+   the **category** shelf — as a second clustered series. The category label is centred on the
+   whole cluster, so it sat below the visible Sales bar while the tiny Quantity bar occupied
+   the other half of the slot.
 
 `pickCategoryEncoding` now takes the sheet's `paneBy` field and skips it while choosing the
-category axis, falling back to it only when it is the only dimension. In the reported view
-the axis becomes `State`, each label is one line and centered on its bar; the four region
-panes now render correctly. The renderer still draws the second measure (`Quantity`) as a
-clustered series — remove it from Rows if only Sales is wanted.
+category axis, falling back to it only when it is the only dimension. `buildBarLike` now only
+takes series measures from the **value shelf** (Columns for a horizontal bar, Rows for a
+vertical one); a measure on the category shelf is not plotted as a bar. A second measure on
+the same value shelf is still a clustered comparison. In the reported view the axis is
+`State`, one Sales series is drawn, labels are one line and centred on their bars, and all
+four region panes render.
 
-`axisSelection` grew 34 → 36 checks (pane field skipped; sole-pane-field fallback). Full unit
-suite **818 checks / 23 suites**; new bundle `index-BKXHwp97.js`. No wire change.
+`axisSelection` grew 34 → 36 checks (pane field skipped; sole-pane-field fallback) and
+`axisNesting` 33 → 36 (wrong-shelf measure is not a series; same-shelf measures still are;
+category labels are the non-pane dimension). Full unit suite **821 checks / 23 suites**; new
+bundle `index-ChN67zrz.js`. No wire change.
 
 ---
 
@@ -965,7 +974,7 @@ is worth showing.
 
 ## 11. Provenance
 
-50 commits, `55482d0` … HEAD. The last twenty-eight are this session; the 14 before them
+51 commits, `55482d0` … HEAD. The last twenty-nine are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.
