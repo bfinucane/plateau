@@ -14,7 +14,7 @@ below was measured, not remembered.
 | | |
 |---|---|
 | Commits | 52 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
-| Source | 71 files in `src/`, ~30,000 lines |
+| Source | 74 files in `src/`, ~31,000 lines |
 | Unit tests | **851 checks**, 25 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
