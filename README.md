@@ -340,7 +340,7 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 821 unit checks, 23 suites
+npm test         # 851 unit checks, 25 suites
 npm run typecheck
 ```
 
@@ -409,7 +409,7 @@ writes nothing. If the engine requires authentication it checks the 401 first, t
 skips the protected checks unless `PLATEAU_ENGINE_USER` and `PLATEAU_ENGINE_PASSWORD`
 are set — a skip is reported, never counted as a pass.
 
-Total: **1390 checks** — 821 unit, 569 browser, plus 33 real-engine wire checks.
+Total: **1420 checks** — 851 unit, 569 browser, plus 33 real-engine wire checks.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -417,7 +417,7 @@ Total: **1390 checks** — 821 unit, 569 browser, plus 33 real-engine wire check
 | LOD | 45 | `FIXED`/`INCLUDE`/`EXCLUDE` parsing and filter ordering |
 | protocol | 58 | **local/remote parity**, wire shapes, LOD fallback, capability negotiation, ORDER BY output naming |
 | http transport | 40 | request encoding, error mapping (all contract v1 codes), timeouts, doc/code consistency |
-| remote dataset | 51 | registration, failure modes, queries, pushed-down calculated fields, client-side date bucketing, measure-dimension expansion, dimension-only duplicate collapse |
+| remote dataset | 54 | registration, failure modes, queries, pushed-down calculated fields, client-side date bucketing, measure-dimension expansion, dimension-only duplicate collapse, multi-join requests |
 | query validation | 17 | unknown field names are refused, local and remote |
 | capability gating | 47 | filter operators, per-scope reports (measure scope closed under contract v1), row caps, formula vocabulary |
 | table calculations | 51 | partitions, addressing, null handling |
@@ -433,9 +433,11 @@ Total: **1390 checks** — 821 unit, 569 browser, plus 33 real-engine wire check
 | forecast | 30 | least-squares fit, projections, date-part labels, chart series |
 | null cells | 22 | absence is not zero, in every mark |
 | mark inference | 7 | a scatter needs a measure on each axis |
-| axis nesting | 33 | line, heat map and treemap show every placed dimension; compact small-multiple axes |
+| axis nesting | 36 | line, heat map and treemap show every placed dimension; compact small-multiple axes; value-shelf series |
 | engine auth | 30 | public capabilities, login, per-request bearer tokens, 401 drops the session |
-| joins | 28 | join schema, gating, capability refusal |
+| joins | 34 | join schema, gating, capability refusal, multiple joins |
+| join selection | 9 | server-side validation of keys, attributes, limits and collisions |
+| join API | 12 | register, edit and clear joins without re-registering; query carries `joins[]` |
 
 Both browser and transport suites run against the real thing — a loopback HTTP
 server and a real server process — rather than mocked fetches, so the parts that
@@ -746,7 +748,7 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   trend projection, not a statistical model — the engine is not asked to forecast.
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1390 checks green (821 unit, 569 browser)
+- 1420 checks green (851 unit, 569 browser)
 
 ### Connecting to an engine
 
@@ -979,9 +981,10 @@ handoff is [`contract/handoffs/001-plateau-contract-v1.md`](../contract/handoffs
 
 Deliberately out of scope for this build, and the honest next steps:
 
-- **Joins are structural, not arbitrary.** One join per dataset, LEFT only, keyed on a
-  conformed dimension; no arbitrary predicates, no data blending across sources, no
-  cross-source calculation.
+- **Joins are structural, not arbitrary.** Up to `maxJoins` attribute joins, one per
+  conformed dimension, LEFT only; no fact-to-fact joins, arbitrary predicates, data
+  blending across sources, or cross-source calculation. Joins are editable after
+  connection, but remain a dataset-level setting.
 - **Engine sessions live in the Plateau server's memory.** A Plateau restart, or an
   engine restart, means signing in again; there is no refresh token and no
   server-side logout endpoint yet (dropping the token is the whole sign-out). Signed-in

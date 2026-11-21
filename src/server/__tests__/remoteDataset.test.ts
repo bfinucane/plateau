@@ -50,12 +50,26 @@ async function rejected(run: () => Promise<unknown>): Promise<Error | null> {
 }
 
 function startStub(
-  handler: (url: string) => { status?: number; body: unknown },
+  handler: (url: string, body?: Record<string, unknown>) => { status?: number; body: unknown },
 ): Promise<{ server: Server; port: number }> {
   const server = createServer((req, res) => {
-    const result = handler(req.url ?? '');
-    res.writeHead(result.status ?? 200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(result.body));
+    let raw = '';
+    req.on('data', (chunk) => {
+      raw += String(chunk);
+    });
+    req.on('end', () => {
+      let body: Record<string, unknown> | undefined;
+      if (raw) {
+        try {
+          body = JSON.parse(raw) as Record<string, unknown>;
+        } catch {
+          body = undefined;
+        }
+      }
+      const result = handler(req.url ?? '', body);
+      res.writeHead(result.status ?? 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result.body));
+    });
   });
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
@@ -236,6 +250,130 @@ async function main(): Promise<void> {
     check('the distinct values survive in order',
       JSON.stringify(dimensionOnly.table.columns[0]) === JSON.stringify(['Washington', 'Michigan']),
       JSON.stringify(dimensionOnly.table.columns[0]));
+
+    server.close();
+  }
+
+  section('Multiple attribute joins are sent when the engine supports them');
+
+  {
+    const multiCatalog = {
+      dataset: 'Orders',
+      rowCount: 100,
+      measureDimension: 'Measure',
+      isAttributeTable: false,
+      isSystem: false,
+      columns: [
+        { name: 'Region', dataType: 'string', cardinality: 4, suggestedKind: 'dimension' },
+        { name: 'ProductID', dataType: 'string', cardinality: 10, suggestedKind: 'dimension' },
+        {
+          name: 'Measure',
+          dataType: 'number',
+          logicalType: 'real',
+          cardinality: 2,
+          suggestedKind: 'measure',
+        },
+      ],
+    };
+    const regionAttr = {
+      dataset: 'RegionAttr',
+      rowCount: 4,
+      measureDimension: 'Attribute',
+      isAttributeTable: true,
+      isSystem: false,
+      columns: [
+        { name: 'Region', dataType: 'string', cardinality: 4, suggestedKind: 'dimension' },
+        { name: 'Attribute', dataType: 'string', cardinality: 1, suggestedKind: 'dimension' },
+      ],
+    };
+    const productAttr = {
+      dataset: 'ProductAttr',
+      rowCount: 10,
+      measureDimension: 'Attribute',
+      isAttributeTable: true,
+      isSystem: false,
+      columns: [
+        { name: 'ProductID', dataType: 'string', cardinality: 10, suggestedKind: 'dimension' },
+        { name: 'Attribute', dataType: 'string', cardinality: 1, suggestedKind: 'dimension' },
+      ],
+    };
+    let lastQuery: Record<string, unknown> | undefined;
+    const { server, port } = await startStub((url, body) => {
+      if (url === '/v1/capabilities') {
+        return { body: { ...capabilities, supportsJoin: true, maxJoins: 18 } };
+      }
+      if (url === '/v1/orders') return { body: multiCatalog };
+      if (url === '/v1/regionattr') return { body: regionAttr };
+      if (url === '/v1/productattr') return { body: productAttr };
+      if (url.includes('/regionattr/query')) {
+        return {
+          body: {
+            dataset: 'RegionAttr', protocolVersion: PROTOCOL_VERSION,
+            columns: [], columnMeta: [], rows: [],
+            dimensionNames: [], measureNames: [], measureLabels: [],
+            domain: { Attribute: ['Manager'] }, elapsedMs: 1, truncated: false,
+          },
+        };
+      }
+      if (url.includes('/productattr/query')) {
+        return {
+          body: {
+            dataset: 'ProductAttr', protocolVersion: PROTOCOL_VERSION,
+            columns: [], columnMeta: [], rows: [],
+            dimensionNames: [], measureNames: [], measureLabels: [],
+            domain: { Attribute: ['Class'] }, elapsedMs: 1, truncated: false,
+          },
+        };
+      }
+      if (url.includes('/orders/query')) {
+        lastQuery = body;
+        return {
+          body: {
+            dataset: 'Orders', protocolVersion: PROTOCOL_VERSION,
+            columns: ['Region', 'Sales'],
+            columnMeta: [
+              { name: 'Region', kind: 'dimension', dataType: 'string', logicalType: 'string', semanticType: 'nominal', defaultAggregation: 'COUNT' },
+              { name: 'Sales', kind: 'measure', dataType: 'number', logicalType: 'real', semanticType: 'quantitative', defaultAggregation: 'SUM' },
+            ],
+            rows: [['East', 10]],
+            dimensionNames: ['Region'], measureNames: ['Sales'], measureLabels: ['SUM(Sales)'],
+            domain: {}, elapsedMs: 1, truncated: false,
+          },
+        };
+      }
+      return { status: 404, body: { error: 'unknown', code: 'unknown_dataset' } };
+    });
+
+    const transport = new HttpEngineTransport({ baseUrl: `http://127.0.0.1:${port}` });
+    const dataset = await createRemoteDataset({
+      name: 'Orders',
+      dataset: 'orders',
+      transport,
+      joins: [
+        { cube: 'RegionAttr', using: 'Region', attributes: ['Manager'] },
+        { cube: 'ProductAttr', using: 'ProductID', attributes: ['Class'] },
+      ],
+    });
+    const schema = await dataset.backend.schema();
+    check('both joined attributes appear in the data pane schema',
+      schema.some((column) => column.name === 'Manager' && column.joinedVia === 'Region') &&
+        schema.some((column) => column.name === 'Class' && column.joinedVia === 'ProductID'),
+      JSON.stringify(schema.map((column) => `${column.name}:${column.joinedVia ?? ''}`)));
+    check('the dataset metadata carries both joins',
+      dataset.meta.joins?.length === 2, JSON.stringify(dataset.meta.joins));
+
+    await dataset.backend.query({
+      fields: [
+        { name: 'Region', kind: 'dimension' },
+        { name: 'Sales', kind: 'measure', aggregation: 'SUM' },
+      ],
+      limit: 10,
+    });
+    check('two joins travel as joins[], not the single join shorthand',
+      Array.isArray(lastQuery?.joins) &&
+        (lastQuery?.joins as unknown[]).length === 2 &&
+        lastQuery?.join === undefined,
+      JSON.stringify(lastQuery));
 
     server.close();
   }

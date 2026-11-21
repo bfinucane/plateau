@@ -37,6 +37,7 @@ import { BinsDialog } from './components/BinsDialog';
 import { CalculatedFieldDialog } from './components/CalculatedFieldDialog';
 import { GroupDialog, SetDialog } from './components/SetsGroupsDialogs';
 import { ConnectDialog } from './components/ConnectDialog';
+import { JoinDialog } from './components/JoinDialog';
 import { EngineLoginForm } from './components/EngineLoginForm';
 import { DashboardView } from './components/DashboardView';
 import { DataPane } from './components/DataPane';
@@ -78,6 +79,7 @@ export function App() {
   const [setDialog, setSetDialog] = useState<{ field?: string; editing?: WorkbookSet } | null>(null);
   const [groupDialog, setGroupDialog] = useState<{ field?: string } | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
+  const [joinsOpen, setJoinsOpen] = useState(false);
   /** Values to pre-fill when Connect was opened from "Reconnect". */
   const [connectInitial, setConnectInitial] = useState<
     { url?: string; dataset?: string; name?: string } | undefined
@@ -769,6 +771,16 @@ export function App() {
             >
               Reconnect
             </button>
+            {state.dataset.capabilities?.supportsJoin && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => setJoinsOpen(true)}
+                title="Add, change or remove attribute cubes joined to this dataset"
+              >
+                Joins…
+              </button>
+            )}
             <button
               type="button"
               className="button-secondary"
@@ -1433,6 +1445,21 @@ export function App() {
             await app.createCalculated(name, formula, 'dimension');
             showStatus(`Created group field "${name}"`);
           }}
+        />
+      )}
+
+      {joinsOpen && state.dataset && (
+        <JoinDialog
+          dataset={state.dataset}
+          onClose={() => setJoinsOpen(false)}
+          onSaved={(updated) => {
+            showStatus(
+              updated.joins?.length
+                ? `Saved ${updated.joins.length} attribute join(s) for ${updated.name}`
+                : `Removed attribute joins from ${updated.name}`,
+            );
+          }}
+          save={app.updateJoins}
         />
       )}
 

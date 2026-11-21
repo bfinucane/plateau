@@ -75,6 +75,12 @@ export interface DatasetMeta {
    * display name the user chose and may differ from the cube.
    */
   engineDataset?: string;
+  /**
+   * Attribute joins attached to a remote dataset, in output order.
+   *
+   * One join per primary dimension; used to pre-fill the editable join dialog.
+   */
+  joins?: { cube: string; using?: string; attributes: string[] }[];
 }
 
 /**
@@ -277,6 +283,13 @@ export interface EngineCapabilities {
    * this is not true — the user would get un-joined data with no error.
    */
   supportsJoin?: boolean;
+  /**
+   * Maximum number of entries in one query's `joins` array.
+   *
+   * Additive v1; absent on an older engine (treat as 1 when `supportsJoin` is
+   * true). A client must not send `joins` unless this is greater than 1.
+   */
+  maxJoins?: number;
   expressionFunctions: string[];
   supportsInlineDomain: boolean;
   maxRows?: number;
@@ -357,11 +370,36 @@ export async function registerRemoteDataset(options: {
   url: string;
   dataset: string;
   name?: string;
-  join?: { cube: string; using?: string; attributes: string[] };
+  join?: JoinSelection;
+  joins?: JoinSelection[];
 }): Promise<DatasetMeta> {
   const data = await request<{ dataset: DatasetMeta }>('/datasets/remote', {
     method: 'POST',
     body: JSON.stringify(options),
+  });
+  return data.dataset;
+}
+
+/** A dataset-level attribute join, as the join editor represents it. */
+export interface JoinSelection {
+  cube: string;
+  using?: string;
+  attributes: string[];
+}
+
+/**
+ * Replaces a remote dataset's joins without re-registering it.
+ *
+ * This is the post-connect edit path: the dataset keeps its identity and the
+ * caller receives the refreshed metadata (including the new columns).
+ */
+export async function setDatasetJoins(
+  id: string,
+  joins: JoinSelection[],
+): Promise<DatasetMeta> {
+  const data = await request<{ dataset: DatasetMeta }>(`/datasets/${id}/joins`, {
+    method: 'PUT',
+    body: JSON.stringify({ joins }),
   });
   return data.dataset;
 }

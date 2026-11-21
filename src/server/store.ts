@@ -102,6 +102,13 @@ export interface DatasetMeta {
    * `name` is the display name and may differ.
    */
   engineDataset?: string;
+  /**
+   * Attribute joins attached to this remote dataset, in output order.
+   *
+   * One join per primary dimension. Present only when at least one join is
+   * attached; the client uses it to pre-fill the editable join dialog.
+   */
+  joins?: JoinRequest[];
 }
 
 /** A calculated field definition, stored independently of any materialised column. */
@@ -233,12 +240,13 @@ export async function createRemoteDataset(options: {
   /** The engine URL this dataset came from, carried for sign-in prompts. */
   engineUrl?: string;
   /**
-   * Attributes to attach through a conformed dimension.
+   * Attributes to attach through conformed dimensions.
    *
    * A join is a property of the DATA SOURCE, not of a sheet: it determines the
    * shape of the data every sheet sees, so it lives on the backend and is applied
-   * to every query.
+   * to every query. `join` is kept as the single-join shorthand.
    */
+  joins?: JoinRequest[];
   join?: JoinRequest;
 }): Promise<Dataset> {
   const id = randomUUID();
@@ -251,7 +259,8 @@ export async function createRemoteDataset(options: {
     engineUrl: options.engineUrl,
   });
 
-  if (options.join) backend.setJoin(options.join);
+  const joins = options.joins ?? (options.join ? [options.join] : []);
+  if (joins.length > 0) backend.setJoins(joins);
 
   // Eagerly prove the connection works before registering anything.
   const schema = await backend.schema();
@@ -285,6 +294,7 @@ export async function createRemoteDataset(options: {
       capabilities,
       engineUrl: options.engineUrl,
       engineDataset: options.dataset,
+      joins: joins.length > 0 ? joins : undefined,
     },
     backend,
     calculated: new Map(),
@@ -292,6 +302,39 @@ export async function createRemoteDataset(options: {
 
   datasets.set(id, dataset);
   return dataset;
+}
+
+/**
+ * Replaces the attribute joins on a registered remote dataset.
+ *
+ * This is the post-connect counterpart of the `join` option on registration. The
+ * schema is rebuilt eagerly so a collision or an unreadable attribute is refused
+ * before the dataset metadata changes; on failure the previous joins are
+ * restored.
+ */
+export async function setDatasetJoins(
+  dataset: Dataset,
+  joins: JoinRequest[],
+): Promise<DatasetMeta> {
+  if (!(dataset.backend instanceof RemoteBackend)) {
+    throw new Error('Only a remote dataset can have attribute joins.');
+  }
+
+  const previous = dataset.backend.getJoins();
+  dataset.backend.setJoins(joins);
+  try {
+    const schema = await dataset.backend.schema();
+    dataset.meta = {
+      ...dataset.meta,
+      columns: describeColumns(schema),
+      columnCount: schema.length,
+      joins: joins.length > 0 ? joins : undefined,
+    };
+    return dataset.meta;
+  } catch (error) {
+    dataset.backend.setJoins(previous);
+    throw error;
+  }
 }
 
 export function listDatasets(): DatasetMeta[] {

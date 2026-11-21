@@ -2223,6 +2223,30 @@ textarea {
   margin: 0 0 8px;
 }
 
+/* One attribute cube in the editable join dialog. */
+.join-candidate {
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+}
+
+.join-candidate:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.join-candidate-head {
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.join-candidate-body {
+  margin: 6px 0 0 22px;
+}
+
+.join-candidate-body .calc-hint {
+  margin: 2px 0 6px;
+}
+
 .connect-attributes legend {
   padding: 0 4px;
   font-size: 10px;

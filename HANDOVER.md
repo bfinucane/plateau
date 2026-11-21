@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, twenty-nine session commits on top of `0e252ab`. Every number
+Written on branch `main`, thirty session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,14 +13,14 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 51 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 52 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 71 files in `src/`, ~30,000 lines |
-| Unit tests | **821 checks**, 23 suites, all passing |
+| Unit tests | **851 checks**, 25 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
 | Screenshots | 61, in `docs/screenshots/` |
-| Bundle | `index-ChN67zrz.js` (app, 160 kB) + `echarts`/`react` vendor chunks |
+| Bundle | `index-CegxDIG3.js` (app, 165 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -270,14 +270,22 @@ Three rules the client must respect, each learned the hard way:
 Attributes appear in their own pane group, indented under the dimension they key on,
 and in charts as the nested axis level.
 
-Limits, all structural: one join per dataset, LEFT only, no arbitrary predicates,
-attribute values are strings and never measures.
+The current wire adds optional multiple joins: one attribute cube per primary
+dimension, each keyed on a distinct conformed dimension, up to
+`capabilities.maxJoins` (the reference engine reports 18). Plateau sends the
+single `join` shorthand for one join and `joins[]` for two or more. The dataset
+metadata and the `Joins…` dialog make the selection editable after connection;
+there is no Disconnect/Reconnect requirement.
+
+Limits, all structural: one join per primary dimension, attribute cubes only, LEFT
+only, no arbitrary predicates, attribute values are strings and never measures.
+Fact-to-fact joins are not part of this model.
 
 ---
 
 ## 7. What this session changed
 
-Twenty-nine commits on top of `0e252ab` — twenty features, a wire follow-up, a
+Thirty commits on top of `0e252ab` — twenty-one features, a wire follow-up, a
 maintenance pass, a contract-v1 adoption, two design decisions and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
@@ -318,12 +326,13 @@ verification hygiene. The commit messages have the detail; the shape:
 | Sorting a view by SUM(Sales) failed with `orderBy names unknown output column 'Sum of Sales'`: the client's pill label was sent as the engine output name | Remote ORDER BY translation (§8.18): map the client’s aggregate label (“Sum of Sales”, “Average of Profit”, …) back to the measure member name (`Sales`, `Profit`) before sending; dimension sorts keep the field name. |
 | A table with only State on the shelf showed Washington four times, Michigan four times, etc. against Patricia `Orders` | §11.8 duplicate collapse (§8.19): a measure-dimension cube returns each group once per measure member for a no-measure query; Plateau now collapses identical rows before the UI renders them. |
 | A row chart split by Region had every State label sitting below its bar | Pane-aware category selection (§8.20): `Region` was chosen as the category axis even though it was already the pane title; the nested axis then printed a blank Region line above State, pushing the visible text down. The split field is now skipped when another dimension is available. |
+| Joins were limited to one per dataset and fixed at Connect; the engine’s new `joins[]`/`maxJoins` wire support could not be used | Editable multi-join datasets (§8.21): the server validates and stores up to `maxJoins` attribute joins, the backend sends `join` for one and `joins[]` for several, dataset metadata carries the selection, and the toolbar `Joins…` dialog adds/changes/removes them without reconnecting. |
 
 New suites: `queryValidation.test.ts` (17 checks), `aggregationMenu.test.ts` (33),
 `capabilityGating.test.ts` (47), `workbookFile.test.ts` (73),
 `calculationDrafts.test.ts` (23), `referenceLines.test.ts` (11),
 `bins.test.ts` (30), `setsGroups.test.ts` (27), `forecast.test.ts` (30),
-`nullCells.test.ts` (22), `markInference.test.ts` (7), `axisNesting.test.ts` (33) and
+`nullCells.test.ts` (22), `markInference.test.ts` (7), `axisNesting.test.ts` (36) and
 `engineAuth.test.ts` (30). `verify-ui` grew from 25 to 43 checks, `verify-marks` from
 18 to 29, `verify-viz` from 27 to 49, `verify-connect` from 26 to 97 (system cubes and
 disconnect/reconnect), and `verify-auth.mjs` is new (45 checks, with two stub engines:
@@ -866,6 +875,36 @@ four region panes render.
 category labels are the non-pane dimension). Full unit suite **821 checks / 23 suites**; new
 bundle `index-ChN67zrz.js`. No wire change.
 
+### 8.21 Multiple attribute joins and an editable join setting
+The engine gained additive multi-join wire support (`joins[]` + `capabilities.maxJoins`);
+the owner accepted D29 and the engine implemented it at `bd1173d` (documented `2efab62`).
+Plateau previously had one immutable join chosen in the Connect dialog, so the capability
+could not be used at all.
+
+- `RemoteBackend` now stores an ordered join list. Schema synthesis appends every joined
+  attribute, each tagged with its conformed key; a collision throws instead of silently
+  dropping a field. Queries send the single `join` shorthand for one join and `joins[]`
+  for two or more, gated on `maxJoins > 1`; the attribute-key grouping translation loops
+  over every join.
+- The server owns validation in `src/server/joins.ts`: one join per distinct primary
+  dimension, attribute-table targets, conformed and projected keys at query time, known
+  attributes, no attribute collisions, and the engine's join limit. Registration and
+  `PUT /api/datasets/:id/joins` share it. The route validates before changing anything and
+  restores the previous joins if schema rebuilding fails.
+- Dataset metadata includes `joins`, so the new toolbar **Joins…** dialog pre-fills the
+  current selection from `GET /api/datasets/:id` candidates, permits add/change/remove, and
+  saves through the new route. The active query re-runs because the columns key changes;
+  no Disconnect/Reconnect is involved.
+- UI/UX rule kept: attributes are output-only, LEFT joins, missing values blank/null; the
+  dialog states that a key must be in the view and that this model has no attribute cubes
+  when candidates are empty.
+
+Evidence: `join` grew 28 → 34 checks, `remoteDataset` 51 → 54, new `joinSelection` 9 and
+`joinAPI` 12; full unit suite **851 checks / 25 suites**; typecheck clean; bundle
+`index-CegxDIG3.js`. Live UI verified in headless Chrome; the server API lifecycle is
+covered against a stub engine. The shared model still has no attribute cubes, so the
+dialog correctly explains why joins are unavailable until the model gains them.
+
 ---
 
 ## 9. Traps
@@ -946,17 +985,18 @@ bundle `index-ChN67zrz.js`. No wire change.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 806 unit checks
+node scripts/test.mjs                                   # 851 unit checks
 npm run test:server                                     # terminal 2: test fixture on :5177
 node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
 ```
 
-Suites: `engine` 77, `lod` 45, `protocol` 58, `httpTransport` 40, `remoteDataset` 51,
+Suites: `engine` 77, `lod` 45, `protocol` 58, `httpTransport` 40, `remoteDataset` 54,
 `queryValidation` 17, `capabilityGating` 47, `tableCalcs` 51, `workbookBackup` 14,
 `split` 35, `axisSelection` 36, `aggregationMenu` 33, `workbookFile` 73,
 `calculationDrafts` 23, `referenceLines` 11, `bins` 30, `setsGroups` 27, `forecast` 30,
-`nullCells` 22, `markInference` 7, `axisNesting` 33, `engineAuth` 30, `join` 28.
+`nullCells` 22, `markInference` 7, `axisNesting` 36, `join` 34, `joinSelection` 9,
+`joinAPI` 12, `engineAuth` 30.
 
 Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 29, `verify-viz`
 49, `verify-sort` 15, `verify-treemap` 16, `verify-dashboard` 29, `verify-connect` 97,
@@ -974,7 +1014,7 @@ is worth showing.
 
 ## 11. Provenance
 
-51 commits, `55482d0` … HEAD. The last twenty-nine are this session; the 14 before them
+52 commits, `55482d0` … HEAD. The last thirty are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

@@ -362,6 +362,26 @@ before sending the request, which is why sorting a remote `SUM(Sales)` view now 
 `{"output":"Sales"}`. If the named column does not exist, return `invalid_argument` rather
 than sorting by something else.
 
+### `join` / `joins`
+
+One attribute join may be sent as the `join` shorthand; several use the additive `joins`
+array:
+
+```json
+"joins": [
+  {"cube": "RegionAttr", "using": "Region", "attributes": ["Manager"]},
+  {"cube": "ProductAttr", "using": "ProductID", "attributes": ["Class"]}
+]
+```
+
+Each entry is a LEFT join through a conformed dimension; each target must be an attribute
+table; every `using` must be a distinct primary dimension and must appear in `groupBy`;
+attributes are appended in join/attribute order. `join` and `joins` are mutually exclusive,
+and an empty `joins` array is invalid. Attribute columns are output-only: a filter naming
+one is `invalid_argument`. Plateau sends `join` for one and `joins` only when
+`capabilities.maxJoins > 1`; it edits the selection after connection without changing the
+dataset identity.
+
 ### `expressions`
 
 A map of calculated-field name to **parsed AST** — never formula text. The engine
@@ -478,6 +498,7 @@ converting it to zero is a decision only the formula author may make
   "filterOperators": ["in", "equals", "notEquals"],
   "supportsLod": false,
   "supportsJoin": true,
+  "maxJoins": 18,
   "expressionFunctions": ["ZN", "IFNULL"],
   "authRequired": true,
   "supportsInlineDomain": true,
@@ -522,6 +543,9 @@ The list fields are what make the client honest, so say exactly what you impleme
 - **`supportsJoin`** — whether the `join` block is honoured. An engine without it
   ignores a `join` block **silently**, so a client must check before offering the
   feature; un-joined data looks correct.
+- **`maxJoins`** — maximum entries in `joins` (additive v1). Absent on an older engine;
+  treat as 1 when `supportsJoin` is true, else 0. Plateau sends `joins` only when this is
+  greater than 1.
 - **`countDistinctExact`** — `false` while `COUNTD` is unimplemented or
   approximate. Do not claim exactness you do not have.
 - **`supportsInlineDomain`** — whether `domainFor` is honoured. If `false`, a client

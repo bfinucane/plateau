@@ -244,13 +244,13 @@ export class RemoteBackend implements DatasetBackend {
   private calculatedColumns: Map<string, ColumnSchema> = new Map();
 
   /**
-   * The join this dataset attaches, if any.
+   * Attribute joins this dataset attaches, in display/append order.
    *
-   * Kept on the backend rather than in the query spec because a join is a property
-   * of the data source — the shape of the view — not of an individual sheet. Every
-   * query against a joined dataset carries it.
+   * Kept on the backend rather than in the query spec because a join shapes the
+   * data source for every sheet. One join per primary dimension (contract §5.8);
+   * the engine appends the attributes in this order.
    */
-  private join: JoinRequest | null = null;
+  private joins: JoinRequest[] = [];
 
   constructor(options: {
     id: string;
@@ -280,16 +280,29 @@ export class RemoteBackend implements DatasetBackend {
     if (column) this.calculatedColumns.set(name, { ...column, isCalculated: true, formula });
   }
 
-  /** Sets or clears the join applied to every query on this dataset. */
-  setJoin(join: JoinRequest | null): void {
-    this.join = join;
-    // The schema changes with the join, so a cached catalog would be stale.
+  /** Sets or clears the joins applied to every query on this dataset. */
+  setJoins(joins: JoinRequest[] | null): void {
+    this.joins = (joins ?? []).map((join) => ({
+      ...join,
+      attributes: [...join.attributes],
+    }));
+    // The schema changes with the joins, so a cached catalog would be stale.
     this.catalog = null;
   }
 
-  /** The join currently applied, if any. */
+  /** Backwards-compatible single-join setter. */
+  setJoin(join: JoinRequest | null): void {
+    this.setJoins(join ? [join] : []);
+  }
+
+  /** The joins currently applied, in order. */
+  getJoins(): JoinRequest[] {
+    return this.joins.map((join) => ({ ...join, attributes: [...join.attributes] }));
+  }
+
+  /** The first join, for callers that still speak the single-join shape. */
   getJoin(): JoinRequest | null {
-    return this.join;
+    return this.joins[0] ?? null;
   }
 
   /**
@@ -312,18 +325,18 @@ export class RemoteBackend implements DatasetBackend {
    * de-duplicating would hide it.
    */
   private resolveAttributeGrouping(request: QueryRequest): void {
-    const join = this.join;
-    if (!join?.using) return;
+    for (const join of this.joins) {
+      if (!join.using) continue;
 
-    const key = join.using;
-    const attributes = new Set(join.attributes);
+      const key = join.using;
+      const attributes = new Set(join.attributes);
+      const usesAttribute = request.groupBy.some((dimension) => attributes.has(dimension.name));
+      if (!usesAttribute) continue;
 
-    const usesAttribute = request.groupBy.some((dimension) => attributes.has(dimension.name));
-    if (!usesAttribute) return;
-
-    request.groupBy = request.groupBy.filter((dimension) => !attributes.has(dimension.name));
-    if (!request.groupBy.some((dimension) => dimension.name === key)) {
-      request.groupBy.push({ name: key });
+      request.groupBy = request.groupBy.filter((dimension) => !attributes.has(dimension.name));
+      if (!request.groupBy.some((dimension) => dimension.name === key)) {
+        request.groupBy.push({ name: key });
+      }
     }
   }
 
@@ -443,33 +456,41 @@ export class RemoteBackend implements DatasetBackend {
     // catalog, so they are appended regardless of whether a join is attached.
     const calculated = [...this.calculatedColumns.values()];
 
-    if (!this.join) return [...base, ...calculated];
+    if (this.joins.length === 0) return [...base, ...calculated];
 
     const existing = new Set(base.map((column) => column.name));
-    // Captured before the map: `this.join` is re-read inside the closure below.
-    const join = this.join;
-    const attributes: ColumnSchema[] = join.attributes
-      .filter((name) => !existing.has(name))
-      .map((name) => ({
-        // Attributes are text and never measures — the engine refuses to aggregate
-        // them and keeps them out of measureNames.
-        name,
-        label: name,
-        dataType: 'string' as const,
-        logicalType: 'string' as const,
-        semanticType: 'nominal' as const,
-        kind: 'dimension' as const,
-        role: 'discrete' as const,
-        nullCount: 0,
-        cardinality: 0,
-        sampleValues: [],
-        min: null,
-        max: null,
-        isInteger: false,
-        // Marks these as arriving through a join, so the UI can explain why the
-        // field needs its key dimension in the view.
-        joinedVia: join.using,
-      }));
+    const attributes: ColumnSchema[] = [];
+    for (const join of this.joins) {
+      for (const name of join.attributes) {
+        if (existing.has(name)) {
+          throw new ProtocolError(
+            'invalid_argument',
+            `Joined attribute "${name}" collides with another output column.`,
+          );
+        }
+        existing.add(name);
+        attributes.push({
+          // Attributes are text and never measures — the engine refuses to aggregate
+          // them and keeps them out of measureNames.
+          name,
+          label: name,
+          dataType: 'string' as const,
+          logicalType: 'string' as const,
+          semanticType: 'nominal' as const,
+          kind: 'dimension' as const,
+          role: 'discrete' as const,
+          nullCount: 0,
+          cardinality: 0,
+          sampleValues: [],
+          min: null,
+          max: null,
+          isInteger: false,
+          // Marks these as arriving through a join, so the UI can explain why the
+          // field needs its key dimension in the view.
+          joinedVia: join.using,
+        });
+      }
+    }
 
     return [...base, ...attributes, ...this.calculatedColumns.values()];
   }
@@ -523,13 +544,15 @@ export class RemoteBackend implements DatasetBackend {
     }
 
     /*
-     * Attach the join, but only when the engine says it understands one.
+     * Attach the joins, but only when the engine says it understands them.
      *
-     * An older engine IGNORES a `join` block silently. Sending it anyway would
-     * hand the user un-joined data with no error — the view would look correct and
-     * be missing every attribute. Refusing loudly is the only honest option.
+     * An older engine IGNORES a `join`/`joins` block silently. Sending it anyway
+     * would hand the user un-joined data with no error — the view would look
+     * correct and be missing every attribute. Refusing loudly is the only honest
+     * option. `joins` itself is gated on maxJoins > 1: an engine that only knows
+     * the single `join` shorthand would ignore the array.
      */
-    if (this.join) {
+    if (this.joins.length > 0) {
       if (!capabilities?.supportsJoin) {
         throw new ProtocolError(
           'unsupported_expression',
@@ -537,7 +560,19 @@ export class RemoteBackend implements DatasetBackend {
           'capabilities.supportsJoin is false or absent',
         );
       }
-      request.join = this.join;
+      if (this.joins.length === 1) {
+        request.join = this.joins[0];
+      } else {
+        const maxJoins = capabilities.maxJoins ?? 1;
+        if (maxJoins < this.joins.length) {
+          throw new ProtocolError(
+            'unsupported_expression',
+            `This engine accepts at most ${maxJoins} attribute join(s), but ${this.joins.length} are attached.`,
+            'capabilities.maxJoins',
+          );
+        }
+        request.joins = this.joins;
+      }
       this.resolveAttributeGrouping(request);
     }
 

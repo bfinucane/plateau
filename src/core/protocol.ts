@@ -146,6 +146,14 @@ export interface Capabilities {
    */
   supportsJoin?: boolean;
   /**
+   * Maximum number of entries accepted in one request's `joins` array.
+   *
+   * Additive v1. Omitted on an older engine; treat an omission as 1 when
+   * `supportsJoin` is true, else 0. A client MUST NOT send `joins` unless this is
+   * greater than 1; `supportsJoin` alone only advertises the single `join`.
+   */
+  maxJoins?: number;
+  /**
    * Plain function names a calculated field may `call`, uppercased.
    *
    * This list is NOT the whole expression vocabulary: aggregates are reported by
@@ -272,6 +280,15 @@ export interface QueryRequest {
    * `groupBy` — the engine refuses an attribute whose key is not projected, since
    * there is no hidden-field mechanism.
    */
+  /**
+   * One or more attribute joins (contract §5.8).
+   *
+   * `join` remains the one-element shorthand for compatibility. A client MUST
+   * send `joins` only when `capabilities.maxJoins > 1`; otherwise the older engine
+   * would ignore the field silently. Plateau uses `join` for one and `joins` for
+   * two or more.
+   */
+  joins?: JoinRequest[];
   join?: JoinRequest;
 }
 

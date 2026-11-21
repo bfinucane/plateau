@@ -15,8 +15,10 @@ import { fileURLToPath } from 'node:url';
 
 import type { QuerySpec } from '../core/engine.js';
 import { PROTOCOL_VERSION, ProtocolError } from '../core/protocol.js';
+import type { Capabilities, JoinRequest } from '../core/protocol.js';
 import { defaultAggregation, type Aggregation } from '../core/types.js';
 import { HttpEngineTransport } from './httpTransport.js';
+import { JoinSelectionError, prepareJoins } from './joins.js';
 import {
   dropSession,
   isAuthenticated,
@@ -40,6 +42,7 @@ import {
   queryDataset,
   removeCalculatedField,
   renameDataset,
+  setDatasetJoins,
   type Dataset,
 } from './store.js';
 
@@ -649,11 +652,12 @@ export function createServer() {
 
   /** Registers a dataset held by a remote engine. */
   app.post('/api/datasets/remote', async (req, res) => {
-    const { url, dataset, name, join } = req.body as {
+    const { url, dataset, name, join, joins } = req.body as {
       url?: string;
       dataset?: string;
       name?: string;
       join?: { cube?: string; using?: string; attributes?: string[] };
+      joins?: { cube?: string; using?: string; attributes?: string[] }[];
     };
 
     if (!url?.trim()) {
@@ -700,55 +704,101 @@ export function createServer() {
         return;
       }
 
-      // A join is only meaningful if the engine honours one. Sending it to an
-      // older engine would be ignored SILENTLY, handing back un-joined data that
-      // looks correct — so refuse instead.
-      let joinRequest;
-      if (join?.cube) {
-        if (!engineCapabilities.supportsJoin) {
-          res.status(400).json({
-            error: 'This engine does not support joins, so attributes cannot be attached.',
-            code: 'unsupported_join',
-          });
-          return;
-        }
-        // Validate the key here rather than waiting for the first query: the
-        // engine only rejects a non-conformed `using` when a query runs, so a
-        // misconfigured join would register happily and then fail on every sheet,
-        // long after the user made the choice.
-        const target = join.using?.trim();
-        if (target) {
-          const [primaryCatalog, joinedCatalog] = await Promise.all([
-            transport.describe(dataset.trim()),
-            transport.describe(join.cube),
-          ]);
-          const inPrimary = primaryCatalog.columns.some((column) => column.name === target);
-          const inJoined = joinedCatalog.columns.some((column) => column.name === target);
-          if (!inPrimary || !inJoined) {
-            res.status(400).json({
-              error: `"${target}" is not a conformed dimension: it must exist in both ${dataset.trim()} and ${join.cube}.`,
-              code: 'invalid_join_key',
-            });
-            return;
-          }
-        }
-
-        joinRequest = {
-          cube: join.cube,
-          using: target || undefined,
-          attributes: Array.isArray(join.attributes) ? join.attributes : [],
-        };
+      const rawJoins = joins ?? (join ? [join] : []);
+      if (join && joins) {
+        throw new JoinSelectionError(
+          "Use either 'join' or 'joins', not both.",
+          'invalid_argument',
+        );
       }
+      if (!Array.isArray(rawJoins)) {
+        throw new JoinSelectionError("'joins' must be an array.", 'invalid_argument');
+      }
+      const normalizedJoins = await prepareJoins(
+        transport,
+        dataset.trim(),
+        requestedCatalog,
+        rawJoins,
+        engineCapabilities,
+      );
 
       const created = await createRemoteDataset({
         name: name?.trim() || dataset.trim(),
         dataset: dataset.trim(),
         transport,
         engineUrl: url,
-        join: joinRequest,
+        joins: normalizedJoins,
       });
       res.status(201).json({ dataset: created.meta });
     } catch (error) {
+      if (error instanceof JoinSelectionError) {
+        res.status(error.status).json({ error: error.message, code: error.code });
+        return;
+      }
+      respondEngineError(res, error);
+    }
+  });
+
+  /**
+   * Replaces the attribute joins on an existing remote dataset.
+   *
+   * Joins are a data-source setting, not a connection ritual: this is what lets
+   * the UI add, change or remove one without Disconnect/Reconnect. The engine's
+   * query contract is unchanged; only the stored selection changes.
+   */
+  app.put('/api/datasets/:id/joins', async (req, res) => {
+    const dataset = getDataset(req.params.id);
+    if (!dataset) {
+      res.status(404).json({ error: 'Dataset not found' });
+      return;
+    }
+    if (!dataset.meta.engineUrl) {
+      res.status(400).json({ error: 'Only a remote dataset can have joins.' });
+      return;
+    }
+
+    const { joins, join } = req.body as {
+      joins?: { cube?: string; using?: string; attributes?: string[] }[];
+      join?: { cube?: string; using?: string; attributes?: string[] };
+    };
+    const rawJoins = joins ?? (join ? [join] : []);
+    if (join && joins) {
+      res.status(400).json({ error: "Use either 'join' or 'joins', not both.", code: 'invalid_argument' });
+      return;
+    }
+    if (!Array.isArray(rawJoins)) {
+      res.status(400).json({ error: "'joins' must be an array.", code: 'invalid_argument' });
+      return;
+    }
+
+    try {
+      const transport = engineTransport(dataset.meta.engineUrl, 30_000);
+      const capabilities = await transport.capabilities();
+      if (capabilities.authRequired === true && !isAuthenticated(dataset.meta.engineUrl)) {
+        res.status(401).json({
+          error: 'This engine requires a sign-in before its joins can be changed.',
+          code: 'unauthorized',
+          authRequired: true,
+        });
+        return;
+      }
+
+      const primary = dataset.meta.engineDataset ?? dataset.meta.name;
+      const primaryCatalog = await transport.describe(primary);
+      const normalized = await prepareJoins(
+        transport,
+        primary,
+        primaryCatalog,
+        rawJoins,
+        capabilities,
+      );
+      const meta = await setDatasetJoins(dataset, normalized);
+      res.json({ dataset: meta });
+    } catch (error) {
+      if (error instanceof JoinSelectionError) {
+        res.status(error.status).json({ error: error.message, code: error.code });
+        return;
+      }
       respondEngineError(res, error);
     }
   });

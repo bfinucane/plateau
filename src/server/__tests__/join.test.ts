@@ -43,7 +43,7 @@ function section(title: string): void {
 /** Records what the backend actually sent. */
 const sent: QueryRequest[] = [];
 
-function makeTransport(options: { supportsJoin?: boolean } = {}): EngineTransport {
+function makeTransport(options: { supportsJoin?: boolean; maxJoins?: number } = {}): EngineTransport {
   const catalog: CatalogResponse = {
     dataset: 'Sales',
     rowCount: 36,
@@ -61,6 +61,7 @@ function makeTransport(options: { supportsJoin?: boolean } = {}): EngineTranspor
     expressionFunctions: [],
     supportsInlineDomain: true,
     supportsJoin: options.supportsJoin,
+    maxJoins: options.maxJoins,
   };
 
   return {
@@ -311,6 +312,59 @@ async function main(): Promise<void> {
     const groupBy = sent[0]?.groupBy.map((d) => d.name) ?? [];
     check('no grouping is invented when the join names no key',
       JSON.stringify(groupBy) === JSON.stringify(['Manager']), JSON.stringify(groupBy));
+  }
+
+  section('Multiple joins travel together and contribute their own keys');
+
+  {
+    sent.length = 0;
+    const backend = makeBackend(makeTransport({ supportsJoin: true, maxJoins: 18 }));
+    backend.setJoins([
+      { cube: 'RegionAttr', using: 'Region', attributes: ['Manager'] },
+      { cube: 'ProductAttr', using: 'ProductID', attributes: ['Class'] },
+    ]);
+    const schema = await backend.schema();
+    check('the second join contributes its attribute',
+      schema.some((c) => c.name === 'Class' && c.joinedVia === 'ProductID'),
+      JSON.stringify(schema.map((c) => `${c.name}:${c.joinedVia ?? ''}`)));
+
+    await backend.query({
+      fields: [
+        { name: 'Region', kind: 'dimension' },
+        { name: 'Manager', kind: 'dimension' },
+        { name: 'Class', kind: 'dimension' },
+      ],
+    });
+    const request = sent[0];
+    check('two joins use the joins array, not the single shorthand',
+      Array.isArray(request?.joins) && request?.joins.length === 2 && request?.join === undefined,
+      JSON.stringify(request));
+    const groupBy = request?.groupBy.map((dimension) => dimension.name) ?? [];
+    check('both conformed keys are projected',
+      groupBy.includes('Region') && groupBy.includes('ProductID'),
+      JSON.stringify(groupBy));
+    check('neither attribute is sent as a grouping column',
+      !groupBy.includes('Manager') && !groupBy.includes('Class'),
+      JSON.stringify(groupBy));
+  }
+
+  {
+    sent.length = 0;
+    const backend = makeBackend(makeTransport({ supportsJoin: true, maxJoins: 1 }));
+    backend.setJoins([
+      { cube: 'RegionAttr', using: 'Region', attributes: ['Manager'] },
+      { cube: 'ProductAttr', using: 'ProductID', attributes: ['Class'] },
+    ]);
+
+    let caught: unknown = null;
+    try {
+      await backend.query(SPEC);
+    } catch (error) {
+      caught = error;
+    }
+    check('an engine with maxJoins=1 refuses a second join',
+      caught instanceof ProtocolError, String(caught));
+    check('and nothing was sent', sent.length === 0, String(sent.length));
   }
 
   console.log(`\n${passed} passed, ${failed} failed\n`);

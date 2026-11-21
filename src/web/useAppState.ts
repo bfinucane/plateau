@@ -17,10 +17,12 @@ import {
   fetchDatasets,
   removeCalculatedField as apiRemoveCalculatedField,
   runQuery,
+  setDatasetJoins as apiSetDatasetJoins,
   type Aggregation,
   type ColumnInfo,
   type DatasetMeta,
   type Filter,
+  type JoinSelection,
   type QueryResponse,
 } from './api';
 import {
@@ -772,6 +774,22 @@ export function useAppState() {
   }, []);
 
   /**
+   * Replaces the active remote dataset's attribute joins.
+   *
+   * The server returns the refreshed schema; `dataset/updated` makes the columns
+   * key change, which re-runs the active query. The dataset id and workbook stay
+   * put, so adding a join does not behave like a reconnect.
+   */
+  const updateJoins = useCallback(async (joins: JoinSelection[]): Promise<DatasetMeta> => {
+    const activeId = state.activeDatasetId;
+    if (!activeId) throw new Error('Select a dataset first.');
+    const dataset = await apiSetDatasetJoins(activeId, joins);
+    dispatch({ type: 'dataset/updated', dataset });
+    dispatch({ type: 'datasets/loaded', datasets: await fetchDatasets() });
+    return dataset;
+  }, [state.activeDatasetId]);
+
+  /**
    * Unregisters the active remote dataset and falls back to a local one.
    *
    * "Disconnect" is about the data-source registration, not the engine session:
@@ -1053,6 +1071,7 @@ export function useAppState() {
     allowedFilterOperatorsByScope,
     selectDataset,
     refreshDatasets,
+    updateJoins,
     disconnectDataset,
     addFieldToShelf,
     createCalculated,
