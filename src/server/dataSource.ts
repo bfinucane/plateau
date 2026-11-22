@@ -185,6 +185,22 @@ function serialize(value: unknown): string | number | boolean | null {
 
 // ----------------------------------------------------------- remote path ---
 
+/** One attribute of a join, with the output name it will carry. */
+interface ResolvedJoinAttribute {
+  /** Member name on the attribute cube — the wire identity. */
+  member: string;
+  /** Output column name the data pane, sheets and `orderBy` use. */
+  display: string;
+}
+
+/** A configured join with its output names resolved. */
+interface ResolvedJoin {
+  join: JoinRequest;
+  attributes: ResolvedJoinAttribute[];
+  /** Members whose output name differs from the member name, for the wire. */
+  aliases: Record<string, string>;
+}
+
 /**
  * Remote backend: speaks the Plateau protocol to a native engine.
  *
@@ -324,21 +340,34 @@ export class RemoteBackend implements DatasetBackend {
    * carry the same label. That is the honest picture of the data; silently
    * de-duplicating would hide it.
    */
-  private resolveAttributeGrouping(request: QueryRequest): JoinRequest[] {
+  private async resolveAttributeGrouping(request: QueryRequest): Promise<JoinRequest[]> {
+    if (this.joins.length === 0) return [];
+
+    const catalog = await this.ensureCatalog();
+    const resolved = await this.resolveJoins(catalog);
     const used: JoinRequest[] = [];
 
-    for (const join of this.joins) {
-      const attributes = new Set(join.attributes);
-      const usesAttribute = request.groupBy.some((dimension) => attributes.has(dimension.name));
+    for (const entry of resolved) {
+      const displays = new Set(entry.attributes.map((attribute) => attribute.display));
+      const usesAttribute = request.groupBy.some((dimension) => displays.has(dimension.name));
       if (!usesAttribute) continue;
 
-      used.push(join);
+      // Send the member identity, not the display name, plus the output aliases
+      // for whichever members were qualified. The engine appends them in this
+      // order and names the columns with the aliases.
+      used.push({
+        cube: entry.join.cube,
+        ...(entry.join.using ? { using: entry.join.using } : {}),
+        attributes: entry.attributes.map((attribute) => attribute.member),
+        ...(Object.keys(entry.aliases).length > 0 ? { aliases: { ...entry.aliases } } : {}),
+      });
+
       // Without a known key there is nothing to substitute; the engine must
       // reject the keyless join rather than the client inventing a grouping.
-      if (!join.using) continue;
-      request.groupBy = request.groupBy.filter((dimension) => !attributes.has(dimension.name));
-      if (!request.groupBy.some((dimension) => dimension.name === join.using)) {
-        request.groupBy.push({ name: join.using });
+      if (!entry.join.using) continue;
+      request.groupBy = request.groupBy.filter((dimension) => !displays.has(dimension.name));
+      if (!request.groupBy.some((dimension) => dimension.name === entry.join.using)) {
+        request.groupBy.push({ name: entry.join.using });
       }
     }
 
@@ -411,23 +440,17 @@ export class RemoteBackend implements DatasetBackend {
   }
 
   /**
-   * Columns of the dataset, including any joined attributes.
+   * The cube's own columns, with a measure-dimension cube's members expanded into
+   * ordinary measures.
    *
-   * `describe` cannot list the attributes: they are members of the attribute cube's
-   * measure dimension, so they do not exist as columns anywhere until a join
-   * requests them. They are therefore synthesised from the join configuration,
-   * which keeps them visible in the data pane and draggable like any other field.
+   * A measure-dimension cube is stored as ONE numeric column whose members are
+   * the measures. Presenting that column as a field named `Measure` would show
+   * one meaningless measure and hide Sales/Profit/...; instead, replace it with
+   * one virtual measure per member. Attribute cubes also use `measureDimension`
+   * for their attribute names, so they keep their columns untouched.
    */
-  async schema(): Promise<ColumnSchema[]> {
-    const catalog = await this.ensureCatalog();
+  private async baseColumns(catalog: CatalogResponse): Promise<ColumnSchema[]> {
     const measureDimension = catalog.measureDimension;
-    /*
-     * A measure-dimension cube is stored as ONE numeric column whose members are
-     * the measures. Presenting that column as a field named `Measure` would show
-     * one meaningless measure and hide Sales/Profit/...; instead, replace it with
-     * one virtual measure per member. Attribute cubes also use `measureDimension`
-     * for their attribute names, so they keep their columns untouched.
-     */
     const isMeasureCube = Boolean(measureDimension) && !catalog.isAttributeTable;
     const base = catalog.columns
       .filter((column) => !isMeasureCube || column.name !== measureDimension)
@@ -457,28 +480,104 @@ export class RemoteBackend implements DatasetBackend {
       }
     }
 
+    return base;
+  }
+
+  /**
+   * Resolves each configured join's attributes to a unique output name.
+   *
+   * Identity stays `(cube, member)` — `MonthAttr.name_zh` and
+   * `CountryAttr.name_zh` are different fields even though both members are
+   * called `name_zh`. The wire's result table is flat, though, so the output
+   * names must be unique (contract §5.8). The first occurrence keeps the member
+   * name — so a field a sheet already references does not move when a second,
+   * colliding join is added — and later ones are qualified by their conformed
+   * dimension (`Country.name_zh`). A collision with a cube column or a
+   * calculated field is qualified the same way.
+   *
+   * The aliases are only sent when the engine advertises `supportsJoinAlias`;
+   * without it, the caller refuses rather than sending a silently ignored field.
+   */
+  private async resolveJoins(
+    catalog: CatalogResponse,
+    base?: ColumnSchema[],
+  ): Promise<ResolvedJoin[]> {
+    if (this.joins.length === 0) return [];
+
+    const baseColumns = base ?? (await this.baseColumns(catalog));
+    const used = new Set(baseColumns.map((column) => column.name));
+    // A calculated field is a client-side name too; a joined attribute with the
+    // same name would make two fields indistinguishable in the data pane.
+    for (const name of this.calculatedColumns.keys()) used.add(name);
+
+    const resolved: ResolvedJoin[] = [];
+    let needsAlias = false;
+
+    for (const join of this.joins) {
+      const attributes: ResolvedJoinAttribute[] = [];
+      const aliases: Record<string, string> = {};
+
+      for (const member of join.attributes) {
+        let display = member;
+        if (used.has(display)) {
+          const qualifier = join.using ?? join.cube;
+          display = `${qualifier}.${member}`;
+          let suffix = 2;
+          while (used.has(display)) display = `${qualifier}.${member} (${suffix++})`;
+          aliases[member] = display;
+          needsAlias = true;
+        }
+        used.add(display);
+        attributes.push({ member, display });
+      }
+
+      resolved.push({ join, attributes, aliases });
+    }
+
+    if (needsAlias) {
+      const capabilities = await this.capabilities();
+      if (capabilities?.supportsJoinAlias !== true) {
+        throw new ProtocolError(
+          'unsupported_expression',
+          'This engine cannot disambiguate joined attributes with duplicate names: it ' +
+            'does not advertise capabilities.supportsJoinAlias. Rename the duplicate ' +
+            'attribute in the model, or use an engine that supports join output aliases.',
+          'capabilities.supportsJoinAlias',
+        );
+      }
+    }
+
+    return resolved;
+  }
+
+  /**
+   * Columns of the dataset, including any joined attributes.
+   *
+   * `describe` cannot list the attributes: they are members of the attribute cube's
+   * measure dimension, so they do not exist as columns anywhere until a join
+   * requests them. They are therefore synthesised from the join configuration,
+   * which keeps them visible in the data pane and draggable like any other field.
+   */
+  async schema(): Promise<ColumnSchema[]> {
+    const catalog = await this.ensureCatalog();
+    const base = await this.baseColumns(catalog);
+
     // Calculated fields defined on this dataset are unknown to the engine's
     // catalog, so they are appended regardless of whether a join is attached.
     const calculated = [...this.calculatedColumns.values()];
 
     if (this.joins.length === 0) return [...base, ...calculated];
 
-    const existing = new Set(base.map((column) => column.name));
+    const joins = await this.resolveJoins(catalog, base);
     const attributes: ColumnSchema[] = [];
-    for (const join of this.joins) {
-      for (const name of join.attributes) {
-        if (existing.has(name)) {
-          throw new ProtocolError(
-            'invalid_argument',
-            `Joined attribute "${name}" collides with another output column.`,
-          );
-        }
-        existing.add(name);
+    for (const resolved of joins) {
+      for (const attribute of resolved.attributes) {
         attributes.push({
           // Attributes are text and never measures — the engine refuses to aggregate
-          // them and keeps them out of measureNames.
-          name,
-          label: name,
+          // them and keeps them out of measureNames. `name` is the resolved OUTPUT
+          // name (possibly qualified); identity stays (cube, member).
+          name: attribute.display,
+          label: attribute.display,
           dataType: 'string' as const,
           logicalType: 'string' as const,
           semanticType: 'nominal' as const,
@@ -492,12 +591,12 @@ export class RemoteBackend implements DatasetBackend {
           isInteger: false,
           // Marks these as arriving through a join, so the UI can explain why the
           // field needs its key dimension in the view.
-          joinedVia: join.using,
+          joinedVia: resolved.join.using,
         });
       }
     }
 
-    return [...base, ...attributes, ...this.calculatedColumns.values()];
+    return [...base, ...attributes, ...calculated];
   }
 
   async rowCount(): Promise<number> {
@@ -558,7 +657,7 @@ export class RemoteBackend implements DatasetBackend {
      * one of its attributes is on a shelf; the grouping translator then projects
      * the key and returns that join.
      */
-    const usedJoins = this.resolveAttributeGrouping(request);
+    const usedJoins = await this.resolveAttributeGrouping(request);
     if (usedJoins.length > 0) {
       if (!capabilities?.supportsJoin) {
         throw new ProtocolError(

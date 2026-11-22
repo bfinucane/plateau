@@ -86,6 +86,7 @@ async function stubEngine(): Promise<{ server: Server; url: string; lastQuery: (
           supportsInlineDomain: true,
           supportsJoin: true,
           maxJoins: 18,
+          supportsJoinAlias: true,
         });
         return;
       }
@@ -100,7 +101,7 @@ async function stubEngine(): Promise<{ server: Server; url: string; lastQuery: (
       if (url.includes('/regionattr/query')) {
         send({
           columns: [], columnMeta: [], rows: [], dimensionNames: [], measureNames: [],
-          measureLabels: [], domain: { Attribute: ['Manager', 'Owner'] },
+          measureLabels: [], domain: { Attribute: ['Manager', 'Owner', 'name_zh'] },
           elapsedMs: 1, truncated: false,
         });
         return;
@@ -108,7 +109,7 @@ async function stubEngine(): Promise<{ server: Server; url: string; lastQuery: (
       if (url.includes('/productattr/query')) {
         send({
           columns: [], columnMeta: [], rows: [], dimensionNames: [], measureNames: [],
-          measureLabels: [], domain: { Attribute: ['Class'] },
+          measureLabels: [], domain: { Attribute: ['Class', 'name_zh'] },
           elapsedMs: 1, truncated: false,
         });
         return;
@@ -255,6 +256,54 @@ async function main(): Promise<void> {
       !cleared.dataset.joins &&
         !cleared.dataset.columns.some((column: { joinedVia?: string }) => column.joinedVia),
       JSON.stringify(cleared.dataset));
+    section('Duplicate member names from two cubes are aliased, not refused');
+
+    const aliased = await json(await fetch(`${base}/api/datasets/${id}/joins`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        joins: [
+          { cube: 'RegionAttr', using: 'Region', attributes: ['name_zh'] },
+          { cube: 'ProductAttr', using: 'ProductID', attributes: ['name_zh'] },
+        ],
+      }),
+    }));
+    check('the duplicate member is accepted when the engine supports aliases',
+      aliased.dataset?.joins?.length === 2, JSON.stringify(aliased));
+    check('the schema exposes the qualified second column',
+      aliased.dataset?.columns?.some(
+        (column: { name: string; joinedVia?: string }) =>
+          column.name === 'name_zh' && column.joinedVia === 'Region',
+      ) &&
+        aliased.dataset?.columns?.some(
+          (column: { name: string; joinedVia?: string }) =>
+            column.name === 'ProductID.name_zh' && column.joinedVia === 'ProductID',
+        ),
+      JSON.stringify(aliased.dataset?.columns));
+
+    const aliasQuery = await fetch(`${base}/api/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        datasetId: id,
+        fields: [
+          { name: 'name_zh', kind: 'dimension' },
+          { name: 'ProductID.name_zh', kind: 'dimension' },
+          { name: 'Sales', kind: 'measure', aggregation: 'SUM' },
+        ],
+      }),
+    });
+    check('a query with both aliased attributes succeeds', aliasQuery.status === 200,
+      String(aliasQuery.status));
+    const aliasSent = engine.lastQuery() as {
+      joins?: { attributes?: string[]; aliases?: Record<string, string> }[];
+    } | null;
+    check('the wire gets member identities plus the second alias',
+      aliasSent?.joins?.length === 2 &&
+        aliasSent.joins[0]?.attributes?.[0] === 'name_zh' &&
+        aliasSent.joins[0]?.aliases === undefined &&
+        aliasSent.joins[1]?.aliases?.name_zh === 'ProductID.name_zh',
+      JSON.stringify(aliasSent?.joins));
   } finally {
     await new Promise<void>((resolve) => apiServer.close(() => resolve()));
     await new Promise<void>((resolve) => engine.server.close(() => resolve()));

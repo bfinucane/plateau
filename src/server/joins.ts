@@ -74,7 +74,17 @@ export async function prepareJoins(
   const primaryNames = new Set(primaryCatalog.columns.map((column) => column.name));
   const seenKeys = new Set<string>();
   const seenCubes = new Set<string>();
-  const seenAttributes = new Set<string>();
+  /**
+   * Attribute member name -> the attribute cubes that select it.
+   *
+   * A member name may repeat across attribute cubes: identity is `(cube, member)`,
+   * so `MonthAttr.name_zh` and `CountryAttr.name_zh` are different fields. The
+   * output column names would collide, though, which is what the optional wire
+   * `aliases` exist to fix. On an engine without `supportsJoinAlias` the collision
+   * cannot be resolved, so it stays a refusal.
+   */
+  const attributeOwners = new Map<string, string[]>();
+  const aliasesSupported = capabilities.supportsJoinAlias === true;
   const joins: JoinRequest[] = [];
 
   for (const raw of rawJoins) {
@@ -157,22 +167,34 @@ export async function prepareJoins(
           'invalid_attribute',
         );
       }
-      if (primaryNames.has(attribute)) {
+      if (primaryNames.has(attribute) && !aliasesSupported) {
         throw new JoinSelectionError(
-          `Attribute "${attribute}" collides with a column of ${primary}.`,
+          `Attribute "${attribute}" collides with a column of ${primary}, and this engine does not support join output aliases (capabilities.supportsJoinAlias).`,
           'invalid_attribute',
         );
       }
-      if (seenAttributes.has(attribute)) {
-        throw new JoinSelectionError(
-          `Attribute "${attribute}" is selected more than once.`,
-          'invalid_attribute',
-        );
-      }
-      seenAttributes.add(attribute);
+      const owners = attributeOwners.get(attribute) ?? [];
+      owners.push(cube);
+      attributeOwners.set(attribute, owners);
     }
 
     joins.push({ cube, using, attributes });
+  }
+
+  const duplicateMembers = [...attributeOwners].filter(
+    ([, cubes]) => new Set(cubes).size > 1,
+  );
+  if (duplicateMembers.length > 0 && !aliasesSupported) {
+    const named = duplicateMembers
+      .map(([attribute, cubes]) => `"${attribute}" (${cubes.join(', ')})`)
+      .join('; ');
+    throw new JoinSelectionError(
+      `Attribute ${named} is selected from more than one attribute cube, so the output ` +
+        'columns would collide. This engine does not support join output aliases ' +
+        '(capabilities.supportsJoinAlias): rename one attribute in the model, or use an ' +
+        'engine that supports aliases.',
+      'unsupported_join',
+    );
   }
 
   return joins;

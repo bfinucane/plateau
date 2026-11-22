@@ -103,6 +103,15 @@ export interface JoinRequest {
    * May be empty. Attribute columns are APPENDED after the queried columns.
    */
   attributes: string[];
+  /**
+   * Optional output column names, keyed by attribute member name.
+   *
+   * Contract v1 §5.8: identity stays `(cube, member)`; only the flat result
+   * column name changes. A client MUST NOT send this unless
+   * `capabilities.supportsJoinAlias` is true — an engine without it ignores the
+   * field and returns the plain (possibly colliding) name.
+   */
+  aliases?: Record<string, string>;
 }
 
 /**
@@ -153,6 +162,14 @@ export interface Capabilities {
    * greater than 1; `supportsJoin` alone only advertises the single `join`.
    */
   maxJoins?: number;
+  /**
+   * Whether per-join output aliases are honoured (contract §5.8).
+   *
+   * Additive v1. When absent, a client MUST NOT send `aliases`: the engine would
+   * ignore the unknown field and return the plain name, which is a silently wrong
+   * column identity when only one side of a duplicate was aliased.
+   */
+  supportsJoinAlias?: boolean;
   /**
    * Plain function names a calculated field may `call`, uppercased.
    *

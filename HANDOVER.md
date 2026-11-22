@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, thirty-six session commits on top of `0e252ab`. Every number
+Written on branch `main`, thirty-seven session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,9 +13,9 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 58 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 59 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 74 files in `src/`, ~31,000 lines |
-| Unit tests | **857 checks**, 25 suites, all passing |
+| Unit tests | **883 checks**, 26 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
@@ -23,7 +23,7 @@ below was measured, not remembered.
 | Bundle | `index-C27zExKN.js` (app, 169 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
-| Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
+| Engine | separate tree `Patricia/olap_engine`, HEAD `b32fb54` when last verified |
 | Plateau | not left running, by design — start it with `start.cmd` |
 
 Nothing is broken as far as the test suites can see. §8 lists what is open.
@@ -966,6 +966,62 @@ the client does not invent a key; the engine rejects it.
 Full unit suite **857 checks / 25 suites**; no wire change. The fix is server-side, so the
 running Plateau process must be restarted to pick it up.
 
+### 8.24 Duplicate attribute names across attribute cubes (handoff 027)
+The operator's model has a `name_zh` member in both `MonthAttr` and `CountryAttr`. A query that
+attaches both joins cannot work: the engine appends one output column per attribute **named
+after the member**, so the two `name_zh` columns collide and PROTOCOL §5.8 answers
+`400 invalid_argument`. The identity is already right — `(cube, member)` distinguishes
+`MonthAttr.name_zh` from `CountryAttr.name_zh`; it is only the flat result table that has no
+separate output name. `/v1/sql` is not an escape either: one LEFT join maximum, and projection
+aliases are not honoured.
+
+This cannot be fixed client-side alone: the request has no way to name the two output columns,
+and Plateau's join validation (`src/server/joins.ts`) currently rejects the duplicate member
+name before the query. Tableau's semantic layer solves the same problem by keeping the
+per-table field identity private and presenting unique display names, alias-qualifying the
+generated columns; the equivalent here is an optional per-join `aliases` map plus a
+`supportsJoinAlias` capability — identity unchanged, output name opt-in, `400` on
+resolved-name collisions.
+
+Filed as contract handoff **027** (PROPOSED) with a contract/REQUESTS.md intake line; no
+code changed at that point. Zero-wire-change fallback: rename the members globally
+(`month_name_zh`, `country_name_zh`), which works with the current engine. The Plateau
+display-name/aliasing layer follows contract triage; see 8.25 for the implemented adapter.
+
+### 8.25 Joined-attribute output aliases implemented (handoff 027 / D31)
+The contract side landed: PROTOCOL §5.8 now allows an optional per-join `aliases` object
+(member name → output column name) and a `supportsJoinAlias` capability; identity stays
+`(cube, member)`, collisions are decided on resolved output names, and `orderBy`/`columns`/
+`columnMeta` use the resolved name.
+
+Plateau's adapter is implemented client-side, gated on the capability:
+
+- `JoinRequest.aliases` and `Capabilities.supportsJoinAlias` are in the protocol types.
+- `prepareJoins` is identity-aware: the same member name in two different attribute cubes is
+  legal, and a member colliding with a cube column is legal, **only** on an engine that
+  advertises `supportsJoinAlias`. On an older engine those selections are still refused, now
+  with an `unsupported_join` message naming the capability and the rename fallback.
+- `RemoteBackend` derives display names deterministically: the first occurrence keeps the
+  plain member name (so a sheet that already references `name_zh` does not move when a second
+  colliding join is added) and later collisions are qualified by their conformed dimension
+  (`Country.name_zh`); a collision with a base or calculated field is qualified the same way.
+  The schema exposes the resolved names, `joinedVia` still names the key, and the query sends
+  the **member** identity plus only the needed `aliases`; the conformed keys are projected and
+  `orderBy` resolves against the same display name.
+- No workbook-format change: joins stay `{cube, using, attributes}` and aliases are derived
+  from join order, so re-registration/restart reproduces the same names. Existing workbooks
+  keep working because aliasing appears only where the dataset was previously impossible.
+
+Evidence: new `joinAlias` suite **19** checks (display names, member+alias on the wire, only
+the used join travels, base-column collision, capability refusal, unique-attribute
+backward compatibility); `joinSelection` 9→12; `joinAPI` 12→16; full unit suite
+**883 checks / 26 suites**; typecheck clean; bundle `index-C27zExKN.js` (unchanged — the
+client-side change is type-only). **Live end-to-end verification is pending:** the running
+shared engine (8080) still reports the 14-key capabilities payload without
+`supportsJoinAlias`, so the duplicate-member save is correctly refused there until the engine
+implementation is built, promoted and the shared instance restarted. The same data source
+then saves and queries with no further Plateau change.
+
 ---
 
 ## 9. Traps
@@ -1046,7 +1102,7 @@ running Plateau process must be restarted to pick it up.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 857 unit checks
+node scripts/test.mjs                                   # 883 unit checks
 npm run test:server                                     # terminal 2: test fixture on :5177
 node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
@@ -1075,7 +1131,7 @@ is worth showing.
 
 ## 11. Provenance
 
-58 commits, `55482d0` … HEAD. The last thirty-six are this session; the 14 before them
+59 commits, `55482d0` … HEAD. The last thirty-seven are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

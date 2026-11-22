@@ -290,6 +290,13 @@ export interface EngineCapabilities {
    * true). A client must not send `joins` unless this is greater than 1.
    */
   maxJoins?: number;
+  /**
+   * Whether the engine honours per-join output aliases (`aliases`).
+   *
+   * Additive v1; absent on an older engine. A client must not send `aliases`
+   * unless this is true, because the engine would ignore them silently.
+   */
+  supportsJoinAlias?: boolean;
   expressionFunctions: string[];
   supportsInlineDomain: boolean;
   maxRows?: number;

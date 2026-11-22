@@ -50,7 +50,9 @@ function catalog(dataset: string, columns: string[], attribute = false): Catalog
   };
 }
 
-function makeTransport(options: { supportsJoin?: boolean; maxJoins?: number } = {}): EngineTransport {
+function makeTransport(
+  options: { supportsJoin?: boolean; maxJoins?: number; supportsJoinAlias?: boolean } = {},
+): EngineTransport {
   const primary = catalog('Orders', ['Region', 'ProductID', 'Measure']);
   const region = catalog('RegionAttr', ['Region', 'Attribute'], true);
   const product = catalog('ProductAttr', ['ProductID', 'Attribute'], true);
@@ -63,6 +65,7 @@ function makeTransport(options: { supportsJoin?: boolean; maxJoins?: number } = 
     supportsInlineDomain: true,
     supportsJoin: options.supportsJoin ?? true,
     maxJoins: options.maxJoins ?? 18,
+    supportsJoinAlias: options.supportsJoinAlias,
   };
   return {
     async describe(dataset: string) {
@@ -90,7 +93,10 @@ function makeTransport(options: { supportsJoin?: boolean; maxJoins?: number } = 
         measureNames: [],
         measureLabels: [],
         domain: {
-          Attribute: attribute === 'RegionAttr' ? ['Manager', 'Owner'] : ['Class'],
+          Attribute:
+            attribute === 'RegionAttr'
+              ? ['Manager', 'Owner', 'name_zh', 'Region']
+              : ['Class', 'name_zh'],
         },
         elapsedMs: 1,
         truncated: false,
@@ -130,6 +136,51 @@ async function main(): Promise<void> {
       JSON.stringify(joins[0].attributes));
     check('an empty selection clears joins',
       (await prepareJoins(transport, 'Orders', primary, [], await transport.capabilities())).length === 0);
+  }
+
+  section('Duplicate member names across attribute cubes need alias support');
+
+  {
+    const primary = await (await makeTransport()).describe('Orders');
+    const duplicateJoins = [
+      { cube: 'RegionAttr', using: 'Region', attributes: ['name_zh'] },
+      { cube: 'ProductAttr', using: 'ProductID', attributes: ['name_zh'] },
+    ];
+
+    const aliasTransport = makeTransport({ supportsJoinAlias: true });
+    const aliasCapabilities = await aliasTransport.capabilities();
+    const accepted = await prepareJoins(
+      aliasTransport,
+      'Orders',
+      primary,
+      duplicateJoins,
+      aliasCapabilities,
+    );
+    check('the same member from two cubes is accepted when aliases are supported',
+      accepted.length === 2, JSON.stringify(accepted));
+
+    const legacyTransport = makeTransport();
+    const legacyCapabilities = await legacyTransport.capabilities();
+    const refused = await rejected(() => prepareJoins(
+      legacyTransport,
+      'Orders',
+      primary,
+      duplicateJoins,
+      legacyCapabilities,
+    ));
+    check('the same member from two cubes is refused without alias support',
+      refused instanceof JoinSelectionError && refused.code === 'unsupported_join',
+      String(refused));
+
+    const collisionWithAlias = await prepareJoins(
+      aliasTransport,
+      'Orders',
+      primary,
+      [{ cube: 'RegionAttr', using: 'Region', attributes: ['Region'] }],
+      aliasCapabilities,
+    );
+    check('a collision with a cube column is accepted when aliases are supported',
+      collisionWithAlias.length === 1, JSON.stringify(collisionWithAlias));
   }
 
   section('Invalid selections are refused at the API boundary');
