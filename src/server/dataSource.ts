@@ -324,20 +324,25 @@ export class RemoteBackend implements DatasetBackend {
    * carry the same label. That is the honest picture of the data; silently
    * de-duplicating would hide it.
    */
-  private resolveAttributeGrouping(request: QueryRequest): void {
-    for (const join of this.joins) {
-      if (!join.using) continue;
+  private resolveAttributeGrouping(request: QueryRequest): JoinRequest[] {
+    const used: JoinRequest[] = [];
 
-      const key = join.using;
+    for (const join of this.joins) {
       const attributes = new Set(join.attributes);
       const usesAttribute = request.groupBy.some((dimension) => attributes.has(dimension.name));
       if (!usesAttribute) continue;
 
+      used.push(join);
+      // Without a known key there is nothing to substitute; the engine must
+      // reject the keyless join rather than the client inventing a grouping.
+      if (!join.using) continue;
       request.groupBy = request.groupBy.filter((dimension) => !attributes.has(dimension.name));
-      if (!request.groupBy.some((dimension) => dimension.name === key)) {
-        request.groupBy.push({ name: key });
+      if (!request.groupBy.some((dimension) => dimension.name === join.using)) {
+        request.groupBy.push({ name: join.using });
       }
     }
+
+    return used;
   }
 
   /** Forgets a calculated field. */
@@ -544,15 +549,17 @@ export class RemoteBackend implements DatasetBackend {
     }
 
     /*
-     * Attach the joins, but only when the engine says it understands them.
+     * Only joins whose attributes are actually used by this query travel.
      *
-     * An older engine IGNORES a `join`/`joins` block silently. Sending it anyway
-     * would hand the user un-joined data with no error — the view would look
-     * correct and be missing every attribute. Refusing loudly is the only honest
-     * option. `joins` itself is gated on maxJoins > 1: an engine that only knows
-     * the single `join` shorthand would ignore the array.
+     * The engine requires every conformed key to be projected whenever its join
+     * is sent. Sending all configured joins would therefore make an ordinary
+     * chart fail merely because the data source has an attribute join somewhere
+     * (the reported `month_key is not projected`). A join is needed exactly when
+     * one of its attributes is on a shelf; the grouping translator then projects
+     * the key and returns that join.
      */
-    if (this.joins.length > 0) {
+    const usedJoins = this.resolveAttributeGrouping(request);
+    if (usedJoins.length > 0) {
       if (!capabilities?.supportsJoin) {
         throw new ProtocolError(
           'unsupported_expression',
@@ -560,20 +567,19 @@ export class RemoteBackend implements DatasetBackend {
           'capabilities.supportsJoin is false or absent',
         );
       }
-      if (this.joins.length === 1) {
-        request.join = this.joins[0];
+      if (usedJoins.length === 1) {
+        request.join = usedJoins[0];
       } else {
         const maxJoins = capabilities.maxJoins ?? 1;
-        if (maxJoins < this.joins.length) {
+        if (maxJoins < usedJoins.length) {
           throw new ProtocolError(
             'unsupported_expression',
-            `This engine accepts at most ${maxJoins} attribute join(s), but ${this.joins.length} are attached.`,
+            `This engine accepts at most ${maxJoins} attribute join(s), but ${usedJoins.length} are needed.`,
             'capabilities.maxJoins',
           );
         }
-        request.joins = this.joins;
+        request.joins = usedJoins;
       }
-      this.resolveAttributeGrouping(request);
     }
 
     // Attach the formulas for any calculated field the query references. Without

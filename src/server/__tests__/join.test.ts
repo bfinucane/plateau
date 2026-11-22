@@ -115,6 +115,15 @@ const SPEC = {
   ],
 };
 
+/** The same query with an attribute on a shelf, which is what requires the join. */
+const ATTRIBUTE_SPEC = {
+  fields: [
+    { name: 'Region', kind: 'dimension' as const },
+    { name: 'Manager', kind: 'dimension' as const },
+    { name: 'value', kind: 'measure' as const, aggregation: 'SUM' as const },
+  ],
+};
+
 async function main(): Promise<void> {
   section('A join adds attributes to the schema as dimensions');
 
@@ -141,22 +150,30 @@ async function main(): Promise<void> {
       after.some((c) => c.name === 'Region') && after.some((c) => c.name === 'value'));
   }
 
-  section('The join travels with every query');
+  section('A join travels only when one of its attributes is used');
 
   {
     sent.length = 0;
     const backend = makeBackend(makeTransport({ supportsJoin: true }));
     backend.setJoin({ cube: 'RegionAttr', using: 'Region', attributes: ['Manager'] });
 
+    // A configured join must not be forced onto every chart: the engine requires
+    // the conformed key to be projected, and an unrelated chart must not fail
+    // merely because the data source has joins configured.
     await backend.query(SPEC);
+    check('an unused configured join is not sent',
+      sent[0]?.join === undefined, JSON.stringify(sent[0]?.join));
 
-    check('a join block is sent', sent[0]?.join !== undefined, JSON.stringify(sent[0]?.join));
+    sent.length = 0;
+    await backend.query(ATTRIBUTE_SPEC);
+    check('an attribute on a shelf sends its join',
+      sent[0]?.join !== undefined, JSON.stringify(sent[0]?.join));
     check('the cube is carried', sent[0]?.join?.cube === 'RegionAttr', String(sent[0]?.join?.cube));
     check('the conformed key is carried', sent[0]?.join?.using === 'Region', String(sent[0]?.join?.using));
     check('the requested attributes are carried in order',
       JSON.stringify(sent[0]?.join?.attributes) === JSON.stringify(['Manager']),
       JSON.stringify(sent[0]?.join?.attributes));
-    check('the query itself is unchanged by the join',
+    check('the key is projected instead of the attribute',
       JSON.stringify(sent[0]?.groupBy) === JSON.stringify([{ name: 'Region' }]),
       JSON.stringify(sent[0]?.groupBy));
   }
@@ -179,7 +196,7 @@ async function main(): Promise<void> {
 
     let caught: unknown = null;
     try {
-      await backend.query(SPEC);
+      await backend.query(ATTRIBUTE_SPEC);
     } catch (error) {
       caught = error;
     }
@@ -199,7 +216,7 @@ async function main(): Promise<void> {
 
     let threw = false;
     try {
-      await backend.query(SPEC);
+      await backend.query(ATTRIBUTE_SPEC);
     } catch {
       threw = true;
     }
@@ -358,7 +375,13 @@ async function main(): Promise<void> {
 
     let caught: unknown = null;
     try {
-      await backend.query(SPEC);
+      await backend.query({
+        fields: [
+          { name: 'Region', kind: 'dimension' },
+          { name: 'Manager', kind: 'dimension' },
+          { name: 'Class', kind: 'dimension' },
+        ],
+      });
     } catch (error) {
       caught = error;
     }

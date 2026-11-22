@@ -207,6 +207,8 @@ async function main(): Promise<void> {
         fields: [
           { name: 'Region', kind: 'dimension' },
           { name: 'ProductID', kind: 'dimension' },
+          { name: 'Manager', kind: 'dimension' },
+          { name: 'Class', kind: 'dimension' },
           { name: 'Sales', kind: 'measure', aggregation: 'SUM' },
         ],
         limit: 5,

@@ -365,6 +365,8 @@ async function main(): Promise<void> {
     await dataset.backend.query({
       fields: [
         { name: 'Region', kind: 'dimension' },
+        { name: 'Manager', kind: 'dimension' },
+        { name: 'Class', kind: 'dimension' },
         { name: 'Sales', kind: 'measure', aggregation: 'SUM' },
       ],
       limit: 10,

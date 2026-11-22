@@ -15,7 +15,7 @@ below was measured, not remembered.
 |---|---|
 | Commits | 54 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 74 files in `src/`, ~31,000 lines |
-| Unit tests | **856 checks**, 25 suites, all passing |
+| Unit tests | **857 checks**, 25 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
@@ -942,6 +942,26 @@ Residual: data sources are workbook-owned but are not automatically re-registere
 Plateau server restart; opening **Data source** and saving restores them. Rehydration and
 the browser harness update are the next work items.
 
+### 8.23 Unused configured joins were projected onto every query
+With `D_Month` configured as a join on `month_key` but no month attribute on the sheet,
+ordinary charts failed with:
+
+> join 1 ('D_Month'): ... conformed dimension 'month_key' is not projected
+
+`RemoteBackend` sent every configured join with every query, while
+`resolveAttributeGrouping` only substituted the key when an attribute was actually on a
+shelf. The engine therefore saw a join whose key was not in `groupBy`.
+
+The grouping translator now returns the joins whose attributes the query actually uses,
+and `query` sends only those. A configured but unused join does not travel; a sheet using
+`month_attribute` still gets `month_key` projected and the `D_Month` join; two attribute
+joins are sent as `joins[]` only when both are used. The keyless legacy case is unchanged:
+the client does not invent a key; the engine rejects it.
+
+`join` grew 34 → 35 checks (unused configured join not sent; used join still sent).
+Full unit suite **857 checks / 25 suites**; no wire change. The fix is server-side, so the
+running Plateau process must be restarted to pick it up.
+
 ---
 
 ## 9. Traps
@@ -1022,7 +1042,7 @@ the browser harness update are the next work items.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 856 unit checks
+node scripts/test.mjs                                   # 857 unit checks
 npm run test:server                                     # terminal 2: test fixture on :5177
 node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
@@ -1032,7 +1052,7 @@ Suites: `engine` 77, `lod` 45, `protocol` 58, `httpTransport` 40, `remoteDataset
 `queryValidation` 17, `capabilityGating` 47, `tableCalcs` 51, `workbookBackup` 14,
 `split` 35, `axisSelection` 36, `aggregationMenu` 33, `workbookFile` 78,
 `calculationDrafts` 23, `referenceLines` 11, `bins` 30, `setsGroups` 27, `forecast` 30,
-`nullCells` 22, `markInference` 7, `axisNesting` 36, `join` 34, `joinSelection` 9,
+`nullCells` 22, `markInference` 7, `axisNesting` 36, `join` 35, `joinSelection` 9,
 `joinAPI` 12, `engineAuth` 30.
 
 Browser harnesses: `verify-ui` 43, `verify-lod` 14, `verify-marks` 29, `verify-viz`
