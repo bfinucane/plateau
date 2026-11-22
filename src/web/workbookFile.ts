@@ -36,11 +36,14 @@ import {
   type ReferenceLine,
   type Sheet,
   type ShelfId,
+  type WorkbookConnection,
+  type WorkbookDataSource,
+  type WorkbookFactTable,
   type WorkbookState,
 } from './viewModel';
 
 /** Bump only on a change that an older client could not read correctly. */
-export const WORKBOOK_FILE_FORMAT_VERSION = 1;
+export const WORKBOOK_FILE_FORMAT_VERSION = 2;
 
 /** Why a workbook file could not be read. The message is shown to the user. */
 export class WorkbookFileError extends Error {}
@@ -173,6 +176,9 @@ export function parseWorkbookFile(text: string): ParsedWorkbookFile {
   const dashboards = normaliseDashboards(source?.dashboards, sheets, warnings);
   const calculations = normaliseCalculations(source?.calculations, warnings);
   const sets = normaliseSets(source?.sets, warnings);
+  const connections = normaliseConnections(source?.connections, warnings);
+  const connectionIds = new Set(connections.map((connection) => connection.id));
+  const dataSources = normaliseDataSources(source?.dataSources, connectionIds, warnings);
 
   const requestedSheetId = typeof source?.activeSheetId === 'string' ? source.activeSheetId : null;
   const activeSheetId = sheets.some((sheet) => sheet.id === requestedSheetId)
@@ -197,9 +203,177 @@ export function parseWorkbookFile(text: string): ParsedWorkbookFile {
       activeDashboardId,
       calculations,
       sets,
+      connections,
+      dataSources,
+      activeDataSourceId:
+        typeof source?.activeDataSourceId === 'string' &&
+        dataSources.some((dataSource) => dataSource.id === source.activeDataSourceId)
+          ? source.activeDataSourceId
+          : dataSources[0]?.id ?? null,
     },
     warnings,
   };
+}
+
+/**
+ * Workbook-owned engine connections.
+ *
+ * Credentials are never part of the file. A connection with no URL is useless
+ * and dropped; an older workbook simply has none.
+ */
+function normaliseConnections(value: unknown, warnings: string[]): WorkbookConnection[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    warnings.push('"connections" is not a list, so it was ignored.');
+    return [];
+  }
+  const connections: WorkbookConnection[] = [];
+  const ids = new Set<string>();
+  value.forEach((entry, index) => {
+    if (!isRecord(entry)) {
+      warnings.push(`Connection ${index + 1} is not an object, so it was ignored.`);
+      return;
+    }
+    const url = typeof entry.url === 'string' ? entry.url.trim() : '';
+    if (!url) {
+      warnings.push(`Connection ${index + 1} has no URL, so it was ignored.`);
+      return;
+    }
+    let id =
+      typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : `connection-file-${index + 1}`;
+    if (ids.has(id)) id = `${id}-${index + 1}`;
+    ids.add(id);
+    let fallbackName = url;
+    try {
+      fallbackName = new URL(url).hostname || url;
+    } catch {
+      // Keep the raw URL as the display name; validation happens on connect.
+    }
+    connections.push({
+      id,
+      name:
+        typeof entry.name === 'string' && entry.name.trim()
+          ? entry.name.trim()
+          : fallbackName,
+      url,
+      ...(typeof entry.databaseName === 'string' && entry.databaseName.trim()
+        ? { databaseName: entry.databaseName.trim() }
+        : {}),
+    });
+  });
+  return connections;
+}
+
+/**
+ * Workbook-owned data sources.
+ *
+ * A data source is a list of FACT cubes; attribute cubes are represented only
+ * by the joins on a fact cube. This mirrors what a sheet can actually query.
+ */
+function normaliseDataSources(
+  value: unknown,
+  connectionIds: Set<string>,
+  warnings: string[],
+): WorkbookDataSource[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    warnings.push('"dataSources" is not a list, so it was ignored.');
+    return [];
+  }
+  const dataSources: WorkbookDataSource[] = [];
+  const dataSourceIds = new Set<string>();
+
+  value.forEach((entry, index) => {
+    if (!isRecord(entry)) {
+      warnings.push(`Data source ${index + 1} is not an object, so it was ignored.`);
+      return;
+    }
+    const connectionId = typeof entry.connectionId === 'string' ? entry.connectionId.trim() : '';
+    if (!connectionIds.has(connectionId)) {
+      warnings.push(
+        `Data source ${index + 1} refers to an unknown connection, so it was ignored.`,
+      );
+      return;
+    }
+    let id =
+      typeof entry.id === 'string' && entry.id.trim()
+        ? entry.id.trim()
+        : `datasource-file-${index + 1}`;
+    if (dataSourceIds.has(id)) id = `${id}-${index + 1}`;
+    dataSourceIds.add(id);
+
+    const rawTables = Array.isArray(entry.factTables) ? entry.factTables : [];
+    const factTables: WorkbookFactTable[] = [];
+    const tableIds = new Set<string>();
+    rawTables.forEach((rawTable, tableIndex) => {
+      if (!isRecord(rawTable)) {
+        warnings.push(`Data source "${id}" table ${tableIndex + 1} is not an object; ignored.`);
+        return;
+      }
+      const cube = typeof rawTable.cube === 'string' ? rawTable.cube.trim() : '';
+      if (!cube) {
+        warnings.push(`Data source "${id}" table ${tableIndex + 1} has no cube; ignored.`);
+        return;
+      }
+      let tableId =
+        typeof rawTable.id === 'string' && rawTable.id.trim()
+          ? rawTable.id.trim()
+          : `table-file-${tableIndex + 1}`;
+      if (tableIds.has(tableId)) tableId = `${tableId}-${tableIndex + 1}`;
+      tableIds.add(tableId);
+
+      const joins = Array.isArray(rawTable.joins)
+        ? rawTable.joins
+            .filter(
+              (join): join is Record<string, unknown> =>
+                isRecord(join) && typeof join.cube === 'string' && join.cube.trim().length > 0,
+            )
+            .map((join) => ({
+              cube: (join.cube as string).trim(),
+              ...(typeof join.using === 'string' && join.using.trim()
+                ? { using: join.using.trim() }
+                : {}),
+              attributes: Array.isArray(join.attributes)
+                ? join.attributes
+                    .filter((name): name is string => typeof name === 'string')
+                    .map((name) => name.trim())
+                    .filter(Boolean)
+                : [],
+            }))
+        : [];
+
+      factTables.push({
+        id: tableId,
+        cube,
+        name:
+          typeof rawTable.name === 'string' && rawTable.name.trim()
+            ? rawTable.name.trim()
+            : cube,
+        joins,
+      });
+    });
+
+    if (factTables.length === 0) {
+      warnings.push(`Data source ${index + 1} has no fact cubes, so it was ignored.`);
+      return;
+    }
+    const requestedDefault =
+      typeof entry.defaultTableId === 'string' ? entry.defaultTableId : null;
+    dataSources.push({
+      id,
+      name:
+        typeof entry.name === 'string' && entry.name.trim()
+          ? entry.name.trim()
+          : `Data source ${index + 1}`,
+      connectionId,
+      factTables,
+      defaultTableId: factTables.some((table) => table.id === requestedDefault)
+        ? requestedDefault
+        : factTables[0].id,
+    });
+  });
+
+  return dataSources;
 }
 
 /**
@@ -320,6 +494,9 @@ function normaliseSheet(
   };
 
   if (typeof value.paneBy === 'string' && value.paneBy.trim()) sheet.paneBy = value.paneBy.trim();
+  if (typeof value.tableId === 'string' && value.tableId.trim()) {
+    sheet.tableId = value.tableId.trim();
+  }
   if (value.splitMeasures === true) sheet.splitMeasures = true;
   if (typeof value.palette === 'number' && Number.isFinite(value.palette)) {
     sheet.palette = value.palette;

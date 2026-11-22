@@ -8,11 +8,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CellValue, ColumnInfo, Filter } from './api';
 import {
+  deleteDataset,
+  fetchDatasets,
   fetchPreview,
   fetchWorkbook,
   fetchWorkbookBackup,
+  registerRemoteDataset,
   restoreWorkbook,
   saveWorkbook,
+  setDatasetJoins,
   uploadDataset,
 } from './api';
 import type { DragPayload } from './dnd';
@@ -30,14 +34,16 @@ import {
   type Encoding,
   type ReferenceLine,
   type ShelfId,
+  type WorkbookConnection,
+  type WorkbookDataSource,
   type WorkbookState,
 } from './viewModel';
 import { ChartView } from './components/ChartView';
 import { BinsDialog } from './components/BinsDialog';
 import { CalculatedFieldDialog } from './components/CalculatedFieldDialog';
 import { GroupDialog, SetDialog } from './components/SetsGroupsDialogs';
-import { ConnectDialog } from './components/ConnectDialog';
-import { JoinDialog } from './components/JoinDialog';
+import { ConnectionDialog } from './components/ConnectionDialog';
+import { DataSourceScreen } from './components/DataSourceScreen';
 import { EngineLoginForm } from './components/EngineLoginForm';
 import { DashboardView } from './components/DashboardView';
 import { DataPane } from './components/DataPane';
@@ -79,10 +85,11 @@ export function App() {
   const [setDialog, setSetDialog] = useState<{ field?: string; editing?: WorkbookSet } | null>(null);
   const [groupDialog, setGroupDialog] = useState<{ field?: string } | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
-  const [joinsOpen, setJoinsOpen] = useState(false);
+  const [dataSourceOpen, setDataSourceOpen] = useState(false);
+  const [connectionDraft, setConnectionDraft] = useState<WorkbookConnection | null>(null);
   /** Values to pre-fill when Connect was opened from "Reconnect". */
   const [connectInitial, setConnectInitial] = useState<
-    { url?: string; dataset?: string; name?: string } | undefined
+    { url?: string; name?: string } | undefined
   >(undefined);
   const [inspectorTab, setInspectorTab] = useState<'values' | 'query'>('values');
   const [inspectedField, setInspectedField] = useState<ColumnInfo | null>(null);
@@ -253,6 +260,9 @@ export function App() {
           // An older saved workbook predates calculation drafts and sets.
           calculations: saved.calculations ?? [],
           sets: saved.sets ?? [],
+          connections: saved.connections ?? [],
+          dataSources: saved.dataSources ?? [],
+          activeDataSourceId: saved.activeDataSourceId ?? null,
         },
       });
       // The resulting state is only known after the reducer runs, so the effect
@@ -640,42 +650,135 @@ export function App() {
     [handleUpload],
   );
 
-  /** A remote dataset has already been registered; bring it into view. */  const handleConnected = useCallback(
-    async (datasetId: string) => {
-      try {
-        await app.refreshDatasets();
-        await app.selectDataset(datasetId);
-        setStatusNow('Connected to the engine');
-      } catch (error) {
-        setStatusNow(error instanceof Error ? error.message : 'Could not open the dataset');
-      }
+  /** A connection now exists; open the data-source canvas without selecting a table. */
+  const handleConnectionConnected = useCallback(
+    (connection: WorkbookConnection) => {
+      const existing = (state.workbook.connections ?? []).find(
+        (entry) => entry.url === connection.url,
+      );
+      const stored = existing ? { ...connection, id: existing.id } : connection;
+      const workbook: WorkbookState = {
+        ...state.workbook,
+        connections: [
+          ...(state.workbook.connections ?? []).filter((entry) => entry.id !== stored.id),
+          stored,
+        ],
+      };
+      dispatch({ type: 'workbook/updated', workbook });
+      setConnectionDraft(stored);
+      setConnectOpen(false);
+      setConnectInitial(undefined);
+      setDataSourceOpen(true);
     },
-    [app, setStatusNow],
+    [dispatch, state.workbook],
+  );
+
+  /**
+   * Saves a workbook-owned data source.
+   *
+   * Every fact cube becomes one registered remote dataset (with its attribute
+   * joins). The workbook stores cube names and join definitions; the runtime
+   * datasets are rebuilt from that definition here.
+   */
+  const handleSaveDataSource = useCallback(
+    async (dataSource: WorkbookDataSource) => {
+      const old = (state.workbook.dataSources ?? []).find(
+        (entry) => entry.id === dataSource.id,
+      );
+      const oldNames = new Set((old?.factTables ?? []).map((table) => table.name));
+      const connection =
+        connectionDraft ??
+        (state.workbook.connections ?? []).find(
+          (entry) => entry.id === dataSource.connectionId,
+        );
+      if (!connection) throw new Error('The connection for this data source is missing.');
+
+      // Remove runtime datasets for tables that no longer exist, then replace the
+      // remaining registrations so cube/join edits take effect.
+      for (const dataset of state.datasets) {
+        if (oldNames.has(dataset.name) && dataset.engineUrl) {
+          try {
+            await deleteDataset(dataset.id);
+          } catch {
+            // A missing registration is already the desired state.
+          }
+        }
+      }
+
+      for (const table of dataSource.factTables) {
+        await registerRemoteDataset({
+          url: connection.url,
+          dataset: table.cube,
+          name: table.name,
+          joins: table.joins.map((join) => ({
+            cube: join.cube,
+            using: join.using,
+            attributes: [...join.attributes],
+          })),
+        });
+      }
+
+      const datasets = await app.refreshDatasets();
+      const tables = new Set(dataSource.factTables.map((table) => table.id));
+      const defaultTableId =
+        dataSource.defaultTableId ?? dataSource.factTables[0]?.id ?? null;
+      const workbook: WorkbookState = {
+        ...state.workbook,
+        dataSources: [
+          ...(state.workbook.dataSources ?? []).filter((entry) => entry.id !== dataSource.id),
+          dataSource,
+        ],
+        activeDataSourceId: dataSource.id,
+      };
+      if (connectionDraft) {
+        workbook.connections = [
+          ...(workbook.connections ?? []).filter((entry) => entry.id !== connectionDraft.id),
+          connectionDraft,
+        ];
+      }
+      workbook.sheets = workbook.sheets.map((sheet) => ({
+        ...sheet,
+        tableId: sheet.tableId && tables.has(sheet.tableId) ? sheet.tableId : defaultTableId ?? undefined,
+      }));
+      dispatch({ type: 'workbook/updated', workbook });
+
+      const activeName = dataSource.factTables.find((table) => table.id === defaultTableId)?.name;
+      const active = datasets.find((dataset) => dataset.name === activeName);
+      if (active) dispatch({ type: 'dataset/activated', dataset: active, datasetId: active.id });
+      setDataSourceOpen(false);
+      showStatus(`Saved data source "${dataSource.name}"`);
+    },
+    [app, connectionDraft, dispatch, showStatus, state.datasets, state.workbook],
   );
 
   const openConnect = useCallback(
-    (initial?: { url?: string; dataset?: string; name?: string }) => {
+    (initial?: { url?: string; name?: string }) => {
       setConnectInitial(initial);
       setConnectOpen(true);
     },
     [],
   );
 
-  /**
-   * Reconnect does not try to guess a session or re-register silently: it opens
-   * Connect with the URL, cube and display name already filled in, so the normal
-   * probe/sign-in flow still runs. That is what makes it work after the engine
-   * restarted, when the old dataset registration (and token) are gone.
-   */
-  const handleReconnect = useCallback(() => {
-    const dataset = state.dataset;
-    if (!dataset?.engineUrl) return;
-    openConnect({
-      url: dataset.engineUrl,
-      dataset: dataset.engineDataset ?? dataset.name,
-      name: dataset.name,
-    });
-  }, [state.dataset, openConnect]);
+  const openDataSource = useCallback(() => {
+    const source = app.activeDataSource;
+    const connection = source
+      ? (state.workbook.connections ?? []).find((entry) => entry.id === source.connectionId)
+      : connectionDraft ??
+        (state.workbook.connections ?? [])[0] ??
+        (state.dataset?.engineUrl
+          ? {
+              id: 'connection-active',
+              name: state.dataset?.name ?? 'Connection',
+              url: state.dataset?.engineUrl ?? '',
+            }
+          : null);
+    if (!connection) {
+      openConnect();
+      return;
+    }
+    setConnectionDraft(connection);
+    setDataSourceOpen(true);
+  }, [app.activeDataSource, connectionDraft, openConnect, state.dataset, state.workbook.connections]);
 
   const handleDisconnect = useCallback(async () => {
     const name = state.dataset?.name;
@@ -738,18 +841,41 @@ export function App() {
         </div>
 
         <div className="command-group">
-          <label className="command-label" htmlFor="dataset-select">Data source</label>
-          <select
-            id="dataset-select"
-            value={state.activeDatasetId ?? ''}
-            onChange={(event) => void app.selectDataset(event.target.value)}
-          >
-            {state.datasets.map((dataset) => (
-              <option key={dataset.id} value={dataset.id}>
-                {dataset.name} ({dataset.rowCount.toLocaleString()} rows)
-              </option>
-            ))}
-          </select>
+          <label className="command-label" htmlFor="dataset-select">
+            {app.activeDataSource ? 'Table' : 'Data source'}
+          </label>
+          {app.activeDataSource ? (
+            <select
+              id="dataset-select"
+              value={activeSheet?.tableId ?? app.activeDataSource.defaultTableId ?? ''}
+              onChange={(event) => {
+                if (!activeSheet) return;
+                dispatch({
+                  type: 'sheet/table',
+                  sheetId: activeSheet.id,
+                  tableId: event.target.value,
+                });
+              }}
+            >
+              {app.activeDataSource.factTables.map((table) => (
+                <option key={table.id} value={table.id}>
+                  {table.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select
+              id="dataset-select"
+              value={state.activeDatasetId ?? ''}
+              onChange={(event) => void app.selectDataset(event.target.value)}
+            >
+              {state.datasets.map((dataset) => (
+                <option key={dataset.id} value={dataset.id}>
+                  {dataset.name} ({dataset.rowCount.toLocaleString()} rows)
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         <label className="button-secondary file-button">
@@ -761,26 +887,27 @@ export function App() {
           Connect
         </button>
 
-        {state.dataset?.engineUrl && (
+        {app.activeDataSource && (
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={openDataSource}
+            title="Add or remove fact cubes, edit attribute joins, and choose the default cube"
+          >
+            Data source
+          </button>
+        )}
+
+        {!app.activeDataSource && state.dataset?.engineUrl && (
           <>
             <button
               type="button"
               className="button-secondary"
-              onClick={handleReconnect}
-              title="Open Connect pre-filled with this remote dataset's engine, cube and name"
+              onClick={openDataSource}
+              title="Open the data source editor for this remote source"
             >
-              Reconnect
+              Data source
             </button>
-            {state.dataset.capabilities?.supportsJoin && (
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() => setJoinsOpen(true)}
-                title="Add, change or remove attribute cubes joined to this dataset"
-              >
-                Joins…
-              </button>
-            )}
             <button
               type="button"
               className="button-secondary"
@@ -983,6 +1110,11 @@ export function App() {
             dashboard={app.activeDashboard}
             sheets={state.workbook.sheets}
             datasetId={state.activeDatasetId}
+            datasetIdForSheet={(sheet) =>
+              app.datasetForTable(
+                sheet?.tableId ?? app.activeDataSource?.defaultTableId,
+              )?.id ?? state.activeDatasetId
+            }
             datasetRevision={(state.dataset?.columns ?? []).map((column) => column.name).join('|')}
             availableSheets={app.availableSheets}
             onAddPanel={(sheetId) =>
@@ -1448,29 +1580,27 @@ export function App() {
         />
       )}
 
-      {joinsOpen && state.dataset && (
-        <JoinDialog
-          dataset={state.dataset}
-          onClose={() => setJoinsOpen(false)}
-          onSaved={(updated) => {
-            showStatus(
-              updated.joins?.length
-                ? `Saved ${updated.joins.length} attribute join(s) for ${updated.name}`
-                : `Removed attribute joins from ${updated.name}`,
-            );
-          }}
-          save={app.updateJoins}
+      {dataSourceOpen && connectionDraft && (
+        <DataSourceScreen
+          connection={connectionDraft}
+          existing={
+            state.workbook.dataSources?.find(
+              (source) => source.connectionId === connectionDraft.id,
+            ) ?? null
+          }
+          onClose={() => setDataSourceOpen(false)}
+          onSave={handleSaveDataSource}
         />
       )}
 
       {connectOpen && (
-        <ConnectDialog
+        <ConnectionDialog
           initial={connectInitial}
           onClose={() => {
             setConnectOpen(false);
             setConnectInitial(undefined);
           }}
-          onConnected={(datasetId) => void handleConnected(datasetId)}
+          onConnected={handleConnectionConnected}
         />
       )}
 

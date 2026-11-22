@@ -21,6 +21,8 @@ interface DashboardViewProps {
   dashboard: Dashboard;
   sheets: Sheet[];
   datasetId: string | null;
+  /** Resolves the runtime dataset for the panel's own fact cube. */
+  datasetIdForSheet?: (sheet: Sheet | undefined) => string | null;
   /** Changes when the dataset's column set changes (calculation drafts). */
   datasetRevision: string;
   /** Worksheets not yet on this dashboard, offered in the palette. */
@@ -36,6 +38,7 @@ export function DashboardView({
   dashboard,
   sheets,
   datasetId,
+  datasetIdForSheet,
   datasetRevision,
   availableSheets,
   onAddPanel,
@@ -57,6 +60,8 @@ export function DashboardView({
   const [dropSourceId, setDropSourceId] = useState<string | null>(null);
 
   const sheetById = new Map(sheets.map((s) => [s.id, s]));
+  const datasetForSheet = (sheet: Sheet | undefined): string | null =>
+    datasetIdForSheet?.(sheet) ?? datasetId;
 
   const rows = dashboard.panels.reduce((max, p) => Math.max(max, p.y + p.h), 0);
 
@@ -133,7 +138,7 @@ export function DashboardView({
               key={panel.id}
               panel={panel}
               sheet={sheetById.get(panel.sheetId)}
-              datasetId={datasetId}
+              datasetId={datasetForSheet(sheetById.get(panel.sheetId))}
               datasetRevision={datasetRevision}
               dragging={draggingId === panel.id}
               // Offer the next panel as the swap partner, wrapping at the end.

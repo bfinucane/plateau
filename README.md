@@ -340,7 +340,7 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 851 unit checks, 25 suites
+npm test         # 856 unit checks, 25 suites
 npm run typecheck
 ```
 
@@ -409,7 +409,7 @@ writes nothing. If the engine requires authentication it checks the 401 first, t
 skips the protected checks unless `PLATEAU_ENGINE_USER` and `PLATEAU_ENGINE_PASSWORD`
 are set — a skip is reported, never counted as a pass.
 
-Total: **1420 checks** — 851 unit, 569 browser, plus 33 real-engine wire checks.
+Total: **1425 checks** — 856 unit, 569 browser, plus 33 real-engine wire checks.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -425,7 +425,7 @@ Total: **1420 checks** — 851 unit, 569 browser, plus 33 real-engine wire check
 | split | 35 | partitioning, ordering, refusals |
 | axis selection | 36 | dimensions beat measures; panel fields skipped; nesting to any depth |
 | capability menus | 33 | aggregations, filter operators and per-scope lists, never lying about the current value |
-| workbook file | 73 | round trip, hand-authored files, refusals, repairs, calculation drafts, reference lines, sets, forecasts |
+| workbook file | 78 | round trip, hand-authored files, refusals, repairs, calculation drafts, reference lines, sets, forecasts, workbook-owned connections/data sources |
 | calculation drafts | 23 | identity, dataset binding, missing-on-server planning |
 | reference lines | 11 | value axis, horizontal orientation, marks without a value axis |
 | bins | 30 | bin arithmetic evaluated per row, width validation, suggestions, offered fields |
@@ -748,7 +748,7 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   trend projection, not a statistical model — the engine is not asked to forecast.
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1420 checks green (851 unit, 569 browser)
+- 1425 checks green (856 unit, 569 browser)
 
 ### Connecting to an engine
 
@@ -983,8 +983,11 @@ Deliberately out of scope for this build, and the honest next steps:
 
 - **Joins are structural, not arbitrary.** Up to `maxJoins` attribute joins, one per
   conformed dimension, LEFT only; no fact-to-fact joins, arbitrary predicates, data
-  blending across sources, or cross-source calculation. Joins are editable after
-  connection, but remain a dataset-level setting.
+  blending across sources, or cross-source calculation. Joins are configured and edited
+  on the full-screen Data Source screen; fact cubes there are independent sheet roots.
+- **One connection at a time.** A workbook can hold a workbook-owned connection and data
+  source, but the connection/data-source picker is deliberately not a general multi-source
+  canvas yet. Server restarts still require the data source to be re-registered.
 - **Engine sessions live in the Plateau server's memory.** A Plateau restart, or an
   engine restart, means signing in again; there is no refresh token and no
   server-side logout endpoint yet (dropping the token is the whole sign-out). Signed-in

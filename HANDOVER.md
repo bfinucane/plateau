@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, thirty session commits on top of `0e252ab`. Every number
+Written on branch `main`, thirty-one session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,14 +13,14 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 52 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 53 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 74 files in `src/`, ~31,000 lines |
-| Unit tests | **851 checks**, 25 suites, all passing |
+| Unit tests | **856 checks**, 25 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
 | Screenshots | 61, in `docs/screenshots/` |
-| Bundle | `index-CegxDIG3.js` (app, 165 kB) + `echarts`/`react` vendor chunks |
+| Bundle | `index-CYCWBLec.js` (app, 169 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -273,9 +273,12 @@ and in charts as the nested axis level.
 The current wire adds optional multiple joins: one attribute cube per primary
 dimension, each keyed on a distinct conformed dimension, up to
 `capabilities.maxJoins` (the reference engine reports 18). Plateau sends the
-single `join` shorthand for one join and `joins[]` for two or more. The dataset
-metadata and the `Joins…` dialog make the selection editable after connection;
-there is no Disconnect/Reconnect requirement.
+single `join` shorthand for one join and `joins[]` for two or more.
+
+Joins are configured on the full-screen **Data Source** screen, not in Connect. The
+screen manages independent fact cubes and, for each, its attribute joins. A data source
+may contain several fact cubes with no joins between them; a sheet selects one fact cube
+as its root. The selection is workbook-owned and can be edited at any time.
 
 Limits, all structural: one join per primary dimension, attribute cubes only, LEFT
 only, no arbitrary predicates, attribute values are strings and never measures.
@@ -285,7 +288,7 @@ Fact-to-fact joins are not part of this model.
 
 ## 7. What this session changed
 
-Thirty commits on top of `0e252ab` — twenty-one features, a wire follow-up, a
+Thirty-one commits on top of `0e252ab` — twenty-two features, a wire follow-up, a
 maintenance pass, a contract-v1 adoption, two design decisions and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
@@ -905,6 +908,40 @@ Evidence: `join` grew 28 → 34 checks, `remoteDataset` 51 → 54, new `joinSele
 covered against a stub engine. The shared model still has no attribute cubes, so the
 dialog correctly explains why joins are unavailable until the model gains them.
 
+### 8.22 Connection-only and workbook-owned data sources
+The previous flow asked the user to choose one cube and one join at connect time. That
+conflated connecting, table selection and model configuration. It was replaced with:
+
+- **Connect** takes only the engine URL, sign-in and display name. It stores a
+  workbook-owned `Connection` (URL/database/name; no credentials).
+- **Data Source** is a full-screen screen reached after connecting. It lists the
+  connection's cubes, allows several independent **fact cubes**, and attaches attribute
+  cubes as joins per fact cube. There is no arbitrary table-join canvas: attribute joins
+  are the only joins Patricia supports, one per conformed dimension.
+- A data source may contain multiple unjoined fact cubes. Each is a separate query root;
+  a sheet stores `tableId`, and the toolbar Table selector changes the root for that
+  sheet. A change clears incompatible shelf encodings rather than silently keeping
+  fields that no longer exist.
+- A dashboard resolves each panel's dataset from its own sheet's fact cube, so panels
+  from different roots can coexist.
+- The workbook stores connections, data sources, fact cubes, joins and sheet table ids;
+  the registered server datasets are rebuilt from that definition. Workbook format is
+  now **v2**; older files load with empty connection/data-source lists.
+- The old `ConnectDialog`/`JoinDialog` components were removed. No Tableau import or
+  fact-to-fact join was added.
+
+Evidence: `workbook file` grew 73 → 78 checks (connection/data-source round trip,
+sheet table roots, legacy empty defaults); full unit suite **856 checks / 25 suites**;
+typecheck clean; bundle `index-CYCWBLec.js`. A live connect → Data Source → Save flow was
+verified in headless Chrome against 8080: the Orders fact cube registered, the data pane
+showed its 18 dimensions and 4 measures, and the Table selector appeared. The full browser
+suite was not rerun after this refactor; the remote-engine harnesses still target the old
+connect-time dataset flow and need updating.
+
+Residual: data sources are workbook-owned but are not automatically re-registered after a
+Plateau server restart; opening **Data source** and saving restores them. Rehydration and
+the browser harness update are the next work items.
+
 ---
 
 ## 9. Traps
@@ -985,7 +1022,7 @@ dialog correctly explains why joins are unavailable until the model gains them.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 851 unit checks
+node scripts/test.mjs                                   # 856 unit checks
 npm run test:server                                     # terminal 2: test fixture on :5177
 node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
@@ -993,7 +1030,7 @@ node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks agains
 
 Suites: `engine` 77, `lod` 45, `protocol` 58, `httpTransport` 40, `remoteDataset` 54,
 `queryValidation` 17, `capabilityGating` 47, `tableCalcs` 51, `workbookBackup` 14,
-`split` 35, `axisSelection` 36, `aggregationMenu` 33, `workbookFile` 73,
+`split` 35, `axisSelection` 36, `aggregationMenu` 33, `workbookFile` 78,
 `calculationDrafts` 23, `referenceLines` 11, `bins` 30, `setsGroups` 27, `forecast` 30,
 `nullCells` 22, `markInference` 7, `axisNesting` 36, `join` 34, `joinSelection` 9,
 `joinAPI` 12, `engineAuth` 30.
@@ -1014,7 +1051,7 @@ is worth showing.
 
 ## 11. Provenance
 
-52 commits, `55482d0` … HEAD. The last thirty are this session; the 14 before them
+53 commits, `55482d0` … HEAD. The last thirty-one are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

@@ -70,10 +70,12 @@ interface State {
 type Action =
   | { type: 'datasets/loaded'; datasets: DatasetMeta[] }
   | { type: 'dataset/selected'; dataset: DatasetMeta | null; datasetId: string | null }
+  | { type: 'dataset/activated'; dataset: DatasetMeta; datasetId: string }
   | { type: 'dataset/cleared'; datasets: DatasetMeta[] }
   | { type: 'dataset/rebound'; dataset: DatasetMeta; datasetId: string }
   | { type: 'dataset/updated'; dataset: DatasetMeta }
   | { type: 'workbook/loaded'; workbook: WorkbookState | null }
+  | { type: 'workbook/updated'; workbook: WorkbookState }
   | { type: 'calculation/added'; calculation: WorkbookCalculation }
   | {
       type: 'calculation/removed';
@@ -86,6 +88,7 @@ type Action =
   | { type: 'sheet/added' }
   | { type: 'sheet/removed'; sheetId: string }
   | { type: 'sheet/selected'; sheetId: string }
+  | { type: 'sheet/table'; sheetId: string; tableId: string }
   | { type: 'sheet/renamed'; sheetId: string; name: string }
   | { type: 'sheet/mark'; sheetId: string; mark: MarkType }
   | { type: 'sheet/paneSplit'; sheetId: string; paneBy?: string }
@@ -124,6 +127,9 @@ function createInitialWorkbook(): WorkbookState {
     calculations: [],
     // Sets are saved filter definitions; groups are calculated fields, not sets.
     sets: [],
+    connections: [],
+    dataSources: [],
+    activeDataSourceId: null,
   };
 }
 
@@ -207,6 +213,13 @@ function reducer(state: State, action: Action): State {
         datasets: state.datasets.map((d) => (d.id === action.dataset.id ? { ...d, ...action.dataset } : d)),
       };
 
+    case 'dataset/activated':
+      return {
+        ...state,
+        dataset: action.dataset,
+        activeDatasetId: action.datasetId,
+      };
+
     case 'dataset/cleared':
       return {
         ...state,
@@ -227,6 +240,9 @@ function reducer(state: State, action: Action): State {
               ...action.workbook,
               calculations: action.workbook.calculations ?? [],
               sets: action.workbook.sets ?? [],
+              connections: action.workbook.connections ?? [],
+              dataSources: action.workbook.dataSources ?? [],
+              activeDataSourceId: action.workbook.activeDataSourceId ?? null,
             },
           }
         : state;
@@ -281,7 +297,14 @@ function reducer(state: State, action: Action): State {
       };
 
     case 'sheet/added': {
-      const sheet = createSheet(`Sheet ${state.workbook.sheets.length + 1}`);
+      const source =
+        state.workbook.dataSources?.find(
+          (entry) => entry.id === state.workbook.activeDataSourceId,
+        ) ?? state.workbook.dataSources?.[0];
+      const sheet = createSheet(
+        `Sheet ${state.workbook.sheets.length + 1}`,
+        source?.defaultTableId ?? undefined,
+      );
       return {
         ...state,
         workbook: {
@@ -313,6 +336,29 @@ function reducer(state: State, action: Action): State {
         ...state,
         workbook: { ...state.workbook, activeSheetId: action.sheetId, view: 'sheet' },
       };
+
+    case 'sheet/table':
+      return mapSheet(state, action.sheetId, (sheet) => ({
+        ...sheet,
+        tableId: action.tableId,
+        // A different fact cube has a different field set. Keeping the old
+        // encodings would name fields that do not exist and turn a deliberate
+        // table change into a broken view.
+        shelves: {
+          columns: [],
+          rows: [],
+          color: [],
+          size: [],
+          detail: [],
+          label: [],
+          tooltip: [],
+          filters: [],
+        },
+        filters: [],
+        paneBy: undefined,
+        splitMeasures: undefined,
+        referenceLines: undefined,
+      }));
 
     case 'sheet/renamed':
       return mapSheet(state, action.sheetId, (sheet) => ({ ...sheet, name: action.name }));
@@ -542,6 +588,9 @@ function reducer(state: State, action: Action): State {
         };
       });
 
+    case 'workbook/updated':
+      return { ...state, workbook: action.workbook };
+
     case 'error':
       return { ...state, error: action.message };
 
@@ -617,6 +666,45 @@ export function useAppState() {
     () => state.workbook.sheets.find((s) => s.id === state.workbook.activeSheetId) ?? state.workbook.sheets[0],
     [state.workbook],
   );
+
+  const activeDataSource = useMemo(
+    () =>
+      state.workbook.dataSources?.find(
+        (source) => source.id === state.workbook.activeDataSourceId,
+      ) ?? state.workbook.dataSources?.[0] ?? null,
+    [state.workbook],
+  );
+
+  /** Runtime dataset for a workbook fact-table id, when it is registered. */
+  const datasetForTable = useCallback(
+    (tableId: string | undefined | null): DatasetMeta | null => {
+      if (!activeDataSource || !tableId) return null;
+      const table = activeDataSource.factTables.find((entry) => entry.id === tableId);
+      if (!table) return null;
+      return state.datasets.find((dataset) => dataset.name === table.name) ?? null;
+    },
+    [activeDataSource, state.datasets],
+  );
+
+  /**
+   * Keep the active runtime dataset aligned with the active sheet's fact cube.
+   *
+   * This deliberately uses `dataset/activated`, which does NOT reset the
+   * workbook: moving between sheets in one data source is not switching sources.
+   */
+  useEffect(() => {
+    if (!activeDataSource || !activeSheet) return;
+    const tableId = activeSheet.tableId ?? activeDataSource.defaultTableId;
+    const dataset = datasetForTable(tableId);
+    if (dataset && dataset.id !== state.activeDatasetId) {
+      dispatch({ type: 'dataset/activated', dataset, datasetId: dataset.id });
+    }
+  }, [
+    activeDataSource,
+    activeSheet,
+    datasetForTable,
+    state.activeDatasetId,
+  ]);
 
   // --- query -------------------------------------------------------------
   const spec = useMemo(() => {
@@ -1056,6 +1144,8 @@ export function useAppState() {
     state,
     dispatch,
     activeSheet,
+    activeDataSource,
+    datasetForTable,
     activeDashboard,
     availableSheets,
     spec,

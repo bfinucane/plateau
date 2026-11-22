@@ -562,5 +562,67 @@ section('Duplicate and dangling references are repaired and reported');
     JSON.stringify(parsed.warnings));
 }
 
+section('Workbook-owned connections and data sources');
+
+{
+  const workbook = fixture();
+  workbook.connections = [
+    {
+      id: 'connection-1',
+      name: 'Warehouse',
+      url: 'http://127.0.0.1:8080',
+      databaseName: 'database',
+    },
+  ];
+  workbook.dataSources = [
+    {
+      id: 'datasource-1',
+      name: 'Orders model',
+      connectionId: 'connection-1',
+      factTables: [
+        {
+          id: 'fact-orders',
+          cube: 'Orders',
+          name: 'Orders',
+          joins: [{ cube: 'RegionAttr', using: 'Region', attributes: ['Manager', 'Owner'] }],
+        },
+        {
+          id: 'fact-returns',
+          cube: 'Returns',
+          name: 'Returns',
+          joins: [],
+        },
+      ],
+      defaultTableId: 'fact-orders',
+    },
+  ];
+  workbook.activeDataSourceId = 'datasource-1';
+  workbook.sheets[0].tableId = 'fact-returns';
+  workbook.sheets[1].tableId = 'fact-orders';
+
+  const parsed = parseWorkbookFile(serialiseWorkbookFile(workbook));
+  const source = parsed.workbook.dataSources?.[0];
+  check('the connection survives the round trip',
+    parsed.workbook.connections?.[0]?.url === 'http://127.0.0.1:8080',
+    JSON.stringify(parsed.workbook.connections));
+  check('both fact cubes survive, with joins',
+    source?.factTables.length === 2 &&
+      source.factTables[0].joins[0].attributes.join(',') === 'Manager,Owner',
+    JSON.stringify(source));
+  check('the default fact cube survives', source?.defaultTableId === 'fact-orders');
+  check('sheet fact-cube roots survive',
+    parsed.workbook.sheets[0].tableId === 'fact-returns' &&
+      parsed.workbook.sheets[1].tableId === 'fact-orders',
+    JSON.stringify(parsed.workbook.sheets.map((sheet) => sheet.tableId)));
+
+  const legacy = parseWorkbookFile(
+    JSON.stringify({ sheets: [{ name: 'Legacy' }] }),
+  );
+  check('a legacy file has no connections or data sources',
+    legacy.workbook.connections?.length === 0 &&
+      legacy.workbook.dataSources?.length === 0 &&
+      legacy.workbook.activeDataSourceId === null);
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exitCode = 1;

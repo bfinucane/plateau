@@ -89,6 +89,14 @@ export interface Encoding {
 export interface Sheet {
   id: string;
   name: string;
+  /**
+   * The fact cube (data-source table) this sheet queries.
+   *
+   * A workbook data source may contain several unjoined fact cubes. The sheet,
+   * not the app, chooses one root; a dashboard can mix sheets from different
+   * roots. Older workbooks have no value and fall back to the default table.
+   */
+  tableId?: string;
   mark: MarkType;
   shelves: Record<ShelfId, Encoding[]>;
   filters: Filter[];
@@ -161,6 +169,49 @@ export interface Dashboard {
   panels: DashboardPanel[];
 }
 
+/** A workbook-owned engine connection. Credentials are never stored here. */
+export interface WorkbookConnection {
+  id: string;
+  name: string;
+  url: string;
+  databaseName?: string;
+}
+
+/** One attribute join attached to a fact cube. */
+export interface WorkbookJoin {
+  cube: string;
+  using?: string;
+  attributes: string[];
+}
+
+/**
+ * A fact cube in a workbook data source.
+ *
+ * A data source may contain several of these. They are independent query roots:
+ * joins between two fact cubes are not supported and are not represented.
+ */
+export interface WorkbookFactTable {
+  id: string;
+  cube: string;
+  name: string;
+  joins: WorkbookJoin[];
+}
+
+/**
+ * A workbook-owned data source.
+ *
+ * The definition is saved with the workbook; the server's registered datasets
+ * are runtime objects rebuilt from it. Attribute cubes live inside each fact
+ * table's joins, not as roots.
+ */
+export interface WorkbookDataSource {
+  id: string;
+  name: string;
+  connectionId: string;
+  factTables: WorkbookFactTable[];
+  defaultTableId: string | null;
+}
+
 export interface WorkbookState {
   sheets: Sheet[];
   activeSheetId: string;
@@ -186,6 +237,11 @@ export interface WorkbookState {
    * across sheets, and filters created from it are refreshed when it is edited.
    */
   sets: WorkbookSet[];
+  /** Engine connections authored in this workbook. One is used for now. */
+  connections?: WorkbookConnection[];
+  /** Workbook-owned data-source definitions. */
+  dataSources?: WorkbookDataSource[];
+  activeDataSourceId?: string | null;
 }
 
 export const AGGREGATION_LABELS: Record<Aggregation, string> = {
@@ -335,10 +391,11 @@ export function makeEncoding(
   };
 }
 
-export function createSheet(name: string): Sheet {
+export function createSheet(name: string, tableId?: string): Sheet {
   return {
     id: `sheet-${Math.random().toString(36).slice(2, 9)}`,
     name,
+    ...(tableId ? { tableId } : {}),
     mark: 'automatic',
     shelves: {
       columns: [],

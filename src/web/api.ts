@@ -300,6 +300,8 @@ export interface EngineCapabilities {
    * client build that ships before the engine upgrade keeps working.
    */
   authRequired?: boolean;
+  /** Database file stem, when the engine reports one. */
+  databaseName?: string;
 }
 
 /** What a successful engine sign-in returns. The token itself never reaches the browser. */
