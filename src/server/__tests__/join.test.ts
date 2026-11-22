@@ -178,6 +178,23 @@ async function main(): Promise<void> {
       JSON.stringify(sent[0]?.groupBy));
   }
 
+  section('A join sends only the attributes the query uses');
+
+  {
+    sent.length = 0;
+    const backend = makeBackend(makeTransport({ supportsJoin: true }));
+    backend.setJoin({
+      cube: 'RegionAttr',
+      using: 'Region',
+      attributes: ['Manager', 'Owner'],
+    });
+
+    await backend.query(ATTRIBUTE_SPEC);
+    check('a configured but unselected attribute does not travel',
+      JSON.stringify(sent[0]?.join?.attributes) === JSON.stringify(['Manager']),
+      JSON.stringify(sent[0]?.join?.attributes));
+  }
+
   section('No join configured means no join block');
 
   {

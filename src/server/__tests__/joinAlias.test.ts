@@ -64,11 +64,12 @@ function makeTransport(options: { supportsJoinAlias?: boolean; baseHasNameZh?: b
   const sales = catalog(
     'Sales',
     options.baseHasNameZh
-      ? ['Region', 'Country', 'name_zh', 'Amount']
-      : ['Region', 'Country', 'Amount'],
+      ? ['Region', 'Country', 'Channel', 'name_zh', 'Amount']
+      : ['Region', 'Country', 'Channel', 'Amount'],
   );
   const region = catalog('RegionAttr', ['Region', 'Attribute'], true);
   const country = catalog('CountryAttr', ['Country', 'Attribute'], true);
+  const channel = catalog('ChannelAttr', ['Channel', 'Attribute'], true);
 
   const capabilities: Capabilities = {
     protocolVersion: PROTOCOL_VERSION,
@@ -143,13 +144,14 @@ function makeTransport(options: { supportsJoinAlias?: boolean; baseHasNameZh?: b
       if (dataset.toLowerCase() === 'sales') return sales;
       if (dataset.toLowerCase() === 'regionattr') return region;
       if (dataset.toLowerCase() === 'countryattr') return country;
+      if (dataset.toLowerCase() === 'channelattr') return channel;
       throw new Error(`unknown ${dataset}`);
     },
     async capabilities() {
       return capabilities;
     },
     async listDatasets() {
-      return ['Sales', 'RegionAttr', 'CountryAttr'];
+      return ['Sales', 'RegionAttr', 'CountryAttr', 'ChannelAttr'];
     },
     async sample(): Promise<SampleResponse> {
       return { columns: ['Region'], rows: [['East']], rowCount: 10 };
@@ -177,22 +179,22 @@ const DUPLICATE_JOINS = [
 ];
 
 async function main(): Promise<void> {
-  section('Duplicate members get unique display names; the first keeps the plain name');
+  section('Duplicate members get symmetric qualified names');
 
   {
     const backend = makeBackend(makeTransport({ supportsJoinAlias: true }));
     backend.setJoins(DUPLICATE_JOINS);
     const schema = await backend.schema();
     const names = schema.map((column) => column.name);
-    check('both attributes are present under distinct names',
-      names.includes('name_zh') && names.includes('Country.name_zh'),
+    check('both attributes are qualified, not just the later one',
+      names.includes('Region.name_zh') && names.includes('Country.name_zh'),
       JSON.stringify(names));
-    check('the first keeps the plain member name',
-      schema.find((column) => column.name === 'name_zh')?.joinedVia === 'Region',
-      String(schema.find((column) => column.name === 'name_zh')?.joinedVia));
-    check('the second is qualified by its conformed dimension',
-      schema.find((column) => column.name === 'Country.name_zh')?.joinedVia === 'Country',
-      String(schema.find((column) => column.name === 'Country.name_zh')?.joinedVia));
+    check('neither keeps the ambiguous plain name',
+      !names.includes('name_zh'), JSON.stringify(names));
+    check('each keeps its conformed key',
+      schema.find((column) => column.name === 'Region.name_zh')?.joinedVia === 'Region' &&
+        schema.find((column) => column.name === 'Country.name_zh')?.joinedVia === 'Country',
+      JSON.stringify(schema.filter((column) => column.name.includes('name_zh'))));
     check('both remain text dimensions',
       schema.filter((column) => column.name.includes('name_zh')).every(
         (column) => column.kind === 'dimension' && column.dataType === 'string'),
@@ -209,7 +211,7 @@ async function main(): Promise<void> {
     backend.setJoins(DUPLICATE_JOINS);
     const result = await backend.query({
       fields: [
-        { name: 'name_zh', kind: 'dimension' },
+        { name: 'Region.name_zh', kind: 'dimension' },
         { name: 'Country.name_zh', kind: 'dimension' },
         { name: 'Amount', kind: 'measure', aggregation: 'SUM' },
       ],
@@ -217,9 +219,9 @@ async function main(): Promise<void> {
     const request = sent[0];
     const joins = request?.joins ?? [];
     check('both joins travel as joins[]', joins.length === 2, JSON.stringify(joins));
-    check('the first join carries no alias',
-      joins[0]?.aliases === undefined, JSON.stringify(joins[0]));
-    check('the second join aliases its member',
+    check('the first join carries its qualified alias',
+      joins[0]?.aliases?.name_zh === 'Region.name_zh', JSON.stringify(joins[0]));
+    check('the second join carries its qualified alias',
       joins[1]?.aliases?.name_zh === 'Country.name_zh', JSON.stringify(joins[1]));
     check('the wire attributes stay member names, not display names',
       joins.every((join) => join.attributes.length === 1 && join.attributes[0] === 'name_zh'),
@@ -231,7 +233,7 @@ async function main(): Promise<void> {
       ]),
       JSON.stringify(request?.groupBy));
     check('the result carries both resolved columns',
-      result.table.schema.some((column) => column.name === 'name_zh') &&
+      result.table.schema.some((column) => column.name === 'Region.name_zh') &&
         result.table.schema.some((column) => column.name === 'Country.name_zh'),
       JSON.stringify(result.table.schema.map((column) => column.name)));
   }
@@ -260,12 +262,13 @@ async function main(): Promise<void> {
     sent.length = 0;
     await backend.query({
       fields: [
-        { name: 'name_zh', kind: 'dimension' },
+        { name: 'Region.name_zh', kind: 'dimension' },
         { name: 'Amount', kind: 'measure', aggregation: 'SUM' },
       ],
     });
-    check('the plain member travels without an alias map',
-      joinsOf(sent[0]).length === 1 && joinsOf(sent[0])[0]?.aliases === undefined,
+    check('the first member still carries its symmetric alias',
+      joinsOf(sent[0]).length === 1 &&
+        joinsOf(sent[0])[0]?.aliases?.name_zh === 'Region.name_zh',
       JSON.stringify(joinsOf(sent[0])));
 
     sent.length = 0;
@@ -278,6 +281,80 @@ async function main(): Promise<void> {
     });
     check('orderBy uses the resolved display name',
       sent[0]?.orderBy?.output === 'Country.name_zh', JSON.stringify(sent[0]?.orderBy));
+  }
+
+  section('A third duplicate gets a third qualified name');
+
+  {
+    const backend = makeBackend(makeTransport({ supportsJoinAlias: true }));
+    backend.setJoins([
+      ...DUPLICATE_JOINS,
+      { cube: 'ChannelAttr', using: 'Channel', attributes: ['name_zh'] },
+    ]);
+    const schema = await backend.schema();
+    const names = schema.map((column) => column.name);
+    check('all three are qualified by their own key',
+      ['Region.name_zh', 'Country.name_zh', 'Channel.name_zh'].every((name) =>
+        names.includes(name)),
+      JSON.stringify(names));
+    check('no plain or suffixed fallback name was needed',
+      !names.includes('name_zh') && !names.some((name) => name.includes(' (2)')),
+      JSON.stringify(names));
+
+    sent.length = 0;
+    await backend.query({
+      fields: [
+        { name: 'Region.name_zh', kind: 'dimension' },
+        { name: 'Country.name_zh', kind: 'dimension' },
+        { name: 'Channel.name_zh', kind: 'dimension' },
+        { name: 'Amount', kind: 'measure', aggregation: 'SUM' },
+      ],
+    });
+    const joins = [
+      ...(sent[0]?.join ? [sent[0].join] : []),
+      ...(sent[0]?.joins ?? []),
+    ];
+    check('each of the three joins carries its own alias',
+      joins.length === 3 &&
+        joins[0]?.aliases?.name_zh === 'Region.name_zh' &&
+        joins[1]?.aliases?.name_zh === 'Country.name_zh' &&
+        joins[2]?.aliases?.name_zh === 'Channel.name_zh',
+      JSON.stringify(joins));
+  }
+
+  section('A join sends only the attributes the query uses');
+
+  {
+    sent.length = 0;
+    const backend = makeBackend(makeTransport({ supportsJoinAlias: true }));
+    backend.setJoin({
+      cube: 'RegionAttr',
+      using: 'Region',
+      attributes: ['product_name', 'launch_year'],
+    });
+    const schema = await backend.schema();
+    check('the data pane still offers every configured attribute',
+      schema.some((column) => column.name === 'product_name') &&
+        schema.some((column) => column.name === 'launch_year'),
+      JSON.stringify(schema.map((column) => column.name)));
+
+    const result = await backend.query({
+      fields: [
+        { name: 'product_name', kind: 'dimension' },
+        { name: 'Amount', kind: 'measure', aggregation: 'SUM' },
+      ],
+    });
+    const joins = [
+      ...(sent[0]?.join ? [sent[0].join] : []),
+      ...(sent[0]?.joins ?? []),
+    ];
+    check('only the chosen attribute travels',
+      joins.length === 1 &&
+        JSON.stringify(joins[0]?.attributes) === JSON.stringify(['product_name']),
+      JSON.stringify(joins));
+    check('the result has no unselected attribute columns',
+      !result.table.schema.some((column) => column.name === 'launch_year'),
+      JSON.stringify(result.table.schema.map((column) => column.name)));
   }
 
   section('A member that collides with a cube column is qualified');

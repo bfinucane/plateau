@@ -348,24 +348,36 @@ export class RemoteBackend implements DatasetBackend {
     const used: JoinRequest[] = [];
 
     for (const entry of resolved) {
-      const displays = new Set(entry.attributes.map((attribute) => attribute.display));
-      const usesAttribute = request.groupBy.some((dimension) => displays.has(dimension.name));
-      if (!usesAttribute) continue;
+      // Only the attributes this query actually uses travel. Sending the whole
+      // configured attribute list made the engine append every one of them, and a
+      // table mark then rendered columns the user never chose (the reported
+      // "choosing product_name shows all columns of D_Product").
+      const usedAttributes = entry.attributes.filter((attribute) =>
+        request.groupBy.some((dimension) => dimension.name === attribute.display),
+      );
+      if (usedAttributes.length === 0) continue;
+
+      const aliases: Record<string, string> = {};
+      for (const attribute of usedAttributes) {
+        const alias = entry.aliases[attribute.member];
+        if (alias) aliases[attribute.member] = alias;
+      }
 
       // Send the member identity, not the display name, plus the output aliases
-      // for whichever members were qualified. The engine appends them in this
-      // order and names the columns with the aliases.
+      // for whichever used members were qualified. The engine appends them in
+      // this order and names the columns with the aliases.
       used.push({
         cube: entry.join.cube,
         ...(entry.join.using ? { using: entry.join.using } : {}),
-        attributes: entry.attributes.map((attribute) => attribute.member),
-        ...(Object.keys(entry.aliases).length > 0 ? { aliases: { ...entry.aliases } } : {}),
+        attributes: usedAttributes.map((attribute) => attribute.member),
+        ...(Object.keys(aliases).length > 0 ? { aliases } : {}),
       });
 
       // Without a known key there is nothing to substitute; the engine must
       // reject the keyless join rather than the client inventing a grouping.
       if (!entry.join.using) continue;
-      request.groupBy = request.groupBy.filter((dimension) => !displays.has(dimension.name));
+      const usedDisplays = new Set(usedAttributes.map((attribute) => attribute.display));
+      request.groupBy = request.groupBy.filter((dimension) => !usedDisplays.has(dimension.name));
       if (!request.groupBy.some((dimension) => dimension.name === entry.join.using)) {
         request.groupBy.push({ name: entry.join.using });
       }
@@ -489,11 +501,11 @@ export class RemoteBackend implements DatasetBackend {
    * Identity stays `(cube, member)` — `MonthAttr.name_zh` and
    * `CountryAttr.name_zh` are different fields even though both members are
    * called `name_zh`. The wire's result table is flat, though, so the output
-   * names must be unique (contract §5.8). The first occurrence keeps the member
-   * name — so a field a sheet already references does not move when a second,
-   * colliding join is added — and later ones are qualified by their conformed
-   * dimension (`Country.name_zh`). A collision with a cube column or a
-   * calculated field is qualified the same way.
+   * names must be unique (contract §5.8). Every colliding member is qualified by
+   * its conformed dimension (`month_key.name_zh`, `country_key.name_zh`), so the
+   * names are symmetric and a third join simply adds a third qualified name. A
+   * collision with a cube column or a calculated field is qualified the same way
+   * — there the base column keeps its name and the attribute moves.
    *
    * The aliases are only sent when the engine advertises `supportsJoinAlias`;
    * without it, the caller refuses rather than sending a silently ignored field.
@@ -505,25 +517,37 @@ export class RemoteBackend implements DatasetBackend {
     if (this.joins.length === 0) return [];
 
     const baseColumns = base ?? (await this.baseColumns(catalog));
-    const used = new Set(baseColumns.map((column) => column.name));
-    // A calculated field is a client-side name too; a joined attribute with the
-    // same name would make two fields indistinguishable in the data pane.
-    for (const name of this.calculatedColumns.keys()) used.add(name);
+    // Names already taken by the cube's own fields or a calculated field. A
+    // joined attribute colliding with one of these is qualified; the base field
+    // cannot move.
+    const reserved = new Set(baseColumns.map((column) => column.name));
+    for (const name of this.calculatedColumns.keys()) reserved.add(name);
 
+    // How many joins request each member name. A name used by two or more joins
+    // is a collision, and ALL of its occurrences get qualified — the operator
+    // asked for symmetric names, not first-plain/next-qualified.
+    const memberCounts = new Map<string, number>();
+    for (const join of this.joins) {
+      for (const member of join.attributes) {
+        memberCounts.set(member, (memberCounts.get(member) ?? 0) + 1);
+      }
+    }
+
+    const used = new Set(reserved);
     const resolved: ResolvedJoin[] = [];
     let needsAlias = false;
 
     for (const join of this.joins) {
       const attributes: ResolvedJoinAttribute[] = [];
       const aliases: Record<string, string> = {};
+      const qualifier = join.using ?? join.cube;
 
       for (const member of join.attributes) {
-        let display = member;
-        if (used.has(display)) {
-          const qualifier = join.using ?? join.cube;
-          display = `${qualifier}.${member}`;
-          let suffix = 2;
-          while (used.has(display)) display = `${qualifier}.${member} (${suffix++})`;
+        const collides = reserved.has(member) || (memberCounts.get(member) ?? 0) > 1;
+        let display = collides ? `${qualifier}.${member}` : member;
+        let suffix = 2;
+        while (used.has(display)) display = `${qualifier}.${member} (${suffix++})`;
+        if (display !== member) {
           aliases[member] = display;
           needsAlias = true;
         }

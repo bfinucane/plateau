@@ -270,10 +270,10 @@ async function main(): Promise<void> {
     }));
     check('the duplicate member is accepted when the engine supports aliases',
       aliased.dataset?.joins?.length === 2, JSON.stringify(aliased));
-    check('the schema exposes the qualified second column',
+    check('the schema exposes both qualified columns',
       aliased.dataset?.columns?.some(
         (column: { name: string; joinedVia?: string }) =>
-          column.name === 'name_zh' && column.joinedVia === 'Region',
+          column.name === 'Region.name_zh' && column.joinedVia === 'Region',
       ) &&
         aliased.dataset?.columns?.some(
           (column: { name: string; joinedVia?: string }) =>
@@ -287,7 +287,7 @@ async function main(): Promise<void> {
       body: JSON.stringify({
         datasetId: id,
         fields: [
-          { name: 'name_zh', kind: 'dimension' },
+          { name: 'Region.name_zh', kind: 'dimension' },
           { name: 'ProductID.name_zh', kind: 'dimension' },
           { name: 'Sales', kind: 'measure', aggregation: 'SUM' },
         ],
@@ -298,10 +298,10 @@ async function main(): Promise<void> {
     const aliasSent = engine.lastQuery() as {
       joins?: { attributes?: string[]; aliases?: Record<string, string> }[];
     } | null;
-    check('the wire gets member identities plus the second alias',
+    check('the wire gets member identities plus both aliases',
       aliasSent?.joins?.length === 2 &&
         aliasSent.joins[0]?.attributes?.[0] === 'name_zh' &&
-        aliasSent.joins[0]?.aliases === undefined &&
+        aliasSent.joins[0]?.aliases?.name_zh === 'Region.name_zh' &&
         aliasSent.joins[1]?.aliases?.name_zh === 'ProductID.name_zh',
       JSON.stringify(aliasSent?.joins));
   } finally {
