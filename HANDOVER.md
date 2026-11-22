@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, forty-one session commits on top of `0e252ab`. Every number
+Written on branch `main`, forty-three session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,9 +13,9 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 63 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 65 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 74 files in `src/`, ~31,000 lines |
-| Unit tests | **884 checks**, 26 suites, all passing |
+| Unit tests | **891 checks**, 26 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
@@ -1001,26 +1001,35 @@ Plateau's adapter is implemented client-side, gated on the capability:
   legal, and a member colliding with a cube column is legal, **only** on an engine that
   advertises `supportsJoinAlias`. On an older engine those selections are still refused, now
   with an `unsupported_join` message naming the capability and the rename fallback.
-- `RemoteBackend` derives display names deterministically: the first occurrence keeps the
-  plain member name (so a sheet that already references `name_zh` does not move when a second
-  colliding join is added) and later collisions are qualified by their conformed dimension
-  (`Country.name_zh`); a collision with a base or calculated field is qualified the same way.
-  The schema exposes the resolved names, `joinedVia` still names the key, and the query sends
-  the **member** identity plus only the needed `aliases`; the conformed keys are projected and
-  `orderBy` resolves against the same display name.
+- `RemoteBackend` derives display names deterministically: **every** colliding member name is
+  qualified by its conformed dimension, symmetrically — `month_key.name_zh` and
+  `country_key.name_zh`, not one plain and one qualified. A third `name_zh` from a third
+  attribute cube simply becomes `<its key>.name_zh`; a collision with a base or calculated
+  field is qualified the same way (the base column keeps its name). The schema exposes the
+  resolved names, `joinedVia` still names the key, and the query sends the **member** identity
+  plus only the needed `aliases`; the conformed keys are projected and `orderBy` resolves
+  against the same display name.
+- A query sends **only the attributes it uses**, not every attribute configured on the join.
+  Sending the whole configured list made the engine append all of them, so a table mark showed
+  columns the user never chose ("choosing product_name shows all of D_Product"). The data pane
+  still offers every configured attribute; the request now carries just the ones on a shelf.
 - No workbook-format change: joins stay `{cube, using, attributes}` and aliases are derived
   from join order, so re-registration/restart reproduces the same names. Existing workbooks
-  keep working because aliasing appears only where the dataset was previously impossible.
+  keep working because aliasing appears only where the dataset was previously impossible;
+  after the symmetric rename, a sheet that referenced the old plain `name_zh` must re-add the
+  now-qualified field.
 
-Evidence: new `joinAlias` suite **20** checks (display names, member+alias on the wire, only
-the used join travels, base-column collision, capability refusal, unique-attribute
-backward compatibility); `joinSelection` 9→12; `joinAPI` 12→16; full unit suite
-**884 checks / 26 suites**; typecheck clean; bundle `index-C27zExKN.js` (unchanged — the
-client-side change is type-only). **Live end-to-end verification is pending:** the running
-shared engine (8080) still reports the 14-key capabilities payload without
-`supportsJoinAlias`, so the duplicate-member save is correctly refused there until the engine
-implementation is built, promoted and the shared instance restarted. The same data source
-then saves and queries with no further Plateau change.
+Evidence: `joinAlias` suite **26** checks (symmetric names, two- and three-way duplicates,
+member+alias on the wire, only used attributes travel, base-column collision, capability
+refusal, unique-attribute backward compatibility); `join` 35→36; `joinSelection` 9→12;
+`joinAPI` 12→16; full unit suite **891 checks / 26 suites**; typecheck clean; bundle
+`index-C27zExKN.js` (unchanged — the client-side change is type-only).
+
+**Live status (2026-11-23):** the engine side is live — the user promoted the alias pair at
+00:22 and capabilities report **15 keys with `supportsJoinAlias: true`**; joins now work in the
+app. Commit **`68e6b5d`** is the symmetric-name + used-attributes correction; the Plateau
+server must be restarted to load it, and sheets that used the old plain `name_zh` need the
+qualified field re-added.
 
 ### 8.26 Browser tab icon
 Plateau had no favicon, so its tab showed the browser's generic page icon while MiniSheet and
@@ -1115,7 +1124,7 @@ Plateau part of the owner-coordinated favicon item in `contract/REQUESTS.md` (20
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 884 unit checks
+node scripts/test.mjs                                   # 891 unit checks
 npm run test:server                                     # terminal 2: test fixture on :5177
 node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
@@ -1144,7 +1153,7 @@ is worth showing.
 
 ## 11. Provenance
 
-63 commits in total. The last forty-one are this session; the earlier 22 are the work of
+65 commits in total. The last forty-three are this session; the earlier 22 are the work of
 earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.
