@@ -20,7 +20,7 @@ below was measured, not remembered.
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
 | Screenshots | 61, in `docs/screenshots/` |
-| Bundle | `index-CYCWBLec.js` (app, 169 kB) + `echarts`/`react` vendor chunks |
+| Bundle | `index-C27zExKN.js` (app, 169 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `a8b1342` when last verified |
@@ -932,11 +932,15 @@ conflated connecting, table selection and model configuration. It was replaced w
 
 Evidence: `workbook file` grew 73 → 78 checks (connection/data-source round trip,
 sheet table roots, legacy empty defaults); full unit suite **856 checks / 25 suites**;
-typecheck clean; bundle `index-CYCWBLec.js`. A live connect → Data Source → Save flow was
+typecheck clean; bundle `index-C27zExKN.js`. A live connect → Data Source → Save flow was
 verified in headless Chrome against 8080: the Orders fact cube registered, the data pane
 showed its 18 dimensions and 4 measures, and the Table selector appeared. The full browser
 suite was not rerun after this refactor; the remote-engine harnesses still target the old
 connect-time dataset flow and need updating.
+
+The connection dialog's controls were also found flush against the dialog edge; its body
+now lives in `.connect-body` with normal padding and full-width inputs, and its actions use
+the standard footer spacing.
 
 Residual: data sources are workbook-owned but are not automatically re-registered after a
 Plateau server restart; opening **Data source** and saving restores them. Rehydration and

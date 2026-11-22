@@ -107,60 +107,62 @@ export function ConnectionDialog({ initial, onClose, onConnected }: ConnectionDi
           </button>
         </header>
 
-        <p className="calc-hint">
-          Connect to the database first. Tables and joins are chosen on the Data Source
-          screen afterwards.
-        </p>
-
-        <label className="calc-field">
-          <span>Engine URL</span>
-          <input
-            id="connect-url"
-            value={url}
-            onChange={(event) => {
-              setUrl(event.target.value);
-              setCapabilities(null);
-              setSession(null);
-              setAuthRequired(false);
-            }}
-            placeholder="http://127.0.0.1:8080"
-            autoFocus
-          />
-        </label>
-
-        <label className="calc-field">
-          <span>
-            Display name <em className="field-optional">optional</em>
-          </span>
-          <input
-            id="connect-name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Production warehouse"
-          />
-        </label>
-
-        {authRequired && !session ? (
-          <EngineLoginForm
-            url={url.trim()}
-            onSuccess={(loggedIn) => void handleLoggedIn(loggedIn)}
-          />
-        ) : session ? (
-          <p className="calc-hint connect-session">
-            Signed in as <strong>{session.user}</strong>
-            {session.roles.length > 0 && <> ({session.roles.join(', ')})</>}.
-          </p>
-        ) : null}
-
-        {capabilities && (
+        <div className="dialog-body connect-body">
           <p className="calc-hint">
-            {capabilities.databaseName ? `Database: ${capabilities.databaseName}. ` : ''}
-            Tables are selected after connecting.
+            Connect to the database first. Tables and joins are chosen on the Data Source
+            screen afterwards.
           </p>
-        )}
-        {error && <p className="calc-hint calc-hint-warning">{error}</p>}
 
-        <footer className="dialog-actions">
+          <label className="calc-field">
+            <span>Engine URL</span>
+            <input
+              id="connect-url"
+              value={url}
+              onChange={(event) => {
+                setUrl(event.target.value);
+                setCapabilities(null);
+                setSession(null);
+                setAuthRequired(false);
+              }}
+              placeholder="http://127.0.0.1:8080"
+              autoFocus
+            />
+          </label>
+
+          <label className="calc-field">
+            <span>
+              Display name <em className="field-optional">optional</em>
+            </span>
+            <input
+              id="connect-name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Production warehouse"
+            />
+          </label>
+
+          {authRequired && !session ? (
+            <EngineLoginForm
+              url={url.trim()}
+              onSuccess={(loggedIn) => void handleLoggedIn(loggedIn)}
+            />
+          ) : session ? (
+            <p className="calc-hint connect-session">
+              Signed in as <strong>{session.user}</strong>
+              {session.roles.length > 0 && <> ({session.roles.join(', ')})</>}.
+            </p>
+          ) : null}
+
+          {capabilities && (
+            <p className="calc-hint">
+              {capabilities.databaseName ? `Database: ${capabilities.databaseName}. ` : ''}
+              Tables are selected after connecting.
+            </p>
+          )}
+          {error && <p className="calc-hint calc-hint-warning">{error}</p>}
+        </div>
+
+        <footer className="dialog-footer connect-actions">
           <button type="button" className="button-secondary" onClick={onClose} disabled={busy}>
             Cancel
           </button>

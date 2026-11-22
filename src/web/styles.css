@@ -2572,6 +2572,19 @@ textarea {
   margin: 0;
 }
 
+/* Connection dialog: .dialog itself has no padding; content lives in a body. */
+.connect-dialog .connect-body {
+  padding: 14px 16px 4px;
+}
+
+.connect-dialog .calc-field input {
+  width: 100%;
+}
+
+.connect-actions {
+  justify-content: flex-end;
+}
+
 /* A button that reads as a link: sign out should not compete with Add dataset. */
 .link-button {
   border: none;
