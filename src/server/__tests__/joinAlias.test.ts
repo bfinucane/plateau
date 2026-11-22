@@ -267,6 +267,17 @@ async function main(): Promise<void> {
     check('the plain member travels without an alias map',
       joinsOf(sent[0]).length === 1 && joinsOf(sent[0])[0]?.aliases === undefined,
       JSON.stringify(joinsOf(sent[0])));
+
+    sent.length = 0;
+    await backend.query({
+      fields: [
+        { name: 'Country.name_zh', kind: 'dimension' },
+        { name: 'Amount', kind: 'measure', aggregation: 'SUM' },
+      ],
+      sort: { field: 'Country.name_zh', direction: 'asc' },
+    });
+    check('orderBy uses the resolved display name',
+      sent[0]?.orderBy?.output === 'Country.name_zh', JSON.stringify(sent[0]?.orderBy));
   }
 
   section('A member that collides with a cube column is qualified');

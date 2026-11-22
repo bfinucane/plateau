@@ -15,7 +15,7 @@ below was measured, not remembered.
 |---|---|
 | Commits | 59 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 74 files in `src/`, ~31,000 lines |
-| Unit tests | **883 checks**, 26 suites, all passing |
+| Unit tests | **884 checks**, 26 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
@@ -1012,10 +1012,10 @@ Plateau's adapter is implemented client-side, gated on the capability:
   from join order, so re-registration/restart reproduces the same names. Existing workbooks
   keep working because aliasing appears only where the dataset was previously impossible.
 
-Evidence: new `joinAlias` suite **19** checks (display names, member+alias on the wire, only
+Evidence: new `joinAlias` suite **20** checks (display names, member+alias on the wire, only
 the used join travels, base-column collision, capability refusal, unique-attribute
 backward compatibility); `joinSelection` 9→12; `joinAPI` 12→16; full unit suite
-**883 checks / 26 suites**; typecheck clean; bundle `index-C27zExKN.js` (unchanged — the
+**884 checks / 26 suites**; typecheck clean; bundle `index-C27zExKN.js` (unchanged — the
 client-side change is type-only). **Live end-to-end verification is pending:** the running
 shared engine (8080) still reports the 14-key capabilities payload without
 `supportsJoinAlias`, so the duplicate-member save is correctly refused there until the engine
@@ -1102,7 +1102,7 @@ then saves and queries with no further Plateau change.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 883 unit checks
+node scripts/test.mjs                                   # 884 unit checks
 npm run test:server                                     # terminal 2: test fixture on :5177
 node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
