@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, forty session commits on top of `0e252ab`. Every number
+Written on branch `main`, forty-one session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,7 +13,7 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 62 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 63 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 74 files in `src/`, ~31,000 lines |
 | Unit tests | **884 checks**, 26 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
@@ -1022,6 +1022,19 @@ shared engine (8080) still reports the 14-key capabilities payload without
 implementation is built, promoted and the shared instance restarted. The same data source
 then saves and queries with no further Plateau change.
 
+### 8.26 Browser tab icon
+Plateau had no favicon, so its tab showed the browser's generic page icon while MiniSheet and
+Object Explorer each had a distinct one. Added `public/favicon.svg` — a flat-topped mesa in the
+app's accent blue with a green measure baseline, deliberately a different silhouette from the
+grid icons of the other two apps and readable at 16 px — and linked it from
+`src/web/index.html` together with a matching `theme-color`. Vite's `publicDir` copies it to
+`dist/web`, and the Express static host serves it.
+
+Verified against the built app on a private port: `GET /favicon.svg` → **200**,
+`image/svg+xml`, 419 B; the served page carries the `<link rel="icon" …>`; the app bundle
+(`index-C27zExKN.js`) is unchanged. Client-only — no contract/wire change. This satisfies the
+Plateau part of the owner-coordinated favicon item in `contract/REQUESTS.md` (2026-11-02).
+
 ---
 
 ## 9. Traps
@@ -1131,7 +1144,7 @@ is worth showing.
 
 ## 11. Provenance
 
-62 commits in total. The last forty are this session; the earlier 22 are the work of
+63 commits in total. The last forty-one are this session; the earlier 22 are the work of
 earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.
