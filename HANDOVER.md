@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, thirty-seven session commits on top of `0e252ab`. Every number
+Written on branch `main`, forty session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,7 +13,7 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 59 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 62 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 74 files in `src/`, ~31,000 lines |
 | Unit tests | **884 checks**, 26 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
@@ -1131,7 +1131,7 @@ is worth showing.
 
 ## 11. Provenance
 
-59 commits, `55482d0` … HEAD. The last thirty-seven are this session; the 14 before them
-are the work of earlier sessions and are described by their commit messages, which
+62 commits in total. The last forty are this session; the earlier 22 are the work of
+earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.
