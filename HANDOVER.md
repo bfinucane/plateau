@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, thirty-one session commits on top of `0e252ab`. Every number
+Written on branch `main`, thirty-two session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,7 +13,7 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 53 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 54 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 74 files in `src/`, ~31,000 lines |
 | Unit tests | **856 checks**, 25 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
@@ -288,7 +288,7 @@ Fact-to-fact joins are not part of this model.
 
 ## 7. What this session changed
 
-Thirty-one commits on top of `0e252ab` — twenty-two features, a wire follow-up, a
+Thirty-two commits on top of `0e252ab` — twenty-three features, a wire follow-up, a
 maintenance pass, a contract-v1 adoption, two design decisions and two notes on
 verification hygiene. The commit messages have the detail; the shape:
 
@@ -1051,7 +1051,7 @@ is worth showing.
 
 ## 11. Provenance
 
-53 commits, `55482d0` … HEAD. The last thirty-one are this session; the 14 before them
+54 commits, `55482d0` … HEAD. The last thirty-two are this session; the 14 before them
 are the work of earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.
