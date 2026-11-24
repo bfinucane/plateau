@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, forty-four session commits on top of `0e252ab`. Every number
+Written on branch `main`, forty-five session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,7 +13,7 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 66 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 67 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 77 files in `src/`, ~31,000 lines |
 | Unit tests | **909 checks**, 27 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
@@ -1072,10 +1072,14 @@ pushdown only with the capability, local fallback, finer-than-granularity fallba
 filter gating); full unit suite **909 checks / 27 suites**; typecheck clean; bundle
 `index-Ddw-Ub3t.js`.
 
-**Live status:** the engine tree still has no date implementation (`322e1ea`), and 8080 is down;
-nothing date-related can be verified live yet. Engine release 1 (model role + `describe`) makes
-`month_key` a date in Plateau with the existing fallback; release 2 (`datePart` + range
-filters) turns on pushdown and the range filter. Both remain engine-side work.
+**Live status:** the engine release is live (`serve C3F61BBF…`, 17-key capabilities with
+`dateParts` and `supportsDateRangeFilters`). On a private copy of the saved database, assigning
+`.date month_key month` produced a date/month `describe`, Plateau exposed it as a date, a
+`datePart: "year"` query was pushed down and returned correct sums, a `between` range filter was
+pushed down and returned the six months, and `.save` + restart persisted the role. The shared
+saved database still reported `month_key` as a string at probe time (the role was applied after
+that save); run `.date month_key month` and `.save` again on the shared engine, then start
+Plateau for the UI smoke. 5180 was down during verification.
 
 ---
 
@@ -1186,7 +1190,7 @@ is worth showing.
 
 ## 11. Provenance
 
-66 commits in total. The last forty-four are this session; the earlier 22 are the work of
+67 commits in total. The last forty-five are this session; the earlier 22 are the work of
 earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.
