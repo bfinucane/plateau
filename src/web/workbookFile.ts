@@ -501,6 +501,16 @@ function normaliseSheet(
   if (typeof value.palette === 'number' && Number.isFinite(value.palette)) {
     sheet.palette = value.palette;
   }
+  if (value.lineStyle !== undefined) {
+    if (value.lineStyle === 'curved' || value.lineStyle === 'step' || value.lineStyle === 'straight') {
+      // `straight` is the default; keep it only if a hand-authored file says so.
+      sheet.lineStyle = value.lineStyle;
+    } else {
+      warnings.push(
+        `Sheet "${name}" had an unknown line style, so the default straight line is used.`,
+      );
+    }
+  }
 
   const referenceLines = normaliseReferenceLines(value.referenceLines, name, warnings);
   if (referenceLines.length > 0) sheet.referenceLines = referenceLines;

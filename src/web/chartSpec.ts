@@ -1096,6 +1096,21 @@ function buildBarLike(
   };
 }
 
+/**
+ * ECharts interpolation flags for the sheet's line style.
+ *
+ * `straight` (the default, and what an absent key means) draws point-to-point
+ * segments; `curved` is ECharts smoothing; `step` holds each value to the next
+ * point. Only line/area builders use this.
+ */
+function lineShape(sheet: Sheet): { smooth: boolean; step: false | 'middle' } {
+  const style = sheet.lineStyle ?? 'straight';
+  return {
+    smooth: style === 'curved',
+    step: style === 'step' ? 'middle' : false,
+  };
+}
+
 /** Line and area charts, split into one series per colour value. */
 function buildLineLike(
   result: QueryResponse,
@@ -1200,7 +1215,7 @@ function buildLineLike(
       {
         name: measureName,
         type: 'line',
-        smooth: true,
+        ...lineShape(sheet),
         symbol: 'circle',
         symbolSize: 6,
         showSymbol: result.rows.length <= 60,
@@ -1281,7 +1296,7 @@ function buildLineLike(
   const series = seriesNames.map((name) => ({
     name,
     type: 'line',
-    smooth: true,
+    ...lineShape(sheet),
     symbol: 'circle',
     symbolSize: 6,
     showSymbol: categories.length <= 40,

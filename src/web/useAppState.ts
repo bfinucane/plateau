@@ -51,6 +51,7 @@ import {
   pillLabel,
   type Dashboard,
   type Encoding,
+  type LineStyle,
   type MarkType,
   type ReferenceLine,
   type ShelfId,
@@ -91,6 +92,7 @@ type Action =
   | { type: 'sheet/table'; sheetId: string; tableId: string }
   | { type: 'sheet/renamed'; sheetId: string; name: string }
   | { type: 'sheet/mark'; sheetId: string; mark: MarkType }
+  | { type: 'sheet/lineStyle'; sheetId: string; lineStyle?: LineStyle }
   | { type: 'sheet/paneSplit'; sheetId: string; paneBy?: string }
   | { type: 'sheet/measureSplit'; sheetId: string; splitMeasures: boolean }
   | { type: 'sheet/referenceLines'; sheetId: string; referenceLines: ReferenceLine[] }
@@ -365,6 +367,17 @@ function reducer(state: State, action: Action): State {
 
     case 'sheet/mark':
       return mapSheet(state, action.sheetId, (sheet) => ({ ...sheet, mark: action.mark }));
+
+    case 'sheet/lineStyle':
+      return mapSheet(state, action.sheetId, (sheet) => {
+        // `straight` is the default, so drop the key when it is selected; the
+        // saved workbook then carries only a deliberate curved/step choice.
+        if (!action.lineStyle || action.lineStyle === 'straight') {
+          const { lineStyle: _dropped, ...rest } = sheet;
+          return rest;
+        }
+        return { ...sheet, lineStyle: action.lineStyle };
+      });
 
     case 'sheet/paneSplit':
       return mapSheet(state, action.sheetId, (sheet) => {

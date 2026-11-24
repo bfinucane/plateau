@@ -1299,6 +1299,14 @@ export function App() {
                   dispatch({ type: 'sheet/forecast', sheetId: activeSheet.id, periods })
                 }
                 canForecast={canForecast}
+                lineStyle={activeSheet.lineStyle}
+                lineStyleAvailable={
+                  effectiveMark(activeSheet) === 'line' ||
+                  effectiveMark(activeSheet) === 'area'
+                }
+                onLineStyleChange={(lineStyle) =>
+                  dispatch({ type: 'sheet/lineStyle', sheetId: activeSheet.id, lineStyle })
+                }
               />
             )}
 

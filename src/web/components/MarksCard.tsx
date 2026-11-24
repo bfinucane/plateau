@@ -5,8 +5,10 @@
 import { useState } from 'react';
 import { getDragPayload, hasDragPayload, type DragPayload } from '../dnd';
 import {
+  LINE_STYLES,
   MARK_TYPES,
   type Encoding,
+  type LineStyle,
   type MarkType,
   type ReferenceLine,
   type ShelfId,
@@ -39,6 +41,11 @@ interface MarksCardProps {
   canForecast: boolean;
   /** Active data-source columns, for date-granularity-aware controls. */
   columns: ColumnInfo[];
+  /** How the current line/area connects points; absent means straight. */
+  lineStyle?: LineStyle;
+  /** True when the effective mark is line or area. */
+  lineStyleAvailable: boolean;
+  onLineStyleChange: (style: LineStyle) => void;
 }
 
 /** Formatting for the reference-line list; the chart formats its own labels. */
@@ -73,6 +80,9 @@ export function MarksCard({
   onForecastChange,
   canForecast,
   columns,
+  lineStyle,
+  lineStyleAvailable,
+  onLineStyleChange,
 }: MarksCardProps) {
   const [lineValue, setLineValue] = useState('');
   const [lineLabel, setLineLabel] = useState('');
@@ -129,6 +139,25 @@ export function MarksCard({
           ))}
         </select>
       </div>
+
+      {lineStyleAvailable && (
+        <div className="marks-split marks-line-style">
+          <label>
+            <span>Line style</span>
+            <select
+              value={lineStyle ?? 'straight'}
+              onChange={(event) => onLineStyleChange(event.target.value as LineStyle)}
+              title="How the line connects its points"
+            >
+              {LINE_STYLES.map((style) => (
+                <option key={style.id} value={style.id} title={style.hint}>
+                  {style.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
 
       {paneOptions.length > 0 && (
         <div className="marks-split">

@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, forty-five session commits on top of `0e252ab`. Every number
+Written on branch `main`, forty-six session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,14 +13,14 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 67 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Commits | 68 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
 | Source | 77 files in `src/`, ~31,000 lines |
-| Unit tests | **909 checks**, 27 suites, all passing |
+| Unit tests | **913 checks**, 27 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
 | Screenshots | 61, in `docs/screenshots/` |
-| Bundle | `index-Ddw-Ub3t.js` (app, 169 kB) + `echarts`/`react` vendor chunks |
+| Bundle | `index-BAyvkDiT.js` (app, 169 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
 | Engine | separate tree `Patricia/olap_engine`, HEAD `322e1ea` when last verified |
@@ -1073,13 +1073,29 @@ filter gating); full unit suite **909 checks / 27 suites**; typecheck clean; bun
 `index-Ddw-Ub3t.js`.
 
 **Live status:** the engine release is live (`serve C3F61BBF…`, 17-key capabilities with
-`dateParts` and `supportsDateRangeFilters`). On a private copy of the saved database, assigning
-`.date month_key month` produced a date/month `describe`, Plateau exposed it as a date, a
-`datePart: "year"` query was pushed down and returned correct sums, a `between` range filter was
-pushed down and returned the six months, and `.save` + restart persisted the role. The shared
-saved database still reported `month_key` as a string at probe time (the role was applied after
-that save); run `.date month_key month` and `.save` again on the shared engine, then start
-Plateau for the UI smoke. 5180 was down during verification.
+`dateParts` and `supportsDateRangeFilters`). The shared engine now has `.date month_key month`
+saved; Plateau 5180 re-saved the data source, `/api/datasets` reports `month_key` as
+`dataType: "date"` / `dateGranularity: "month"`, and the operator confirmed month- and
+quarter-level grouping in the app. API checks returned the expected 2023/2024/2025 sums and the
+Jan–Jun 2023 range rows.
+
+### 8.28 Line style (straight / curved / step)
+Line and area charts had `smooth: true` hard-coded, so every line was wavy with no way to change
+it. The sheet now carries an optional `lineStyle`:
+
+- **Straight** (default, and what an absent key means): point-to-point segments, the Tableau
+  default;
+- **Curved**: ECharts smoothing (the old behaviour);
+- **Step**: holds each value until the next point.
+
+The Marks card shows a **Line style** selector only when the effective mark is line or area.
+`straight` is dropped from the saved workbook (it is the default), so only a deliberate
+curved/step choice is stored; the workbook reader validates the value and warns on an unknown
+one. The forecast dashed line is independent of the history line's style.
+
+Evidence: `axisNesting` +3 checks (straight default, curved smoothing, step='middle');
+`workbookFile` +1 (line style survives the round trip); full unit suite **913 checks / 27
+suites**, typecheck clean; bundle `index-BAyvkDiT.js`. Client-only — no contract/wire change.
 
 ---
 
@@ -1161,7 +1177,7 @@ Plateau for the UI smoke. 5180 was down during verification.
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 909 unit checks
+node scripts/test.mjs                                   # 913 unit checks
 npm run test:server                                     # terminal 2: test fixture on :5177
 node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
@@ -1190,7 +1206,7 @@ is worth showing.
 
 ## 11. Provenance
 
-67 commits in total. The last forty-five are this session; the earlier 22 are the work of
+68 commits in total. The last forty-six are this session; the earlier 22 are the work of
 earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

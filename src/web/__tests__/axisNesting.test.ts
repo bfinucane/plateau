@@ -84,6 +84,44 @@ function axisLabelOf(option: unknown): Record<string, unknown> {
 
 // ------------------------------------------------------------------- line ---
 
+section('Line style controls interpolation');
+
+{
+  const sheet = createSheet('Trend');
+  sheet.mark = 'line';
+  sheet.shelves.columns = [{ id: 'c-month', field: 'Month', kind: 'dimension' }];
+  sheet.shelves.rows = [{ id: 'r-sales', field: 'Sales', kind: 'measure', aggregation: 'SUM' }];
+  const result = resultWith(
+    [
+      { name: 'Month', kind: 'dimension' },
+      { name: 'Sum of Sales', kind: 'measure' },
+    ],
+    [
+      ['2023-01', 10],
+      ['2023-02', 20],
+    ],
+  );
+
+  const seriesOf = (style: 'straight' | 'curved' | 'step') => {
+    const styled = { ...sheet, lineStyle: style };
+    const option = buildChart(result, styled, 'line').option as {
+      series?: { smooth?: boolean; step?: string | false }[];
+    };
+    return option.series?.[0];
+  };
+
+  const straight = seriesOf('straight');
+  check('straight is the default: no smoothing, no step',
+    straight?.smooth === false && straight?.step === false,
+    JSON.stringify(straight));
+  check('curved enables ECharts smoothing',
+    seriesOf('curved')?.smooth === true && seriesOf('curved')?.step === false,
+    JSON.stringify(seriesOf('curved')));
+  check('step holds each value between points',
+    seriesOf('step')?.smooth === false && seriesOf('step')?.step === 'middle',
+    JSON.stringify(seriesOf('step')));
+}
+
 section('A line chart nests dimensions the series does not already show');
 
 {

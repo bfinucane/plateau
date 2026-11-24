@@ -38,6 +38,16 @@ export type MarkType =
   | 'waterfall'
   | 'histogram';
 
+/** How a line/area series connects its points. */
+export type LineStyle = 'straight' | 'curved' | 'step';
+
+/** The line-style choices, in display order; straight is the default. */
+export const LINE_STYLES: { id: LineStyle; label: string; hint: string }[] = [
+  { id: 'straight', label: 'Straight', hint: 'Connect points with straight segments' },
+  { id: 'curved', label: 'Curved', hint: 'Smooth the line through the points' },
+  { id: 'step', label: 'Step', hint: 'Hold each value until the next point (step line)' },
+];
+
 export const MARK_TYPES: { id: MarkType; label: string; hint: string }[] = [
   { id: 'automatic', label: 'Automatic', hint: 'Tableau chooses the mark from the fields you place' },
   { id: 'column', label: 'Bar', hint: 'Vertical bars comparing a measure across categories' },
@@ -98,6 +108,13 @@ export interface Sheet {
    */
   tableId?: string;
   mark: MarkType;
+  /**
+   * How line/area series connect their points.
+   *
+   * Absent means `straight` — Tableau's default; `curved` smooths and `step`
+   * holds each value until the next point. Only meaningful for line/area.
+   */
+  lineStyle?: LineStyle;
   shelves: Record<ShelfId, Encoding[]>;
   filters: Filter[];
   /** Optional fixed colour palette index. */

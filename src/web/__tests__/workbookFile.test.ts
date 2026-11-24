@@ -76,6 +76,7 @@ function fixture(): WorkbookState {
 
   const second = createSheet('Trend');
   second.mark = 'line';
+  second.lineStyle = 'curved';
   second.shelves.columns = [{ id: 'enc-2', field: 'Order Date', kind: 'dimension', datePart: 'month' }];
   second.shelves.rows = [
     {
@@ -162,6 +163,8 @@ section('A round trip loses nothing');
     JSON.stringify(workbook.sheets[1].shelves.rows[0].tableCalc));
   check('filters survive', workbook.sheets[0].filters[0]?.values?.[0] === 'Furniture');
   check('small multiples survive', workbook.sheets[0].paneBy === 'Region');
+  check('line style survives', workbook.sheets[1].lineStyle === 'curved',
+    String(workbook.sheets[1].lineStyle));
   check('dashboards survive with their panels',
     workbook.dashboards.length === 1 && workbook.dashboards[0].panels.length === 2,
     JSON.stringify(workbook.dashboards.map((dashboard) => dashboard.panels.length)));
