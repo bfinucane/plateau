@@ -34,6 +34,7 @@ const SUITES = [
   ['attribute joins (schema, gating, capability refusal)', '../src/server/__tests__/join.test.ts'],
   ['join selection validation (multi-join keys and attributes)', '../src/server/__tests__/joinSelection.test.ts'],
   ['join output aliases (duplicate members across cubes)', '../src/server/__tests__/joinAlias.test.ts'],
+  ['date dimensions (typing, datePart pushdown, range filters)', '../src/server/__tests__/dateDimension.test.ts'],
   ['join API lifecycle (register, edit, query, clear)', '../src/server/__tests__/joinApi.test.ts'],
   ['engine authentication (login, bearer tokens, 401)', '../src/server/__tests__/engineAuth.test.ts'],
 ];

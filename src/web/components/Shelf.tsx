@@ -30,6 +30,13 @@ interface PillProps {
    * report capabilities. Everything is offered then.
    */
   aggregations?: Aggregation[];
+  /**
+   * Finest date level the field stores, when the data source reports it.
+   *
+   * `month` means only Year/Quarter/Month are valid; offering Day/Week would
+   * invent a finer bucket than the member represents.
+   */
+  dateGranularity?: 'day' | 'month' | 'quarter' | 'year';
 }
 
 const DATE_PARTS: { value: NonNullable<Encoding['datePart']>; label: string }[] = [
@@ -49,10 +56,18 @@ export function Pill({
   index,
   partitionOptions = [],
   aggregations,
+  dateGranularity,
 }: PillProps) {
   const [editing, setEditing] = useState(false);
 
   const isMeasure = encoding.kind === 'measure';
+  const datePartOrder = ['year', 'quarter', 'month', 'week', 'day'];
+  const datePartChoices = dateGranularity
+    ? DATE_PARTS.filter(
+        (part) =>
+          datePartOrder.indexOf(part.value) <= datePartOrder.indexOf(dateGranularity),
+      )
+    : DATE_PARTS;
   // Discrete dimensions are blue, continuous measures are green -- Tableau's
   // colour convention, which users read without thinking.
   const toneClass = isMeasure ? 'pill-measure' : 'pill-dimension';
@@ -135,7 +150,7 @@ export function Pill({
                 }
               >
                 <option value="">Exact value</option>
-                {DATE_PARTS.map((part) => (
+                {datePartChoices.map((part) => (
                   <option key={part.value} value={part.value}>
                     {part.label}
                   </option>

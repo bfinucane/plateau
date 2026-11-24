@@ -42,6 +42,11 @@ export interface ColumnInfo {
    * comes from, and why counting it as a dimension of the dataset would be wrong.
    */
   joinedVia?: string;
+  /**
+   * Finest date level a temporal column stores (`day` when omitted on a date
+   * column). A `month` key is `YYYY-MM`.
+   */
+  dateGranularity?: 'day' | 'month' | 'quarter' | 'year';
   defaultAggregation: Aggregation;
   sampleValues: (string | number | boolean)[];
 }
@@ -297,6 +302,10 @@ export interface EngineCapabilities {
    * unless this is true, because the engine would ignore them silently.
    */
   supportsJoinAlias?: boolean;
+  /** Date levels the engine can bucket by (`groupBy[].datePart`). */
+  dateParts?: string[];
+  /** Whether `gt`/`gte`/`lt`/`lte`/`between` work on date columns. */
+  supportsDateRangeFilters?: boolean;
   expressionFunctions: string[];
   supportsInlineDomain: boolean;
   maxRows?: number;

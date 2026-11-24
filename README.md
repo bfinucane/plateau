@@ -340,7 +340,7 @@ npm run serve    # http://127.0.0.1:5177
 ### Verifying it works
 
 ```bash
-npm test         # 891 unit checks, 26 suites
+npm test         # 909 unit checks, 27 suites
 npm run typecheck
 ```
 
@@ -409,7 +409,7 @@ writes nothing. If the engine requires authentication it checks the 401 first, t
 skips the protected checks unless `PLATEAU_ENGINE_USER` and `PLATEAU_ENGINE_PASSWORD`
 are set — a skip is reported, never counted as a pass.
 
-Total: **1460 checks** — 891 unit, 569 browser, plus 33 real-engine wire checks.
+Total: **1478 checks** — 909 unit, 569 browser, plus 33 real-engine wire checks.
 
 | Unit suite | Checks | Covers |
 | --- | --- | --- |
@@ -748,7 +748,7 @@ them as zeros — a trend line fitted through `(0, 0)` looks reasonable and is w
   trend projection, not a statistical model — the engine is not asked to forecast.
 - A 14-sheet starter test set that renders every mark family, checked sheet-by-sheet
   in the browser
-- 1460 checks green (891 unit, 569 browser)
+- 1478 checks green (909 unit, 569 browser)
 
 ### Connecting to an engine
 

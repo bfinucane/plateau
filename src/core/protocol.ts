@@ -40,7 +40,7 @@ export const PROTOCOL_VERSION = 1;
 export interface EngineColumn {
   name: string;
   /** Physical storage type. */
-  dataType: 'string' | 'number' | 'date' | 'boolean';
+  dataType: 'string' | 'number' | 'date' | 'datetime' | 'boolean';
   logicalType?: LogicalType;
   nullable?: boolean;
   /** Distinct value count, when the engine can supply it cheaply. */
@@ -53,6 +53,19 @@ export interface EngineColumn {
   max?: number | string | null;
   /** Optional semantic hint only — never authoritative for the UI. */
   suggestedKind?: 'dimension' | 'measure';
+  /**
+   * Finest level a date-typed column stores (contract §3.2).
+   *
+   * A month key (`YYYY-MM`) is `month`; absent on a date column means `day`.
+   * Non-date columns omit it.
+   */
+  granularity?: 'day' | 'month' | 'quarter' | 'year';
+  /**
+   * Format hint for a non-canonical date column (contract §3.2).
+   *
+   * This engine emits canonical ISO, so the field is normally absent.
+   */
+  format?: string;
 }
 
 export interface CatalogResponse {
@@ -170,6 +183,23 @@ export interface Capabilities {
    * column identity when only one side of a duplicate was aliased.
    */
   supportsJoinAlias?: boolean;
+  /**
+   * Date levels the engine can bucket by (`groupBy[].datePart`, contract §5.2).
+   *
+   * Absent means no pushdown: do not send `datePart`. A list such as
+   * `["year","quarter","month","week","day"]` also tells the client which levels
+   * are valid; the requested level must never be finer than the column's
+   * `granularity`.
+   */
+  dateParts?: string[];
+  /**
+   * Whether date-range filter operators are evaluated on date columns.
+   *
+   * When true, `gt`/`gte`/`lt`/`lte`/`between` are legal on a date-typed
+   * dimension with canonical ISO operands (§5.4). `filterOperators` itself stays
+   * `in`/`equals`/`notEquals`, so this is a separate gate.
+   */
+  supportsDateRangeFilters?: boolean;
   /**
    * Plain function names a calculated field may `call`, uppercased.
    *
@@ -318,7 +348,7 @@ export interface QueryResponse {
   columnMeta: {
     name: string;
     kind: 'dimension' | 'measure';
-    dataType: 'string' | 'number' | 'date' | 'boolean';
+    dataType: 'string' | 'number' | 'date' | 'datetime' | 'boolean';
     logicalType: LogicalType;
     semanticType: 'quantitative' | 'nominal' | 'ordinal' | 'temporal' | null;
     defaultAggregation: Aggregation;
@@ -475,7 +505,9 @@ export function toQueryResult(response: QueryResponse): QueryResult {
       schema: response.columnMeta.map((meta) => ({
         name: meta.name,
         label: meta.name,
-        dataType: meta.dataType,
+        // Plateau's renderer has one temporal storage type; a datetime keeps
+        // `logicalType: "datetime"` for presentation while behaving as a date.
+        dataType: meta.dataType === 'datetime' ? 'date' : meta.dataType,
         logicalType: meta.logicalType,
         semanticType: meta.semanticType,
         kind: meta.kind,

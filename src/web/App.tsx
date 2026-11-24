@@ -1272,6 +1272,7 @@ export function App() {
                 }
                 referenceLines={activeSheet.referenceLines ?? []}
                 canReferenceLine={markHasValueAxis(effectiveMark(activeSheet))}
+                columns={columns}
                 onAddReferenceLine={(value, label) => {
                   const line: ReferenceLine = {
                     id: `refline-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
@@ -1320,6 +1321,7 @@ export function App() {
               datasetId={state.activeDatasetId ?? ''}
               supportedOperators={app.allowedFilterOperators ?? undefined}
               supportedOperatorsByScope={app.allowedFilterOperatorsByScope ?? undefined}
+              supportsDateRangeFilters={engineCapabilities?.supportsDateRangeFilters === true}
               onAdd={addFilter}
               onRemove={removeFilter}
             />

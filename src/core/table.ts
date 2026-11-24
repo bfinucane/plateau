@@ -98,6 +98,21 @@ export function parseDate(raw: string): Date | null {
     return date;
   }
 
+  /*
+   * Canonical month keys (contract §3.2): `YYYY-MM`, e.g. `2023-01`.
+   *
+   * A month key is a temporal member, not a string. It parses to the first day of
+   * the month so client-side date bucketing/filtering works; the stored member is
+   * never rewritten. Strict two-digit month: the contract has one canonical
+   * spelling per granularity, so `2023-1` is not guessed.
+   */
+  const monthKey = /^(\d{4})-(\d{2})$/.exec(text);
+  if (monthKey) {
+    const year = Number(monthKey[1]);
+    const month = Number(monthKey[2]);
+    if (month >= 1 && month <= 12) return new Date(Date.UTC(year, month - 1, 1));
+  }
+
   return null;
 }
 

@@ -496,6 +496,34 @@ export class RemoteBackend implements DatasetBackend {
   }
 
   /**
+   * Whether a `datePart` can be sent to the engine instead of computed locally.
+   *
+   * Requires the engine's reported `dateParts`, a date-typed column, and a level
+   * no finer than the column's declared granularity (contract §5.2: asking `day`
+   * of a `month` key is `400 invalid_argument`). Anything else keeps the
+   * materialised fallback rather than risking an engine error or a wrong bucket.
+   */
+  private canPushDatePart(
+    field: string,
+    part: string,
+    capabilities: Capabilities | null,
+    catalog: CatalogResponse,
+  ): boolean {
+    if (!Array.isArray(capabilities?.dateParts)) return false;
+    if (!capabilities.dateParts.includes(part)) return false;
+    const column = catalog.columns.find((entry) => entry.name === field);
+    if (!column || (column.dataType !== 'date' && column.dataType !== 'datetime')) {
+      return false;
+    }
+    const order = ['year', 'quarter', 'month', 'week', 'day'];
+    const partIndex = order.indexOf(part);
+    const granularityIndex = order.indexOf(column.granularity ?? 'day');
+    if (partIndex < 0 || granularityIndex < 0) return false;
+    // A part is legal when it is the same or COARSER than the stored granularity.
+    return partIndex <= granularityIndex;
+  }
+
+  /**
    * Resolves each configured join's attributes to a unique output name.
    *
    * Identity stays `(cube, member)` — `MonthAttr.name_zh` and
@@ -750,22 +778,25 @@ export class RemoteBackend implements DatasetBackend {
     }
 
     /*
-     * Temporal bucketing has the same shape of problem (contract v1 open break
-     * §11.1): the engine parses `datePart` and then refuses every non-empty value
-     * with `400 unsupported_expression`, and says so in the contract as a command
-     * to clients — "MUST NOT send" — because there is no capability to detect it.
-     *
-     * So the truncation is computed here instead, over the same materialised table
-     * the LOD fallback uses. That keeps month/quarter grouping WORKING rather than
-     * silently degrading to raw dates; the cost is a row materialisation, bounded
-     * by the engine's `maxRows` and refused as `row_limit` when truncated, exactly
-     * like the LOD path. When §11.1 closes, this fallback can be retried against
-     * the engine behind whatever capability that change introduces.
+     * Temporal bucketing is now feature-detectable (contract §11.1, resolved):
+     * when the engine advertises `dateParts` and the requested level is valid for
+     * the column's declared granularity, send `datePart` and let the engine group.
+     * Only when that cannot be pushed do we fall back to materialising the rows and
+     * truncating locally — the old behaviour, still required for an older engine,
+     * an absent capability, a non-date column or a level finer than the model
+     * allows.
      */
-    const needsDateBucketingLocally = spec.fields.some(
+    const bucketingFields = spec.fields.filter(
       (field) => field.kind === 'dimension' && field.datePart !== undefined,
     );
-    if (needsDateBucketingLocally) {
+    let pushDateBucketing = false;
+    if (bucketingFields.length > 0) {
+      const catalog = await this.ensureCatalog();
+      pushDateBucketing = bucketingFields.every((field) =>
+        this.canPushDatePart(field.name, field.datePart!, capabilities, catalog),
+      );
+    }
+    if (bucketingFields.length > 0 && !pushDateBucketing) {
       const table = await this.materializeTable();
       return executeQuery(table, spec);
     }
@@ -812,8 +843,33 @@ export class RemoteBackend implements DatasetBackend {
       return capabilities.filterOperators;
     };
 
+    const catalog = await this.ensureCatalog();
+    const dateFields = new Set(
+      catalog.columns
+        .filter((column) => column.dataType === 'date' || column.dataType === 'datetime')
+        .map((column) => column.name),
+    );
+    // Date-range verbs are a separate capability: `filterOperators` stays
+    // `in`/`equals`/`notEquals` on this engine, so they are allowed only on a
+    // date-typed dimension when the engine reports §5.4 support.
+    const dateRangeOperators = new Set<Filter['operator']>([
+      'gt',
+      'gte',
+      'lt',
+      'lte',
+      'between',
+    ]);
+
     const unsupportedByScope = new Map<string, { field: string; operator: string }[]>();
     for (const filter of request.filters) {
+      if (
+        filter.scope === 'dimension' &&
+        capabilities?.supportsDateRangeFilters === true &&
+        dateRangeOperators.has(filter.operator) &&
+        dateFields.has(filter.field)
+      ) {
+        continue;
+      }
       const implemented = operatorsForScope(filter.scope);
       if (!implemented) continue;
       if (implemented.includes(filter.operator)) continue;
@@ -846,7 +902,6 @@ export class RemoteBackend implements DatasetBackend {
     const response = await this.transport.query(request);
     const { toQueryResult } = await import('../core/protocol.js');
     const result = toQueryResult(response);
-    const catalog = await this.ensureCatalog();
     if (request.measures.length === 0 && catalog.measureDimension && !catalog.isAttributeTable) {
       // Contract §11.8: a dimension-only query on a measure-dimension cube
       // repeats each group once per measure member. The repetition is storage
@@ -1022,17 +1077,19 @@ export function engineColumnToSchema(column: EngineColumn): ColumnSchema {
   // deciding that "Postal Code" is not summable is presentation policy, not a
   // storage fact — and it must not differ per backend.
   const kind = column.suggestedKind ?? 'dimension';
+  // Plateau's renderer has one temporal storage type; keep a datetime's
+  // `logicalType` for presentation while it behaves as a date.
+  const dataType = column.dataType === 'datetime' ? 'date' : column.dataType;
   return {
     name: column.name,
     label: column.name,
-    dataType: column.dataType,
-    logicalType: column.logicalType ?? inferLogicalType(column.dataType),
+    dataType,
+    logicalType:
+      column.dataType === 'datetime'
+        ? 'datetime'
+        : column.logicalType ?? inferLogicalType(column.dataType),
     semanticType:
-      column.dataType === 'number'
-        ? 'quantitative'
-        : column.dataType === 'date'
-          ? 'temporal'
-          : 'nominal',
+      dataType === 'number' ? 'quantitative' : dataType === 'date' ? 'temporal' : 'nominal',
     kind,
     role: kind === 'measure' ? 'continuous' : 'discrete',
     nullCount: column.notNull ? 0 : 0,
@@ -1041,6 +1098,9 @@ export function engineColumnToSchema(column: EngineColumn): ColumnSchema {
     min: typeof column.min === 'number' ? column.min : null,
     max: typeof column.max === 'number' ? column.max : null,
     isInteger: column.logicalType === 'integer',
+    // Date-typed columns carry the finest stored level (contract §3.2); absent
+    // means `day` on a date column and is omitted everywhere else.
+    ...(dataType === 'date' ? { dateGranularity: column.granularity ?? 'day' } : {}),
   };
 }
 

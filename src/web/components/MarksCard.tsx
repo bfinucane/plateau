@@ -12,6 +12,7 @@ import {
   type ShelfId,
 } from '../viewModel';
 import { Pill } from './Shelf';
+import type { ColumnInfo } from '../api';
 
 interface MarksCardProps {
   mark: MarkType;
@@ -36,6 +37,8 @@ interface MarksCardProps {
   onForecastChange: (periods?: number) => void;
   /** A temporal single-series line/area view is on screen. */
   canForecast: boolean;
+  /** Active data-source columns, for date-granularity-aware controls. */
+  columns: ColumnInfo[];
 }
 
 /** Formatting for the reference-line list; the chart formats its own labels. */
@@ -69,6 +72,7 @@ export function MarksCard({
   forecastPeriods,
   onForecastChange,
   canForecast,
+  columns,
 }: MarksCardProps) {
   const [lineValue, setLineValue] = useState('');
   const [lineLabel, setLineLabel] = useState('');
@@ -274,6 +278,7 @@ export function MarksCard({
             label={shelf.label}
             hint={shelf.hint}
             encodings={shelves[shelf.id]}
+            columns={columns}
             onDropPayload={onDropPayload}
             onRemove={onRemove}
             onUpdate={onUpdate}
@@ -289,6 +294,7 @@ interface MarkShelfProps {
   label: string;
   hint: string;
   encodings: Encoding[];
+  columns: ColumnInfo[];
   onDropPayload: (shelf: ShelfId, payload: DragPayload, index?: number) => void;
   onRemove: (shelf: ShelfId, encodingId: string) => void;
   onUpdate: (encodingId: string, patch: Partial<Encoding>) => void;
@@ -299,6 +305,7 @@ function MarkShelf({
   label,
   hint,
   encodings,
+  columns,
   onDropPayload,
   onRemove,
   onUpdate,
@@ -331,6 +338,9 @@ function MarkShelf({
               encoding={encoding}
               shelf={id}
               index={index}
+              dateGranularity={
+                columns.find((column) => column.name === encoding.field)?.dateGranularity
+              }
               onRemove={() => onRemove(id, encoding.id)}
               onUpdate={(patch) => onUpdate(encoding.id, patch)}
               onDropBefore={(payload, at) => onDropPayload(id, payload, at)}

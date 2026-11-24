@@ -37,6 +37,13 @@ interface FiltersPanelProps {
    * `supportedOperators`.
    */
   supportedOperatorsByScope?: Partial<Record<Filter['scope'], Filter['operator'][]>>;
+  /**
+   * Whether date-range operators are evaluated on date columns.
+   *
+   * They are a separate capability from `filterOperators`, which stays
+   * `in`/`equals`/`notEquals`; only a date column may use them.
+   */
+  supportsDateRangeFilters?: boolean;
 }
 
 /** Why an operator's control is disabled, said the same way everywhere. */
@@ -83,6 +90,7 @@ export function FiltersPanel({
   onRemove,
   supportedOperators,
   supportedOperatorsByScope,
+  supportsDateRangeFilters,
 }: FiltersPanelProps) {
   const [pickerField, setPickerField] = useState<ColumnInfo | null>(null);
 
@@ -169,6 +177,7 @@ export function FiltersPanel({
           existing={filters.find((f) => f.field === pickerField.name) ?? null}
           supportedOperators={supportedOperators}
           supportedOperatorsByScope={supportedOperatorsByScope}
+          supportsDateRangeFilters={supportsDateRangeFilters}
           onClose={() => setPickerField(null)}
           onApply={(filter) => {
             onAdd(filter);
@@ -186,6 +195,8 @@ interface FilterDialogProps {
   existing: Filter | null;
   supportedOperators?: Filter['operator'][];
   supportedOperatorsByScope?: Partial<Record<Filter['scope'], Filter['operator'][]>>;
+  /** Date columns may use the range verbs when the engine reports support. */
+  supportsDateRangeFilters?: boolean;
   onClose: () => void;
   onApply: (filter: Filter) => void;
 }
@@ -201,6 +212,7 @@ function FilterDialog({
   existing,
   supportedOperators,
   supportedOperatorsByScope,
+  supportsDateRangeFilters,
   onClose,
   onApply,
 }: FilterDialogProps) {
@@ -213,6 +225,7 @@ function FilterDialog({
       supportedOperatorsForScope={(scope) =>
         filterOperatorsForScope(supportedOperators, supportedOperatorsByScope, scope)
       }
+      supportsDateRangeFilters={supportsDateRangeFilters}
       onClose={onClose}
       onApply={onApply}
     />
@@ -446,6 +459,8 @@ interface RangeFilterDialogProps {
   supportedOperators?: Filter['operator'][];
   /** Per-scope report, when the engine distinguishes dimension and measure filters. */
   supportedOperatorsForScope?: (scope: Filter['scope']) => Filter['operator'][] | undefined;
+  /** Date range verbs work on date columns only, when the engine reports them. */
+  supportsDateRangeFilters?: boolean;
   onClose: () => void;
   onApply: (filter: Filter) => void;
 }
@@ -456,6 +471,7 @@ function RangeFilterDialog({
   existing,
   supportedOperators,
   supportedOperatorsForScope,
+  supportsDateRangeFilters,
   onClose,
   onApply,
 }: RangeFilterDialogProps) {
@@ -472,8 +488,25 @@ function RangeFilterDialog({
    * dataset a numeric measure filter has no available mode and the dialog says so
    * instead of showing controls whose Apply could only fail.
    */
-  const operatorsFor = (scope: Filter['scope']): Filter['operator'][] | undefined =>
-    supportedOperatorsForScope ? supportedOperatorsForScope(scope) : supportedOperators;
+  const operatorsFor = (scope: Filter['scope']): Filter['operator'][] | undefined => {
+    const reported = supportedOperatorsForScope
+      ? supportedOperatorsForScope(scope)
+      : supportedOperators;
+    /*
+     * Date-range verbs are reported separately from `filterOperators` (they only
+     * apply to date-typed dimensions), so a date column adds them when the engine
+     * advertises the capability. Without it the range mode stays hidden.
+     */
+    if (
+      supportsDateRangeFilters === true &&
+      column.dataType === 'date' &&
+      scope === 'dimension'
+    ) {
+      const verbs: Filter['operator'][] = ['between', 'gt', 'gte', 'lt', 'lte'];
+      return reported ? [...new Set([...reported, ...verbs])] : verbs;
+    }
+    return reported;
+  };
 
   const rangeScope: Filter['scope'] = column.kind === 'measure' ? 'measure' : 'dimension';
   const rangeOperators = operatorsFor(rangeScope);

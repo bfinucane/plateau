@@ -4,7 +4,7 @@ A visual analytics app (a Tableau-shaped tool) over an in-memory OLAP engine.
 React client, Express server, Node's native TypeScript type-stripping — no bundler
 for the server, no transpiler for tests.
 
-Written on branch `main`, forty-three session commits on top of `0e252ab`. Every number
+Written on branch `main`, forty-four session commits on top of `0e252ab`. Every number
 below was measured, not remembered.
 
 ---
@@ -13,17 +13,17 @@ below was measured, not remembered.
 
 | | |
 |---|---|
-| Commits | 65 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
-| Source | 74 files in `src/`, ~31,000 lines |
-| Unit tests | **891 checks**, 26 suites, all passing |
+| Commits | 66 total; **nothing unpushed** (`origin/main` matches `HEAD`) |
+| Source | 77 files in `src/`, ~31,000 lines |
+| Unit tests | **909 checks**, 27 suites, all passing |
 | Browser tests | **569 checks**, 16 harnesses, all passing |
 | Engine wire | `scripts/verify-engine.mjs`: **33 checks** against the live engine |
 | Contract | **suite contract v1**, pinned 2026-10-28, **Tier T2**, T4 not adopted |
 | Screenshots | 61, in `docs/screenshots/` |
-| Bundle | `index-C27zExKN.js` (app, 169 kB) + `echarts`/`react` vendor chunks |
+| Bundle | `index-Ddw-Ub3t.js` (app, 169 kB) + `echarts`/`react` vendor chunks |
 | Workbooks | `workbooks/test-set.json` — 14 sheets + dashboard, used by a harness |
 | Remote | `origin` → https://github.com/bfinucane/plateau.git |
-| Engine | separate tree `Patricia/olap_engine`, HEAD `b32fb54` when last verified |
+| Engine | separate tree `Patricia/olap_engine`, HEAD `322e1ea` when last verified |
 | Plateau | not left running, by design — start it with `start.cmd` |
 
 Nothing is broken as far as the test suites can see. §8 lists what is open.
@@ -1041,8 +1041,41 @@ grid icons of the other two apps and readable at 16 px — and linked it from
 
 Verified against the built app on a private port: `GET /favicon.svg` → **200**,
 `image/svg+xml`, 419 B; the served page carries the `<link rel="icon" …>`; the app bundle
-(`index-C27zExKN.js`) is unchanged. Client-only — no contract/wire change. This satisfies the
+is unchanged by that change. Client-only — no contract/wire change. This satisfies the
 Plateau part of the owner-coordinated favicon item in `contract/REQUESTS.md` (2026-11-02).
+
+### 8.27 Date dimensions (handoff 028 / D32)
+The contract accepts date-typed dimensions: `describe` reports `dataType: "date"`,
+`logicalType`, optional `granularity` (`month` for `YYYY-MM` keys), and date `min`/`max`;
+`groupBy[].datePart` is feature-detectable via `capabilities.dateParts`; date-range filters
+via `supportsDateRangeFilters` (PROTOCOL §3.2/§5.2/§5.4, §11.1 resolved).
+
+Plateau's phase-1 adapter is implemented ahead of the engine release, gated so today's engine
+is unaffected:
+
+- `engineColumnToSchema` carries `dataType: "date"`, `logicalType` (a `datetime` keeps its
+  logical type but is treated as a date by the renderer) and optional `dateGranularity`;
+  `describeColumns` exposes it to the browser.
+- Canonical month keys `YYYY-MM` now parse as dates (first day of the month, UTC) and infer as
+  temporal, so the existing client-side fallback can bucket a month-granularity key.
+- The date-level menu is restricted to levels no finer than the column's granularity (a
+  `month` key offers Year/Quarter/Month, not Week/Day).
+- A query sends `datePart` and skips row materialisation only when `capabilities.dateParts`
+  lists the requested level and the column's date type/granularity permits it; otherwise the
+  old local fallback is kept.
+- Date-range filters (`between`/`gt`/`gte`/`lt`/`lte`) are accepted on a date-typed dimension
+  only when `supportsDateRangeFilters` is true, both in the server's pre-wire validation and
+  in the filter dialog. `filterOperators` itself stays `in`/`equals`/`notEquals`.
+
+Evidence: new `dateDimension` suite **18** checks (month parsing/inference, schema granularity,
+pushdown only with the capability, local fallback, finer-than-granularity fallback, range
+filter gating); full unit suite **909 checks / 27 suites**; typecheck clean; bundle
+`index-Ddw-Ub3t.js`.
+
+**Live status:** the engine tree still has no date implementation (`322e1ea`), and 8080 is down;
+nothing date-related can be verified live yet. Engine release 1 (model role + `describe`) makes
+`month_key` a date in Plateau with the existing fallback; release 2 (`datePart` + range
+filters) turns on pushdown and the range filter. Both remain engine-side work.
 
 ---
 
@@ -1124,7 +1157,7 @@ Plateau part of the owner-coordinated favicon item in `contract/REQUESTS.md` (20
 
 ```powershell
 cd tableau-clone
-node scripts/test.mjs                                   # 891 unit checks
+node scripts/test.mjs                                   # 909 unit checks
 npm run test:server                                     # terminal 2: test fixture on :5177
 node e2e/verify-ui.mjs http://127.0.0.1:5177/ "C:/Program Files/Google/Chrome/Application/chrome.exe"
 node scripts/verify-engine.mjs http://127.0.0.1:8080     # 33 wire checks against a live engine
@@ -1153,7 +1186,7 @@ is worth showing.
 
 ## 11. Provenance
 
-65 commits in total. The last forty-three are this session; the earlier 22 are the work of
+66 commits in total. The last forty-four are this session; the earlier 22 are the work of
 earlier sessions and are described by their commit messages, which
 record what went wrong as well as what was built — including four test mistakes and one
 place where a fix was worse than the bug.

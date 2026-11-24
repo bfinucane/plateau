@@ -62,6 +62,13 @@ export interface ColumnSchema {
    * engine refuses an attribute whose key is not projected.
    */
   joinedVia?: string;
+  /**
+   * Finest date level a temporal column stores (date columns only).
+   *
+   * `month` means the stored member is a month key (`2023-01`); `day` means a full
+   * date. Absent on non-date columns, and absent on a date column means `day`.
+   */
+  dateGranularity?: 'day' | 'month' | 'quarter' | 'year';
 }
 
 /** A single stored cell. */

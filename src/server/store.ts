@@ -159,6 +159,7 @@ export function describeColumns(schema: ColumnSchema[]): ColumnInfo[] {
     isCalculated: Boolean(column.isCalculated),
     formula: column.formula,
     joinedVia: column.joinedVia,
+    dateGranularity: column.dateGranularity,
     defaultAggregation: defaultAggregation(column),
     sampleValues: column.sampleValues.slice(0, 20).map(serializeCell) as (string | number | boolean)[],
   }));
